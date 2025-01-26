@@ -65,7 +65,7 @@ impl CBackend {
                     self.emit_stmt(stmt)?;
                 }
             }
-
+            
             self.output.push_str("    getchar();\n");
             self.output.push_str("    return 0;\n}\n");
         }
@@ -119,7 +119,11 @@ impl CBackend {
             },
             ast::Stmt::Expr(expr, _) => {
                 let expr_code = self.emit_expr(expr)?;
-                self.output.push_str(&format!("{};\n", expr_code));
+                if !expr_code.ends_with(';') {
+                    self.output.push_str(&format!("{};\n", expr_code));
+                } else {
+                    self.output.push_str(&format!("{}\n", expr_code));
+                }
             }
             _ => unimplemented!(),
         }
@@ -161,6 +165,13 @@ impl CBackend {
                     }),
                 };
                 Ok(format!("printf(\"{}\\n\", {});", format_spec, arg))
+            },
+            ast::Expr::Call(name, args, _, _) => {
+                let mut args_code = Vec::new();
+                for arg in args {
+                    args_code.push(self.emit_expr(arg)?);
+                }
+                Ok(format!("{}({})", name, args_code.join(", ")))
             }
             _ => Err(CompileError::CodegenError {
                 message: "Unsupported expression".to_string(),

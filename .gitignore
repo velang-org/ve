@@ -1,1 +1,7 @@
-/target
+.idea
+output.c
+test.verve
+program.exe
+target
+
+

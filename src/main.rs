@@ -80,57 +80,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(&args.input)?;
     let file_id = files.add(args.input.to_str().unwrap(), content);
 
-    // let lexer = lexer::Lexer::new(&files, file_id);
-    // let mut parser = old_parser::Parser::new(lexer);
-    // let program = parser.parse().map_err(MyError)?;
-    // 
-    // println!("{:#?}", program);
-    // 
-    // let mut type_checker = typeck::TypeChecker::new(file_id);
-    // if let Err(errors) = type_checker.check(&program) {
-    //     for error in errors {
-    //         eprintln!("Type error: {:?}", error);
-    //     }
-    //     return Err("Type check failed".into());
-    // }
-    // 
-    // let config = codegen::CodegenConfig {
-    //     optimize: true,
-    //     target_triple: "x86_64-pc-windows-msvc".to_string(),
-    // };
-    // let mut target = codegen::Target::create(config, file_id);
-    // target.compile(&program)?;
-    // 
-    // let output_exe = PathBuf::from("program.exe");
-    // 
-    // #[cfg(target_os = "windows")]
-    // {
-    //     let msvc_lib_paths = get_msvc_lib_paths()?;
-    //     let mut args = vec![
-    //         "-O3".to_string(),
-    //         "output.c".to_string(),
-    //         "-o".to_string(),
-    //         "program.exe".to_string(),
-    //     ];
-    // 
-    //     for path in msvc_lib_paths {
-    //         args.push("-L".to_string());
-    //         args.push(path);
-    //     }
-    // 
-    //     args.extend_from_slice(&[
-    //         "-lmsvcrt".to_string(),
-    //         "-Xlinker".to_string(),
-    //         "/NODEFAULTLIB:libcmt".to_string(),
-    //     ]);
-    // 
-    //     let status = std::process::Command::new("clang").args(&args).status()?;
-    //     if !status.success() {
-    //         return Err("C compilation failed".into());
-    //     }
-    // }
-    // 
-    // println!("Program compiled to: {}", output_exe.display());
-    // Ok(())
+    let lexer = lexer::Lexer::new(&files, file_id);
+    let mut parser = parser::Parser::new(lexer);
+    let program = parser.parse().map_err(MyError)?;
+    
+    println!("{:#?}", program);
+    
+    let mut type_checker = typeck::TypeChecker::new(file_id);
+    if let Err(errors) = type_checker.check(&program) {
+        for error in errors {
+            eprintln!("Type error: {:?}", error);
+        }
+        return Err("Type check failed".into());
+    }
+    
+    let config = codegen::CodegenConfig {
+        optimize: true,
+        target_triple: "x86_64-pc-windows-msvc".to_string(),
+    };
+    let mut target = codegen::Target::create(config, file_id);
+    target.compile(&program)?;
+    
+    let output_exe = PathBuf::from("program.exe");
+    
+    #[cfg(target_os = "windows")]
+    {
+        let msvc_lib_paths = get_msvc_lib_paths()?;
+        let mut args = vec![
+            "-O3".to_string(),
+            "output.c".to_string(),
+            "-o".to_string(),
+            "program.exe".to_string(),
+        ];
+    
+        for path in msvc_lib_paths {
+            args.push("-L".to_string());
+            args.push(path);
+        }
+    
+        args.extend_from_slice(&[
+            "-lmsvcrt".to_string(),
+            "-Xlinker".to_string(),
+            "/NODEFAULTLIB:libcmt".to_string(),
+        ]);
+    
+        let status = std::process::Command::new("clang").args(&args).status()?;
+        if !status.success() {
+            return Err("C compilation failed".into());
+        }
+    }
+    
+    println!("Program compiled to: {}", output_exe.display());
     Ok(())
 }

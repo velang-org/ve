@@ -164,9 +164,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_print(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
-        let start_span = self.peek().map(|(_, s)| *s).unwrap();
-        self.advance();
+        self.expect(Token::KwPrint)?;
+        let start_span = self.previous().map(|(_, s)| *s).unwrap();
+        self.expect(Token::LParen)?;
         let expr = self.parse_expr()?;
+        self.expect(Token::RParen)?;
         self.expect(Token::Semi)?;
         let end_span = self.previous().map(|(_, s)| *s).unwrap();
         Ok(ast::Stmt::Expr(
@@ -315,7 +317,13 @@ impl<'a> Parser<'a> {
                 self.parse_intrinsic_call(name, span)
             },
             Some((Token::Str(value), span)) => Ok(ast::Expr::Str(value, span, ast::Type::String)),
-            Some((Token::Ident(name), span)) => Ok(ast::Expr::Var(name, span, ast::Type::Unknown)),
+            Some((Token::Ident(name), span)) => {
+                if self.check(Token::LParen) {
+                    self.parse_function_call(name, span)
+                } else {
+                    Ok(ast::Expr::Var(name, span, ast::Type::Unknown))
+                }
+            },
             Some((Token::LParen, _)) => {
                 let expr = self.parse_expr()?;
                 self.expect(Token::RParen)?;
@@ -329,6 +337,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_function_call(&mut self, name: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+        self.expect(Token::LParen)?;
+        let mut args = Vec::new();
+        while !self.check(Token::RParen) {
+            args.push(self.parse_expr()?);
+            if !self.check(Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        self.expect(Token::RParen)?;
+        Ok(ast::Expr::Call(name, args, span, ast::Type::Unknown))
+    }
+    
     fn parse_safe_block(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         self.expect(Token::LBrace)?;
         let mut stmts = Vec::new();
