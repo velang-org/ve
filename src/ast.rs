@@ -1,0 +1,128 @@
+use std::fmt;
+use codespan::Span;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    I32,
+    Bool,
+    String,
+    Void,
+    Function(Vec<Type>, Box<Type>),
+    Unknown,
+
+    Arena,
+    Pointer(Box<Type>),
+    RawPtr,
+}
+
+#[derive(Debug)]
+pub struct Function {
+    pub name: String,
+    pub params: Vec<(String, Type)>,
+    pub return_type: Type,
+    pub body: Vec<Stmt>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct Program {
+    pub stmts: Vec<Stmt>,
+    pub functions: Vec<Function>,
+}
+
+
+#[derive(Debug)]
+pub enum Stmt {
+    Let(String, Option<Type>, Expr, Span),
+    Expr(Expr, Span),
+    If(Expr, Vec<Stmt>, Option<Vec<Stmt>>, Span),
+    Return(Expr, Span),
+    Defer(Expr, Span)
+}
+
+#[derive(Debug)]
+pub enum Expr {
+    Int(i64, Span, Type),
+    Bool(bool, Span, Type),
+    Str(String, Span, Type),
+    BinOp(Box<Expr>, BinOp, Box<Expr>, Span, Type),
+    Var(String, Span, Type),
+    Call(String, Vec<Expr>, Span, Type),
+    SafeBlock(Vec<Stmt>, Span, Type),
+    IntrinsicCall(String, Vec<Expr>, Span, Type),
+    Cast(Box<Expr>, Type, Span, Type),
+    Deref(Box<Expr>, Span, Type),
+    Assign(Box<Expr>, Box<Expr>, Span, Type),
+    Print(Box<Expr>, Span, Type),
+}
+
+impl Expr {
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Int(_, span, _) => *span,
+            Expr::Bool(_, span, _) => *span,
+            Expr::Str(_, span, _) => *span,
+            Expr::BinOp(_, _, _, span, _) => *span,
+            Expr::Var(_, span, _) => *span,
+            Expr::Call(_, _, span, _) => *span,
+            Expr::SafeBlock(_, span, _) => *span,
+            Expr::IntrinsicCall(_, _, span, _) => *span,
+            Expr::Cast(_, _, span, _) => *span,
+            Expr::Deref(_, span, _) => *span,
+            Expr::Assign(_, _, span, _) => *span,
+            Expr::Print(_, span, _) => *span,
+        }
+    }
+
+    pub fn get_type(&self) -> Type {
+        match self {
+            Expr::Int(_, _, ty) => ty.clone(),
+            Expr::Bool(_, _, ty) => ty.clone(),
+            Expr::Str(_, _, ty) => ty.clone(),
+            Expr::BinOp(_, _, _, _, ty) => ty.clone(),
+            Expr::Var(_, _, ty) => ty.clone(),
+            Expr::Call(_, _, _, ty) => ty.clone(),
+            Expr::SafeBlock(_, _, ty) => ty.clone(),
+            Expr::IntrinsicCall(_, _, _, ty) => ty.clone(),
+            Expr::Cast(_, target_ty, _, _) => target_ty.clone(),
+            Expr::Deref(_, _, ty) => ty.clone(),
+            Expr::Assign(_, _, _, ty) => ty.clone(),
+            Expr::Print(_, _, ty) => ty.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Gt,
+    Eq,
+}
+
+
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Type::I32 => write!(f, "i32"),
+            Type::Bool => write!(f, "bool"),
+            Type::String => write!(f, "string"),
+            Type::Void => write!(f, "void"),
+            Type::Function(params, ret) => {
+                write!(f, "fn(")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", param)?;
+                }
+                write!(f, ") -> {}", ret)
+            }
+            Type::Unknown => write!(f, "<?>"),
+            Type::Arena => write!(f, "arena"),
+            Type::Pointer(ty) => write!(f, "*{}", ty),
+            Type::RawPtr => write!(f, "rawptr"),
+        }
+    }
+}
