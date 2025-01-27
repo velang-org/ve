@@ -137,7 +137,7 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         if self.check(Token::KwLet) {
             self.advance();
-            self.parse_let()
+            self.parse_let(true)
         } else if self.check(Token::KwIf) {
             self.parse_if()
         } else if self.check(Token::KwReturn) {
@@ -146,6 +146,10 @@ impl<'a> Parser<'a> {
             self.parse_defer()
         } else if self.check(Token::KwPrint) {
             self.parse_print()
+        } else if self.check(Token::KwWhile) {
+          self.parse_while()
+        } else if self.check(Token::KwFor) {
+            self.parse_for()
         } else {
             let expr = self.parse_expr()?;
             let span = expr.span();
@@ -161,6 +165,80 @@ impl<'a> Parser<'a> {
         self.expect(Token::Semi)?;
         let end_span = self.previous().map(|(_, s)| *s).unwrap();
         Ok(ast::Stmt::Defer(expr, Span::new(start_span.start(), end_span.end())))
+    }
+
+
+    fn parse_while(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+        self.expect(Token::KwWhile)?;
+        let while_span = self.previous().map(|(_, s)| *s).unwrap();
+
+        self.expect(Token::LParen)?;
+        let condition = self.parse_expr()?;
+        self.expect(Token::RParen)?;
+
+        self.expect(Token::LBrace)?;
+        let mut body = Vec::new();
+        while !self.check(Token::RBrace) {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(Token::RBrace)?;
+
+        Ok(ast::Stmt::While(
+            condition,
+            body,
+            Span::new(while_span.start(), self.previous().unwrap().1.end()),
+        ))
+    }
+
+    fn parse_for(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+        self.expect(Token::KwFor)?;
+        let for_span = self.previous().map(|(_, s)| *s).unwrap();
+
+        self.expect(Token::LParen)?;
+
+        let initializer = if self.check(Token::Semi) {
+            None
+        } else if self.check(Token::KwLet) {
+            // Handle let initializer without semicolon
+            self.advance(); // consume 'let'
+            let let_stmt = self.parse_let(false)?;
+            Some(Box::new(let_stmt))
+        } else {
+            // Parse as an expression statement (without semicolon)
+            let expr = self.parse_expr()?;
+            let expr_span = expr.span();
+            Some(Box::new(ast::Stmt::Expr(expr, expr_span)))
+        };
+        self.expect(Token::Semi)?; // consume the semicolon after initializer
+
+        let condition = if self.check(Token::Semi) {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        self.expect(Token::Semi)?;
+
+        let increment = if self.check(Token::RParen) {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        self.expect(Token::RParen)?;
+
+        self.expect(Token::LBrace)?;
+        let mut body = Vec::new();
+        while !self.check(Token::RBrace) {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(Token::RBrace)?;
+
+        Ok(ast::Stmt::For(
+            initializer,
+            condition,
+            increment,
+            body,
+            Span::new(for_span.start(), self.previous().unwrap().1.end()),
+        ))
     }
 
     fn parse_print(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
@@ -214,7 +292,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_let(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+    fn parse_let(&mut self, expect_semi: bool) -> Result<ast::Stmt, Diagnostic<FileId>> {
         let let_span = self.previous().map(|(_, s)| *s).unwrap();
         let token = self.advance().cloned();
         let (ident, _) = match token.as_ref() {
@@ -232,8 +310,14 @@ impl<'a> Parser<'a> {
 
         self.expect(Token::Eq)?;
         let expr = self.parse_expr()?;
-        self.expect(Token::Semi)?;
-        let end_span = self.previous().map(|(_, s)| *s).unwrap();
+        if expect_semi {
+            self.expect(Token::Semi)?;
+        }
+        let end_span = if expect_semi {
+            self.previous().map(|(_, s)| *s).unwrap()
+        } else {
+            expr.span()
+        };
         Ok(ast::Stmt::Let(
             ident,
             type_annot,

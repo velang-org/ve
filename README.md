@@ -8,14 +8,14 @@ Verve is an experimental systems programming language compiling to C, focusing o
 
 - **C compilation backend** with automatic code generation
 - **Basic type system** supporting:
-    - Primitives: `i32`, `bool`, `string`, `void`
-    - Pointers (experimental)
+  - Primitives: `i32`, `bool`, `string`, `void`
+  - Pointers (experimental)
 - **Function definitions** with parameters and returns
 - **Variables** with type inference
 - **Print statements** with format specifiers
 - **Arithmetic operations**: `+`, `-`, `*`, `/`
 - **Comparison operators**: `==`, `>`
-- **Control flow**: Basic function calls
+- **Control flow**: Basic function calls, `while` loops, `for` loops
 
 ## Installation
 

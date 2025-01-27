@@ -37,7 +37,9 @@ pub enum Stmt {
     Expr(Expr, Span),
     If(Expr, Vec<Stmt>, Option<Vec<Stmt>>, Span),
     Return(Expr, Span),
-    Defer(Expr, Span)
+    Defer(Expr, Span),
+    While(Expr, Vec<Stmt>, Span),
+    For(Option<Box<Stmt>>, Option<Expr>, Option<Expr>, Vec<Stmt>, Span),
 }
 
 #[derive(Debug)]

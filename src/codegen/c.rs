@@ -124,6 +124,57 @@ impl CBackend {
                 } else {
                     self.output.push_str(&format!("{}\n", expr_code));
                 }
+            },
+            ast::Stmt::While(cond, body, _) => {
+                let cond_code = self.emit_expr(cond)?;
+                self.output.push_str(&format!("while ({}) {{\n", cond_code));
+                for stmt in body {
+                    self.emit_stmt(stmt)?;
+                }
+                self.output.push_str("}\n");
+            },
+            ast::Stmt::For(init, cond, incr, body, _) => {
+                self.output.push_str("for (");
+                if let Some(init) = init {
+                    match &**init {
+                        ast::Stmt::Let(name, ty, expr, _) => {
+                            let c_ty = ty.as_ref().map(|t| self.type_to_c(t))
+                                .unwrap_or_else(|| "int");  
+                            let value = self.emit_expr(expr)?;
+                            self.output.push_str(&format!("{} {} = {}", c_ty, name, value));
+                        }
+                        ast::Stmt::Expr(expr, _) => {
+                            let code = self.emit_expr(expr)?;
+                            self.output.push_str(&code);
+                        }
+                        _ => return Err(CompileError::CodegenError {
+                            message: "Unsupported for loop initializer".to_string(),
+                            span: None,
+                            file_id: self.file_id,
+                        }),
+                    }
+                }
+                self.output.push_str("; ");
+                
+                if let Some(cond) = cond {
+                    let cond_code = self.emit_expr(cond)?;
+                    self.output.push_str(&format!("({})", cond_code));
+                } else {
+                    self.output.push_str("1");  
+                }
+
+                self.output.push_str("; ");
+                
+                if let Some(incr) = incr {
+                    let incr_code = self.emit_expr(incr)?;
+                    self.output.push_str(&format!("({})", incr_code));
+                }
+
+                self.output.push_str(") {\n");
+                for stmt in body {
+                    self.emit_stmt(stmt)?;
+                }
+                self.output.push_str("}\n");
             }
             _ => unimplemented!(),
         }
@@ -141,23 +192,26 @@ impl CBackend {
                     ast::BinOp::Sub => "-",
                     ast::BinOp::Mul => "*",
                     ast::BinOp::Div => "/",
-                    _ => return Err(CompileError::CodegenError {
-                        message: "Unsupported operator".to_string(),
-                        span: Some(*span),
-                        file_id: self.file_id,
-                    }),
+                    ast::BinOp::Gt => ">",
+                    ast::BinOp::Eq => "==",
                 };
                 Ok(format!("({} {} {})", left_code, op_str, right_code))
+            },
+            ast::Expr::Assign(target, value, _, _) => {
+                let target_code = self.emit_expr(target)?;
+                let value_code = self.emit_expr(value)?;
+                Ok(format!("({} = {})", target_code, value_code))
             },
             ast::Expr::Str(s, _, _) => Ok(format!("\"{}\"", s)),
             ast::Expr::Var(name, _, _) => Ok(name.clone()),
             ast::Expr::Print(expr, _span, _) => {
                 let value = self.emit_expr(expr)?;
-                let expr_ty = expr.get_type(); 
+                let expr_ty = expr.get_type();
                 let (format_spec, arg) = match expr_ty {
                     Type::I32 => ("%d", value),
                     Type::Bool => ("%s", format!("({} ? \"true\" : \"false\")", value)),
                     Type::String => ("%s", value),
+                    Type::Unknown => ("%d", value), 
                     _ => return Err(CompileError::CodegenError {
                         message: format!("Cannot print type {}", expr_ty),
                         span: Some(expr.span()),
@@ -172,7 +226,7 @@ impl CBackend {
                     args_code.push(self.emit_expr(arg)?);
                 }
                 Ok(format!("{}({})", name, args_code.join(", ")))
-            }
+            },
             _ => Err(CompileError::CodegenError {
                 message: "Unsupported expression".to_string(),
                 span: Some(expr.span()),

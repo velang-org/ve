@@ -133,6 +133,27 @@ impl TypeChecker {
                         );
                     }
                 }
+            },
+            Stmt::While(cond, body, _) => {
+                let cond_ty = self.check_expr(cond)?;
+                self.expect_type(&cond_ty, &Type::Bool, cond.span())?;
+                self.check_block(body)?;
+            },
+            Stmt::For(init, cond, incr, body, _) => {
+                if let Some(init) = init {
+                    self.check_stmt(init)?;
+                }
+                
+                if let Some(cond) = cond {
+                    let cond_ty = self.check_expr(cond)?;
+                    self.expect_type(&cond_ty, &Type::Bool, cond.span())?;
+                }
+                
+                if let Some(incr) = incr {
+                    self.check_expr(incr)?;
+                }
+                
+                self.check_block(body)?;
             }
         }
         Ok(())

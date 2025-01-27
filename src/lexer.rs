@@ -23,6 +23,11 @@ pub enum Token {
     KwAs,
     #[token("print")]
     KwPrint,
+    #[token("while")]
+    KwWhile,
+    #[token("for")]
+    KwFor,
+    
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Str(String),
     #[token("i32")]
