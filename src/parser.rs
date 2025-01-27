@@ -142,8 +142,6 @@ impl<'a> Parser<'a> {
             self.parse_if()
         } else if self.check(Token::KwReturn) {
             self.parse_return()
-        } else if self.check(Token::KwDefer) {
-            self.parse_defer()
         } else if self.check(Token::KwPrint) {
             self.parse_print()
         } else if self.check(Token::KwWhile) {
@@ -439,7 +437,11 @@ impl<'a> Parser<'a> {
         self.expect(Token::LBrace)?;
         let mut stmts = Vec::new();
         while !self.check(Token::RBrace) {
-            stmts.push(self.parse_stmt()?);
+            if self.check(Token::KwDefer) {
+                stmts.push(self.parse_defer()?);
+            } else {
+                stmts.push(self.parse_stmt()?);
+            }
         }
         self.expect(Token::RBrace)?;
         let end_span = self.previous().map(|(_, s)| *s).unwrap();
