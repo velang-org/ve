@@ -164,14 +164,19 @@ impl TypeChecker {
             Expr::Int(_, _, _) => Ok(Type::I32),
             Expr::Bool(_, _, _) => Ok(Type::Bool),
             Expr::Str(_, _, _) => Ok(Type::String),
-            Expr::Var(name, span, _) => self.context
-                .variables
-                .get(name)
-                .cloned()
-                .ok_or_else(|| {
-                    self.report_error(&format!("Undefined variable '{}'", name), *span);
-                    vec![]
-                }),
+            Expr::Var(name, span, _) => {
+                match name.as_str() {
+                    "true" | "false" => Ok(Type::Bool),
+                    _ => self.context
+                        .variables
+                        .get(name)
+                        .cloned()
+                        .ok_or_else(|| {
+                            self.report_error(&format!("Undefined variable '{}'", name), *span);
+                            vec![]
+                        }),
+                }
+            }
             Expr::BinOp(left, op, right, span, _) => {
                 let left_ty = self.check_expr(left).unwrap_or(Type::Unknown);
                 let right_ty = self.check_expr(right).unwrap_or(Type::Unknown);
@@ -308,10 +313,13 @@ impl TypeChecker {
             Expr::Print(expr, span, _) => {
                 let expr_ty = self.check_expr(expr)?;
 
-                if !matches!(expr_ty, Type::I32 | Type::Bool | Type::String) {
+                if !matches!(
+                expr_ty,
+                Type::I32 | Type::Bool | Type::String | Type::RawPtr | Type::Pointer(_)
+            ) {
                     self.report_error(
                         &format!("Cannot print value of type {}", expr_ty),
-                        *span
+                        *span,
                     );
                 }
 
