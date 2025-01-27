@@ -45,15 +45,25 @@ impl CBackend {
     fn emit_globals(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         for stmt in &program.stmts {
             if let ast::Stmt::Let(name, ty, expr, _) = stmt {
-                let c_ty = match ty {
-                    Some(t) => self.type_to_c(t),
-                    None => "int".parse().unwrap(),
-                };
-                let value = self.emit_expr(expr)?;
-                self.output.push_str(&format!("{} {} = {};\n", c_ty, name, value));
+                if self.is_constant_expr(expr) {
+                    let c_ty = self.type_to_c(ty.as_ref().unwrap_or(&Type::I32));
+                    let value = self.emit_expr(expr)?;
+                    self.output.push_str(&format!("{} {} = {};\n", c_ty, name, value));
+                } else {
+                    return Err(CompileError::CodegenError {
+                        message: format!("Non-constant initializer for global '{}'", name),
+                        span: Some(expr.span()),
+                        file_id: self.file_id,
+                    });
+                }
             }
         }
         Ok(())
+    }
+
+
+    fn is_constant_expr(&self, expr: &ast::Expr) -> bool {
+        matches!(expr, ast::Expr::Int(..) | ast::Expr::Str(..))
     }
 
     fn emit_main_if_missing(&mut self, program: &ast::Program) -> Result<(), CompileError> {
@@ -77,6 +87,16 @@ impl CBackend {
     }
 
     fn emit_functions(&mut self, program: &ast::Program) -> Result<(), CompileError> {
+        for func in &program.functions {
+            let return_type = self.type_to_c(&func.return_type);
+            let params = func.params.iter()
+                .map(|(name, ty)| format!("{} {}", self.type_to_c(ty), name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.output.push_str(&format!("{} {}({});\n", return_type, func.name, params));
+        }
+        self.output.push('\n');
+        
         for func in &program.functions {
             self.emit_function(func)?;
         }
@@ -236,20 +256,15 @@ impl CBackend {
             ast::Expr::Print(expr, _span, _) => {
                 let value = self.emit_expr(expr)?;
                 let expr_ty = expr.get_type();
-                
+
                 let (format_spec, arg) = match expr_ty {
-                    Type::I32 if expr.is_pointer_cast() => {
-                        self.includes.borrow_mut().insert("<inttypes.h>");
-                        ("%\"PRIuPTR\"", format!("(uintptr_t){}", value))
-                    }
                     Type::I32 => ("%d", value),
+                    Type::Bool => ("%s", format!("({} ? \"true\" : \"false\")", value)),
+                    Type::String => ("%s", value),
                     Type::Pointer(_) | Type::RawPtr => {
                         self.includes.borrow_mut().insert("<inttypes.h>");
                         ("%\"PRIuPTR\"", format!("(uintptr_t){}", value))
-                    }
-                    Type::Bool => ("%s", format!("({} ? \"true\" : \"false\")", value)),
-                    Type::String => ("%s", value),
-                    Type::Unknown => ("%d", value), 
+                    },
                     _ => return Err(CompileError::CodegenError {
                         message: format!("Cannot print type {}", expr_ty),
                         span: Some(expr.span()),
