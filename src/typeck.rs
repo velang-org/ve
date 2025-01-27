@@ -206,16 +206,16 @@ impl TypeChecker {
                 let ty = self.check_expr(expr)?;
                 match ty {
                     Type::Pointer(inner) => Ok(*inner),
-                    Type::RawPtr => Ok(Type::Unknown),  // RawPtr nie ma informacji o typie
-                    _ => Ok({
+                    Type::RawPtr => Ok(Type::Unknown),
+                    _ => {
                         self.report_error(
-                            &format!("Cannot dereference non-pointer type {}", ty),
+                            &format!("Cannot dereference value of type {}", ty),
                             *span
                         );
-                        Type::Unknown
-                    })
+                        Ok(Type::Unknown)
+                    }
                 }
-            },
+            }
             Expr::Assign(target, value, span, _) => {
                 let target_ty = self.check_expr(target)?;
                 let value_ty = self.check_expr(value)?;
@@ -287,6 +287,8 @@ impl TypeChecker {
                 match (&source_ty, target_ty) {
                     (Type::RawPtr, Type::Pointer(_)) => Ok(target_ty.clone()),
                     (Type::Pointer(_), Type::RawPtr) => Ok(target_ty.clone()),
+                    (Type::Pointer(_), Type::I32) => Ok(target_ty.clone()),
+                    (Type::I32, Type::Pointer(_)) => Ok(target_ty.clone()),
                     (Type::I32, Type::I32) => Ok(source_ty),
                     (Type::I32, Type::Bool) => Ok(target_ty.clone()),
 
@@ -337,6 +339,8 @@ impl TypeChecker {
             (Type::I32, Type::Bool) => true,
             (Type::RawPtr, Type::Pointer(_)) => true,
             (Type::Pointer(_), Type::RawPtr) => true,
+            (Type::Pointer(_), Type::I32) => true,
+            (Type::I32, Type::Pointer(_)) => true,
             (Type::I32, Type::I32) => true,
             (Type::Pointer(a), Type::Pointer(b)) => a == b,
             _ => from == to

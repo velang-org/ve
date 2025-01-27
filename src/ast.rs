@@ -15,6 +15,13 @@ pub enum Type {
     RawPtr,
 }
 
+impl Type {
+    pub(crate) fn is_pointer(&self) -> bool {
+        matches!(self, Type::Pointer(_))
+    }
+}
+
+
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
@@ -90,6 +97,14 @@ impl Expr {
             Expr::Deref(_, _, ty) => ty.clone(),
             Expr::Assign(_, _, _, ty) => ty.clone(),
             Expr::Print(_, _, ty) => ty.clone(),
+        }
+    }
+
+    pub(crate) fn is_pointer_cast(&self) -> bool {
+        if let Expr::Cast(inner, target_ty, _, _) = self {
+            inner.get_type().is_pointer() && *target_ty == Type::I32
+        } else {
+            false
         }
     }
 }

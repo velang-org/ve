@@ -1,7 +1,10 @@
+fn main() {
+    safe {
+        let ptr = __alloc(10) as *i32;
+        defer __dealloc(ptr);
 
-
-fn skibidi() {
-  print("skibidi");
+        *ptr = 42;
+        print(ptr as i32);
+        print(*ptr);
+    }
 }
-
-skibidi();
