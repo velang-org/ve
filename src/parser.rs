@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use super::{ast, lexer::{Token, Lexer}};
 use codespan::{FileId, Files, Span};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use crate::ast::Type;
 
 pub struct Parser<'a> {
     tokens: Vec<(Token, Span)>,
@@ -354,16 +356,18 @@ impl<'a> Parser<'a> {
 
     fn parse_comparison(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut expr = self.parse_additive()?;
-        while self.check(Token::Gt) {
-            let _op_span = self.peek().map(|(_, s)| *s).unwrap();
-            self.advance();
+        while self.check(Token::Gt) || self.check(Token::Lt) {
+            let op = match self.advance().unwrap().0 {
+                Token::Gt => ast::BinOp::Gt,
+                Token::Lt => ast::BinOp::Lt,
+                _ => unreachable!(),
+            };
             let right = self.parse_additive()?;
             let span = Span::new(expr.span().start(), right.span().end());
-            expr = ast::Expr::BinOp(Box::new(expr), ast::BinOp::Gt, Box::new(right), span, ast::Type::Unknown);
+            expr = ast::Expr::BinOp(Box::new(expr), op, Box::new(right), span, ast::Type::Unknown);
         }
         Ok(expr)
     }
-
     fn parse_additive(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut expr = self.parse_unary()?;
         while self.check(Token::Plus) || self.check(Token::Minus) {
@@ -432,7 +436,7 @@ impl<'a> Parser<'a> {
         self.expect(Token::RParen)?;
         Ok(ast::Expr::Call(name, args, span, ast::Type::Unknown))
     }
-    
+
     fn parse_safe_block(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         self.expect(Token::LBrace)?;
         let mut stmts = Vec::new();

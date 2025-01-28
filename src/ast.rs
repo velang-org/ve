@@ -117,6 +117,7 @@ pub enum BinOp {
     Div,
     Gt,
     Eq,
+    Lt,
 }
 
 
