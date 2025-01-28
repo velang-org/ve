@@ -1,0 +1,15 @@
+fn main() {
+    let x = 10;
+    let y = 20;
+    let name = "Verve";
+
+    let sum = x + y;
+
+    print("Sum: ");
+    print(sum);
+
+    let is_cool = true;
+
+    print("Is Verve cool? ");
+    print(is_cool);
+}

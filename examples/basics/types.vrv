@@ -1,0 +1,16 @@
+fn main() {
+    let integer: i32 = 42;
+    let boolean: bool = true;
+    let text: string = "Types in Verve";
+    let raw: rawptr = __alloc(16) as rawptr;
+
+    print("Integer: ");
+    print(integer);
+    print("Boolean: ");
+    print(boolean);
+    print("Text: ");
+    print(text);
+    print("Raw: ");
+    print(raw);
+
+}
