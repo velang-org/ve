@@ -6,7 +6,6 @@ use std::collections::HashMap;
 #[derive(Debug)]
 struct Context {
     variables: HashMap<String, Type>,
-    functions: HashMap<String, (Vec<Type>, Type)>,
     current_return_type: Type,
     in_safe: bool,
 }
@@ -15,7 +14,6 @@ impl Context {
     fn new() -> Self {
         Context {
             variables: HashMap::new(),
-            functions: HashMap::new(),
             current_return_type: Type::Void,
             in_safe: false,
         }
@@ -26,6 +24,7 @@ impl Context {
 pub struct TypeChecker {
     errors: Vec<Diagnostic<FileId>>,
     context: Context,
+    functions: HashMap<String, (Vec<Type>, Type)>, 
     file_id: FileId,
 }
 
@@ -35,22 +34,24 @@ impl TypeChecker {
             file_id,
             errors: Vec::new(),
             context: Context::new(),
+            functions: HashMap::new(),
         }
     }
 
     pub fn check(&mut self, program: &ast::Program) -> Result<(), Vec<Diagnostic<FileId>>> {
         for func in &program.functions {
             let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
-            self.context
-                .functions
-                .insert(func.name.clone(), (params, func.return_type.clone()));
+            self.functions.insert(
+                func.name.clone(),
+                (params, func.return_type.clone())
+            );
         }
-
+        
         for func in &program.functions {
             self.context.current_return_type = func.return_type.clone();
             self.check_function(func)?;
         }
-
+        
         for stmt in &program.stmts {
             self.check_stmt(stmt)?;
         }
@@ -61,6 +62,7 @@ impl TypeChecker {
             Err(std::mem::take(&mut self.errors))
         }
     }
+
 
     fn check_function(&mut self, func: &ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
         let mut local_ctx = Context::new();
@@ -204,6 +206,17 @@ impl TypeChecker {
                             Type::Unknown
                         }
                     },
+                    &ast::BinOp::Lt => {
+                        if left_ty == Type::I32 && right_ty == Type::I32 {
+                            Type::Bool
+                        } else {
+                            self.report_error(
+                                &format!("Cannot apply {:?} to {} and {}", op, left_ty, right_ty),
+                                *span,
+                            );
+                            Type::Unknown
+                        }
+                    }
                 };
                 Ok(result_ty)
             },
@@ -235,7 +248,7 @@ impl TypeChecker {
                 Ok(Type::Void)
             },
             Expr::Call(name, args, span, _) => {
-                let Some((param_types, return_type)) = self.context.functions.get(name).cloned() else {
+                let Some((param_types, return_type)) = self.functions.get(name).cloned() else {
                     self.report_error(&format!("Undefined function '{}'", name), *span);
                     return Ok(Type::Unknown);
                 };
