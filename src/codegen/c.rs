@@ -10,9 +10,9 @@ pub struct CBackend {
     body: String,
     file_id: FileId,
     includes: RefCell<HashSet<&'static str>>,
-    variables: RefCell<HashMap<String, String>>,
+    variables: RefCell<HashMap<String, Type>>,
+    functions_map: HashMap<String, Type>,
 }
-
 
 impl CBackend {
     pub fn new(config: CodegenConfig, file_id: FileId) -> Self {
@@ -23,10 +23,14 @@ impl CBackend {
             file_id,
             includes: RefCell::new(HashSet::new()),
             variables: RefCell::new(HashMap::new()),
+            functions_map: HashMap::new(),
         }
     }
 
     pub fn compile(&mut self, program: &ast::Program) -> Result<(), CompileError> {
+        self.functions_map = program.functions.iter()
+            .map(|f| (f.name.clone(), f.return_type.clone()))
+            .collect();
         self.emit_globals(program)?;
         self.emit_functions(program)?;
         self.emit_main_if_missing(program)?;
@@ -50,7 +54,6 @@ impl CBackend {
         self.header.push('\n');
     }
 
-
     fn emit_globals(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         for stmt in &program.stmts {
             if let ast::Stmt::Let(name, ty, expr, _) = stmt {
@@ -70,8 +73,6 @@ impl CBackend {
         Ok(())
     }
 
-
-
     fn is_constant_expr(&self, expr: &ast::Expr) -> bool {
         matches!(expr, ast::Expr::Int(..) | ast::Expr::Str(..))
     }
@@ -85,7 +86,7 @@ impl CBackend {
                     self.emit_stmt(stmt)?;
                 }
             }
-            
+
             #[cfg(target_os = "windows")]
             self.body.push_str("    system(\"pause\");\n");
             #[cfg(not(target_os = "windows"))]
@@ -110,7 +111,7 @@ impl CBackend {
             self.body.push_str(&format!("{} {}({});\n", return_type, func.name, params));
         }
         self.body.push('\n');
-        
+
         for func in &program.functions {
             self.emit_function(func)?;
         }
@@ -128,6 +129,7 @@ impl CBackend {
         for (name, ty) in &func.params {
             let c_ty = self.type_to_c(ty);
             param_strings.push(format!("{} {}", c_ty, name));
+            self.variables.borrow_mut().insert(name.clone(), ty.clone());
         }
         let params = param_strings.join(", ");
 
@@ -142,7 +144,6 @@ impl CBackend {
             self.body.push_str("    system(\"pause\");\n");
             #[cfg(not(target_os = "windows"))]
             self.body.push_str("    getchar();\n");
-
 
             let last_is_return = func.body.last().is_some_and(|s| matches!(s, ast::Stmt::Return(..)));
 
@@ -160,28 +161,22 @@ impl CBackend {
     fn emit_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
         match stmt {
             ast::Stmt::Let(name, ty, expr, _) => {
-                let c_ty = match ty {
-                    Some(t) => self.type_to_c(t),
-                    None => {
-                        let expr_type = if let ast::Expr::Var(var_name, _, _) = expr {
-                            if var_name == "true" || var_name == "false" {
-                                Type::Bool
-                            } else {
-                                expr.get_type()
-                            }
-                        } else {
-                            expr.get_type()
-                        };
-                        if expr_type == Type::Unknown {
-                            "int".to_string()
-                        } else {
-                            self.type_to_c(&expr_type)
+                let var_type = if let Some(ty) = ty {
+                    ty.clone()
+                } else {
+                    match expr {
+                        ast::Expr::Call(func_name, _, _, _) => {
+                            self.functions_map.get(func_name)
+                                .cloned()
+                                .unwrap_or(Type::Unknown)
                         }
+                        _ => expr.get_type()
                     }
                 };
+                let c_ty = self.type_to_c(&var_type);
                 let expr_code = self.emit_expr(expr)?;
                 self.body.push_str(&format!("{} {} = {};\n", c_ty, name, expr_code));
-                self.variables.borrow_mut().insert(name.clone(), c_ty);
+                self.variables.borrow_mut().insert(name.clone(), var_type);
             }
             ast::Stmt::Return(expr, _) => {
                 let expr_code = self.emit_expr(expr)?;
@@ -208,46 +203,60 @@ impl CBackend {
             ast::Stmt::For(init, cond, incr, body, _) => {
                 self.body.push_str("for (");
                 if let Some(init) = init {
-                    match &**init {
-                        ast::Stmt::Let(name, ty, expr, _) => {
-                            let c_ty = ty.as_ref().map(|t| self.type_to_c(t))
-                                .unwrap_or_else(|| "int".parse().unwrap());
-                            let value = self.emit_expr(expr)?;
-                            self.body.push_str(&format!("{} {} = {}", c_ty, name, value));
-                        }
-                        ast::Stmt::Expr(expr, _) => {
-                            let code = self.emit_expr(expr)?;
-                            self.body.push_str(&code);
-                        }
-                        _ => return Err(CompileError::CodegenError {
-                            message: "Unsupported for loop initializer".to_string(),
-                            span: None,
-                            file_id: self.file_id,
-                        }),
+                    let mut init_code = String::new();
+                    let original_body = std::mem::replace(&mut self.body, init_code);
+                    self.emit_stmt(&*init)?;
+                    init_code = std::mem::replace(&mut self.body, original_body);
+
+                    let trimmed = init_code.trim_end();
+                    if trimmed.ends_with(';') {
+                        let stripped = &trimmed[..trimmed.len() - 1];
+                        self.body.push_str(stripped);
+                    } else {
+                        self.body.push_str(trimmed);
                     }
                 }
                 self.body.push_str("; ");
-                
+
                 if let Some(cond) = cond {
                     let cond_code = self.emit_expr(cond)?;
-                    self.body.push_str(&format!("({})", cond_code));
+                    self.body.push_str(&cond_code);
                 } else {
-                    self.body.push('1');  
+                    self.body.push('1');
                 }
 
                 self.body.push_str("; ");
-                
+
                 if let Some(incr) = incr {
                     let incr_code = self.emit_expr(incr)?;
-                    self.body.push_str(&format!("({})", incr_code));
+                    self.body.push_str(&incr_code);
                 }
-
                 self.body.push_str(") {\n");
+
                 for stmt in body {
                     self.emit_stmt(stmt)?;
                 }
                 self.body.push_str("}\n");
             },
+            ast::Stmt::If(cond, then_branch, else_branch, _) => {
+                let cond_code = self.emit_expr(cond)?;
+                self.body.push_str(&format!("if ({}) {{\n", cond_code));
+
+                for stmt in then_branch {
+                    self.emit_stmt(stmt)?;
+                }
+                self.body.push('}');
+
+                if let Some(else_body) = else_branch {
+                    self.body.push_str(" else {\n");
+                    for stmt in else_body {
+                        self.emit_stmt(stmt)?;
+                    }
+                    self.body.push('}');
+                }
+
+                self.body.push('\n');
+            }
             _ => unimplemented!(),
         }
         Ok(())
@@ -266,6 +275,7 @@ impl CBackend {
                     ast::BinOp::Div => "/",
                     ast::BinOp::Gt => ">",
                     ast::BinOp::Eq => "==",
+                    ast::BinOp::Lt => "<",
                 };
                 Ok(format!("({} {} {})", left_code, op_str, right_code))
             },
@@ -280,25 +290,30 @@ impl CBackend {
                     self.includes.borrow_mut().insert("<stdbool.h>");
                     Ok(name.clone())
                 } else {
-                    Ok(name.clone())
+                    let var_type = self.variables.borrow().get(name).cloned().unwrap_or(Type::Unknown);
+                    match var_type {
+                        Type::I32 => Ok(name.clone()),
+                        Type::Bool => Ok(name.clone()),
+                        Type::String => Ok(name.clone()),
+                        _ => Err(CompileError::CodegenError {
+                            message: format!("Cannot print type {:?}", var_type),
+                            span: Some(expr.span()),
+                            file_id: self.file_id,
+                        }),
+                    }
                 }
             },
             ast::Expr::Print(expr, _span, _) => {
                 let value = self.emit_expr(expr)?;
-                let expr_ty = if let ast::Expr::Var(var_name, _, _) = &**expr {
-                    self.variables.borrow()
-                        .get(var_name)
-                        .and_then(|c_ty| match c_ty.as_str() {
-                            "int" => Some(Type::I32),
-                            "bool" => Some(Type::Bool),
-                            "const char*" => Some(Type::String),
-                            _ => None,
-                        })
-                        .unwrap_or(Type::Unknown)
-                } else {
-                    expr.get_type()
+                let expr_ty = match &**expr {
+                    ast::Expr::Var(name, _, _) => {
+                        self.variables.borrow()
+                            .get(name)
+                            .cloned()
+                            .unwrap_or(Type::Unknown)
+                    }
+                    _ => expr.get_type(),
                 };
-
 
                 let (format_spec, arg) = match expr_ty {
                     Type::I32 => ("%d", value),
@@ -309,7 +324,7 @@ impl CBackend {
                         ("%\"PRIuPTR\"", format!("(uintptr_t){}", value))
                     },
                     _ => return Err(CompileError::CodegenError {
-                        message: format!("Cannot print type {}", expr_ty),
+                        message: format!("Cannot print type {:?}", expr_ty),
                         span: Some(expr.span()),
                         file_id: self.file_id,
                     }),
@@ -401,10 +416,10 @@ impl CBackend {
             }),
         }
     }
-    
+
     fn emit_stmt_to_string(&mut self, stmt: &ast::Stmt) -> Result<String, CompileError> {
         let mut buffer = String::new();
-        let original_body = std::mem::replace(&mut self.body, String::new());
+        let original_body = std::mem::take(&mut self.body);
         self.emit_stmt(stmt)?;
         buffer = std::mem::replace(&mut self.body, original_body);
         Ok(buffer)
