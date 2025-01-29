@@ -1,4 +1,4 @@
-# Verve Language
+![Verve Language](https://img.shields.io/static/v1?label=&message=Verve&color=2b7489&logo=asciidoc&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ⚠️ Experimental Status
