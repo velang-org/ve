@@ -9,7 +9,6 @@ pub enum Target {
 }
 
 pub struct CodegenConfig {
-    pub optimize: bool,
     pub target_triple: String,
 }
 

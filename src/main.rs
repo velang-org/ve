@@ -1,9 +1,8 @@
+mod cli;
 mod lexer;
-
 mod ast;
 mod codegen;
 mod typeck;
-
 mod parser;
 
 use clap::Parser;
@@ -12,13 +11,7 @@ use codespan_reporting::diagnostic::Diagnostic;
 use std::fmt;
 use std::path::PathBuf;
 
-
-#[derive(Parser)]
-#[command(version, about)]
-struct Args {
-    #[arg(short, long)]
-    input: PathBuf,
-}
+use crate::cli::{Args, Command};
 
 #[derive(Debug)]
 struct MyError(Diagnostic<FileId>);
@@ -40,6 +33,7 @@ fn check_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
 #[cfg(target_os = "windows")]
 fn get_msvc_lib_paths() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     use std::env;
@@ -76,16 +70,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     check_dependencies()?;
     let args = Args::parse();
 
+    let (input, output, optimize, target_triple, verbose) = match args.command {
+        Some(Command::Run {
+                 input,
+                 output,
+                 optimize,
+                 target_triple,
+                 verbose,
+             }) => (input, output, optimize, target_triple, verbose),
+        None => (
+            args.input.unwrap(),
+            args.output,
+            args.optimize,
+            args.target_triple,
+            args.verbose,
+        ),
+    };
+
+
+
     let mut files = Files::new();
-    let content = std::fs::read_to_string(&args.input)?;
-    let file_id = files.add(args.input.to_str().unwrap(), content);
+    let content = std::fs::read_to_string(&input)?;
+    let file_id = files.add(input.to_str().unwrap(), content);
 
     let lexer = lexer::Lexer::new(&files, file_id);
     let mut parser = parser::Parser::new(lexer);
     let program = parser.parse().map_err(MyError)?;
-    
-    println!("{:#?}", program);
-    
+
+    if verbose {
+        println!("Parsed AST:\n{:#?}", program);
+    }
+
     let mut type_checker = typeck::TypeChecker::new(file_id);
     if let Err(errors) = type_checker.check(&program) {
         for error in errors {
@@ -93,43 +108,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Err("Type check failed".into());
     }
-    
+
     let config = codegen::CodegenConfig {
-        optimize: true,
-        target_triple: "x86_64-pc-windows-msvc".to_string(),
+        target_triple: target_triple.clone(),
     };
     let mut target = codegen::Target::create(config, file_id);
     target.compile(&program)?;
-    
-    let output_exe = PathBuf::from("program.exe");
-    
+
     #[cfg(target_os = "windows")]
     {
         let msvc_lib_paths = get_msvc_lib_paths()?;
-        let mut args = vec![
-            "-O3".to_string(),
+        let mut clang_args = vec![
+            if optimize { "-O3" } else { "-O0" }.to_string(),
             "output.c".to_string(),
             "-o".to_string(),
-            "program.exe".to_string(),
+            output.to_str().unwrap().to_string(),
         ];
-    
+
         for path in msvc_lib_paths {
-            args.push("-L".to_string());
-            args.push(path);
+            clang_args.push("-L".to_string());
+            clang_args.push(path);
         }
-    
-        args.extend_from_slice(&[
+
+        clang_args.extend_from_slice(&[
             "-lmsvcrt".to_string(),
             "-Xlinker".to_string(),
             "/NODEFAULTLIB:libcmt".to_string(),
         ]);
-    
-        let status = std::process::Command::new("clang").args(&args).status()?;
+
+        if verbose {
+            println!("Invoking clang with args: {:?}", clang_args);
+        }
+
+        let status = std::process::Command::new("clang").args(&clang_args).status()?;
         if !status.success() {
             return Err("C compilation failed".into());
         }
     }
-    
-    println!("Program compiled to: {}", output_exe.display());
+
+    println!("Program compiled to: {}", output.display());
     Ok(())
 }
