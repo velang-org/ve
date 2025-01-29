@@ -14,6 +14,7 @@ pub enum CompileError {
     LinkingError(String),
     OptimizationError(String),
     UnsupportedOperation(String),
+    TypeError { message: String, span: Option<Span>, file_id: FileId },
 }
 
 impl fmt::Display for CompileError {
@@ -24,6 +25,7 @@ impl fmt::Display for CompileError {
             CompileError::LinkingError(msg) => write!(f, "Linking error: {}", msg),
             CompileError::OptimizationError(msg) => write!(f, "Optimization error: {}", msg),
             CompileError::UnsupportedOperation(msg) => write!(f, "Unsupported operation: {}", msg),
+            CompileError::TypeError { message, .. } => write!(f, "Type error: {}", message),
         }
     }
 }

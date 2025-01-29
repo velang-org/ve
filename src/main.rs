@@ -1,17 +1,10 @@
-mod cli;
-mod lexer;
-mod ast;
-mod codegen;
-mod typeck;
-mod parser;
+use verve_lang::{lexer, parser, typeck, codegen, cli::{Args, Command}};
 
 use clap::Parser;
 use codespan::{FileId, Files};
 use codespan_reporting::diagnostic::Diagnostic;
 use std::fmt;
 use std::path::PathBuf;
-
-use crate::cli::{Args, Command};
 
 #[derive(Debug)]
 struct MyError(Diagnostic<FileId>);
@@ -95,14 +88,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let lexer = lexer::Lexer::new(&files, file_id);
     let mut parser = parser::Parser::new(lexer);
-    let program = parser.parse().map_err(MyError)?;
+    let mut program = parser.parse().map_err(MyError)?;
 
     if verbose {
         println!("Parsed AST:\n{:#?}", program);
     }
 
     let mut type_checker = typeck::TypeChecker::new(file_id);
-    if let Err(errors) = type_checker.check(&program) {
+    if let Err(errors) = type_checker.check(&mut program) {
         for error in errors {
             eprintln!("Type error: {:?}", error);
         }

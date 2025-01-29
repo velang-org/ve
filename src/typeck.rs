@@ -38,21 +38,21 @@ impl TypeChecker {
         }
     }
 
-    pub fn check(&mut self, program: &ast::Program) -> Result<(), Vec<Diagnostic<FileId>>> {
-        for func in &program.functions {
+    pub fn check(&mut self, program: &mut ast::Program) -> Result<(), Vec<Diagnostic<FileId>>> {
+        for func in &mut program.functions {
             let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
             self.functions.insert(
                 func.name.clone(),
                 (params, func.return_type.clone())
             );
         }
-        
-        for func in &program.functions {
+
+        for func in &mut program.functions {
             self.context.current_return_type = func.return_type.clone();
             self.check_function(func)?;
         }
-        
-        for stmt in &program.stmts {
+
+        for stmt in &mut program.stmts {
             self.check_stmt(stmt)?;
         }
 
@@ -64,7 +64,7 @@ impl TypeChecker {
     }
 
 
-    fn check_function(&mut self, func: &ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
+    fn check_function(&mut self, func: &mut ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
         let mut local_ctx = Context::new();
         local_ctx.current_return_type = func.return_type.clone();
 
@@ -73,7 +73,7 @@ impl TypeChecker {
         }
 
         let old_ctx = std::mem::replace(&mut self.context, local_ctx);
-        for stmt in &func.body {
+        for stmt in &mut func.body {
             if let Err(errors) = self.check_stmt(stmt) {
                 self.errors.extend(errors);
             }
@@ -83,7 +83,7 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), Vec<Diagnostic<FileId>>> {
+    fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Vec<Diagnostic<FileId>>> {
         match stmt {
             Stmt::Let(name, decl_ty, expr, _) => {
                 let expr_ty = self.check_expr(expr).unwrap_or(Type::Unknown);
@@ -161,7 +161,7 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn check_expr(&mut self, expr: &Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
+    fn check_expr(&mut self, expr:  &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
         match expr {
             Expr::Int(_, _, _) => Ok(Type::I32),
             Expr::Bool(_, _, _) => Ok(Type::Bool),
@@ -179,9 +179,9 @@ impl TypeChecker {
                         }),
                 }
             }
-            Expr::BinOp(left, op, right, span, _) => {
-                let left_ty = self.check_expr(left).unwrap_or(Type::Unknown);
-                let right_ty = self.check_expr(right).unwrap_or(Type::Unknown);
+            Expr::BinOp(left, op, right, span, expr_type) => {
+                let left_ty = self.check_expr(&mut **left)?;
+                let right_ty = self.check_expr(&mut **right)?;
 
                 let result_ty = match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
@@ -206,7 +206,7 @@ impl TypeChecker {
                             Type::Unknown
                         }
                     },
-                    &ast::BinOp::Lt => {
+                    &mut BinOp::Lt => {
                         if left_ty == Type::I32 && right_ty == Type::I32 {
                             Type::Bool
                         } else {
@@ -218,6 +218,9 @@ impl TypeChecker {
                         }
                     }
                 };
+
+                *expr_type = result_ty.clone();
+                
                 Ok(result_ty)
             },
             Expr::Deref(expr, span, _) => {
@@ -260,7 +263,7 @@ impl TypeChecker {
                     );
                 }
 
-                for (i, (arg, param_ty)) in args.iter().zip(param_types.iter()).enumerate() {
+                for (i, (arg, param_ty)) in args.iter_mut().zip(param_types.iter()).enumerate() {
                     let arg_ty = self.check_expr(arg).unwrap_or(Type::Unknown);
                     if !Self::is_convertible(&arg_ty, param_ty) {
                         self.report_error(
@@ -302,7 +305,7 @@ impl TypeChecker {
             Expr::Cast(expr, target_ty, span, _) => {
                 let source_ty = self.check_expr(expr)?;
 
-                match (&source_ty, target_ty) {
+                match (&source_ty, &target_ty) {
                     (Type::RawPtr, Type::Pointer(_)) => Ok(target_ty.clone()),
                     (Type::Pointer(_), Type::RawPtr) => Ok(target_ty.clone()),
                     (Type::Pointer(_), Type::I32) => Ok(target_ty.clone()),
@@ -368,7 +371,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_block(&mut self, stmts: &[Stmt]) -> Result<(), Vec<Diagnostic<FileId>>> {
+    fn check_block(&mut self, stmts: &mut [Stmt]) -> Result<(), Vec<Diagnostic<FileId>>> {
         let old_vars = self.context.variables.clone();
         for stmt in stmts {
             self.check_stmt(stmt)?;

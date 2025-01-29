@@ -199,17 +199,15 @@ impl<'a> Parser<'a> {
         let initializer = if self.check(Token::Semi) {
             None
         } else if self.check(Token::KwLet) {
-            // Handle let initializer without semicolon
-            self.advance(); // consume 'let'
+            self.advance();
             let let_stmt = self.parse_let(false)?;
             Some(Box::new(let_stmt))
         } else {
-            // Parse as an expression statement (without semicolon)
             let expr = self.parse_expr()?;
             let expr_span = expr.span();
             Some(Box::new(ast::Stmt::Expr(expr, expr_span)))
         };
-        self.expect(Token::Semi)?; // consume the semicolon after initializer
+        self.expect(Token::Semi)?; 
 
         let condition = if self.check(Token::Semi) {
             None
@@ -369,16 +367,43 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
     fn parse_additive(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_unary()?;
+        let mut expr = self.parse_multiplicative()?;
         while self.check(Token::Plus) || self.check(Token::Minus) {
             let op = match self.advance().unwrap().0 {
                 Token::Plus => ast::BinOp::Add,
                 Token::Minus => ast::BinOp::Sub,
                 _ => unreachable!(),
             };
+            let right = self.parse_multiplicative()?;
+            let span = Span::new(expr.span().start(), right.span().end());
+            expr = ast::Expr::BinOp(
+                Box::new(expr),
+                op,
+                Box::new(right),
+                span,
+                ast::Type::Unknown
+            );
+        }
+        Ok(expr)
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let mut expr = self.parse_unary()?;
+        while self.check(Token::Star) || self.check(Token::Slash) {
+            let op = match self.advance().unwrap().0 {
+                Token::Star => ast::BinOp::Mul,
+                Token::Slash => ast::BinOp::Div,
+                _ => unreachable!(),
+            };
             let right = self.parse_unary()?;
             let span = Span::new(expr.span().start(), right.span().end());
-            expr = ast::Expr::BinOp(Box::new(expr), op, Box::new(right), span, ast::Type::Unknown);
+            expr = ast::Expr::BinOp(
+                Box::new(expr),
+                op,
+                Box::new(right),
+                span,
+                ast::Type::Unknown
+            );
         }
         Ok(expr)
     }
@@ -410,9 +435,11 @@ impl<'a> Parser<'a> {
                     Ok(ast::Expr::Var(name, span, ast::Type::Unknown))
                 }
             },
-            Some((Token::LParen, _)) => {
+            Some((Token::LParen, span)) => {
                 let expr = self.parse_expr()?;
-                self.expect(Token::RParen)?;
+                self.expect(Token::RParen).map_err(|e| {
+                    e.with_message("Missing closing parenthesis")
+                })?;
                 Ok(expr)
             }
             Some((Token::KwSafe, span)) => {
