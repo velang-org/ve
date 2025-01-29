@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use codespan::FileId;
+use codespan::{FileId, Span};
 use crate::{ast, codegen::{CodegenConfig, CompileError}};
 use crate::ast::Type;
 
@@ -268,6 +268,14 @@ impl CBackend {
             ast::Expr::BinOp(left, op, right, _span, _) => {
                 let left_code = self.emit_expr(left)?;
                 let right_code = self.emit_expr(right)?;
+
+                let result_type = self.unify_types(
+                    &left.get_type(),
+                    &right.get_type(),
+                    expr.span()
+                )?;
+
+
                 let op_str = match op {
                     ast::BinOp::Add => "+",
                     ast::BinOp::Sub => "-",
@@ -417,6 +425,18 @@ impl CBackend {
         }
     }
 
+    fn unify_types(&self, t1: &Type, t2: &Type, span: Span) -> Result<Type, CompileError> {
+        match (t1, t2) {
+            (Type::I32, Type::I32) => Ok(Type::I32),
+            (Type::Unknown, t) | (t, Type::Unknown) => Ok(t.clone()),
+            _ => Err(CompileError::TypeError {
+                message: format!("Type mismatch: {:?} vs {:?}", t1, t2),
+                span: Some(span),
+                file_id: self.file_id,
+            }),
+        }
+    }
+    
     fn emit_stmt_to_string(&mut self, stmt: &ast::Stmt) -> Result<String, CompileError> {
         let mut buffer = String::new();
         let original_body = std::mem::take(&mut self.body);
