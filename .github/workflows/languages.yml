@@ -19,3 +19,5 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: language-stats
+          path: language_stats.json
+          if-no-files-found: error
