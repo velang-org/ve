@@ -171,10 +171,8 @@ impl<'a> Parser<'a> {
     fn parse_while(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwWhile)?;
         let while_span = self.previous().map(|(_, s)| *s).unwrap();
-
-        self.expect(Token::LParen)?;
+        
         let condition = self.parse_expr()?;
-        self.expect(Token::RParen)?;
 
         self.expect(Token::LBrace)?;
         let mut body = Vec::new();
@@ -193,9 +191,7 @@ impl<'a> Parser<'a> {
     fn parse_for(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwFor)?;
         let for_span = self.previous().map(|(_, s)| *s).unwrap();
-
-        self.expect(Token::LParen)?;
-
+        
         let initializer = if self.check(Token::Semi) {
             None
         } else if self.check(Token::KwLet) {
@@ -221,7 +217,7 @@ impl<'a> Parser<'a> {
         } else {
             Some(self.parse_expr()?)
         };
-        self.expect(Token::RParen)?;
+
 
         self.expect(Token::LBrace)?;
         let mut body = Vec::new();
@@ -256,9 +252,7 @@ impl<'a> Parser<'a> {
     fn parse_if(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwIf)?;
         let if_span = self.previous().map(|(_, s)| *s).unwrap();
-        self.expect(Token::LParen)?;
         let condition = self.parse_expr()?;
-        self.expect(Token::RParen)?;
         self.expect(Token::LBrace)?;
         let mut then_branch = Vec::new();
         while !self.check(Token::RBrace) {
