@@ -68,7 +68,12 @@ pub enum Token {
     Gt,
     #[token("<")]
     Lt,
-
+    #[token("in")]
+    KwIn,
+    #[token("..")]
+    DotDot,
+    
+    
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
 

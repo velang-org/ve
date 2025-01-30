@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-use super::{ast, lexer::{Token, Lexer}};
+use super::{ast, lexer::{Lexer, Token}};
 use codespan::{FileId, Files, Span};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use crate::ast::Type;
 
 pub struct Parser<'a> {
     tokens: Vec<(Token, Span)>,
@@ -192,44 +190,25 @@ impl<'a> Parser<'a> {
         self.expect(Token::KwFor)?;
         let for_span = self.previous().map(|(_, s)| *s).unwrap();
         
-        let initializer = if self.check(Token::Semi) {
-            None
-        } else if self.check(Token::KwLet) {
-            self.advance();
-            let let_stmt = self.parse_let(false)?;
-            Some(Box::new(let_stmt))
-        } else {
-            let expr = self.parse_expr()?;
-            let expr_span = expr.span();
-            Some(Box::new(ast::Stmt::Expr(expr, expr_span)))
+        let (ident, ident_span) = match self.advance().cloned() {
+            Some((Token::Ident(name), span)) => (name, span),
+            _ => return self.error("Expected identifier after 'for'", Span::new(0, 0)),
         };
-        self.expect(Token::Semi)?; 
-
-        let condition = if self.check(Token::Semi) {
-            None
-        } else {
-            Some(self.parse_expr()?)
-        };
-        self.expect(Token::Semi)?;
-
-        let increment = if self.check(Token::RParen) {
-            None
-        } else {
-            Some(self.parse_expr()?)
-        };
-
-
+        
+        self.expect(Token::KwIn)?;
+        
+        let range_expr = self.parse_expr()?;
+        
         self.expect(Token::LBrace)?;
         let mut body = Vec::new();
         while !self.check(Token::RBrace) {
             body.push(self.parse_stmt()?);
         }
         self.expect(Token::RBrace)?;
-
+        
         Ok(ast::Stmt::For(
-            initializer,
-            condition,
-            increment,
+            ident,
+            range_expr,
             body,
             Span::new(for_span.start(), self.previous().unwrap().1.end()),
         ))
@@ -404,12 +383,22 @@ impl<'a> Parser<'a> {
 
     fn parse_primary(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut expr = self.parse_atom()?;
-        while self.check(Token::KwAs) {
-            let start = expr.span().start();
-            self.advance();
-            let target_type = self.parse_type()?;
-            let end_span = self.previous().map(|(_, s)| *s).unwrap();
-            expr = ast::Expr::Cast(Box::new(expr), target_type.clone(), Span::new(start, end_span.end()), target_type);
+        loop {
+            if self.check(Token::DotDot) {
+                let dotdot_span = self.peek().unwrap().1;
+                self.advance();
+                let end = self.parse_atom()?;
+                let span = Span::new(expr.span().start(), end.span().end());
+                expr = ast::Expr::Range(Box::new(expr), Box::new(end), span, ast::Type::Unknown);
+            } else if self.check(Token::KwAs) {
+                let start = expr.span().start();
+                self.advance();
+                let target_type = self.parse_type()?;
+                let end_span = self.previous().map(|(_, s)| *s).unwrap();
+                expr = ast::Expr::Cast(Box::new(expr), target_type.clone(), Span::new(start, end_span.end()), target_type);
+            } else {
+                break;
+            }
         }
         Ok(expr)
     }
@@ -429,7 +418,7 @@ impl<'a> Parser<'a> {
                     Ok(ast::Expr::Var(name, span, ast::Type::Unknown))
                 }
             },
-            Some((Token::LParen, span)) => {
+            Some((Token::LParen, _)) => {
                 let expr = self.parse_expr()?;
                 self.expect(Token::RParen).map_err(|e| {
                     e.with_message("Missing closing parenthesis")

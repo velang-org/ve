@@ -7,8 +7,8 @@ fn main() {
         print("Number is less than or equal to 5");
     }
 
-    for let i = 0; i < 5; i = i + 1 {
-        print(i);
+    for i in 0..5 {
+        print("meow");
     }
 
     while number > 0 {

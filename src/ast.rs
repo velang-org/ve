@@ -46,7 +46,7 @@ pub enum Stmt {
     Return(Expr, Span),
     Defer(Expr, Span),
     While(Expr, Vec<Stmt>, Span),
-    For(Option<Box<Stmt>>, Option<Expr>, Option<Expr>, Vec<Stmt>, Span),
+    For(String, Expr, Vec<Stmt>, Span),
 }
 
 #[derive(Debug)]
@@ -63,6 +63,7 @@ pub enum Expr {
     Deref(Box<Expr>, Span, Type),
     Assign(Box<Expr>, Box<Expr>, Span, Type),
     Print(Box<Expr>, Span, Type),
+    Range(Box<Expr>, Box<Expr>, Span, Type),
 }
 
 impl Expr {
@@ -80,6 +81,7 @@ impl Expr {
             Expr::Deref(_, span, _) => *span,
             Expr::Assign(_, _, span, _) => *span,
             Expr::Print(_, span, _) => *span,
+            Expr::Range(_, _, span, _) => *span,
         }
     }
 
@@ -97,6 +99,7 @@ impl Expr {
             Expr::Deref(_, _, ty) => ty.clone(),
             Expr::Assign(_, _, _, ty) => ty.clone(),
             Expr::Print(_, _, ty) => ty.clone(),
+            Expr::Range(_, _, _, ty) => ty.clone(),
         }
     }
 

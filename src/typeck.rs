@@ -141,20 +141,11 @@ impl TypeChecker {
                 self.expect_type(&cond_ty, &Type::Bool, cond.span())?;
                 self.check_block(body)?;
             },
-            Stmt::For(init, cond, incr, body, _) => {
-                if let Some(init) = init {
-                    self.check_stmt(init)?;
-                }
-                
-                if let Some(cond) = cond {
-                    let cond_ty = self.check_expr(cond)?;
-                    self.expect_type(&cond_ty, &Type::Bool, cond.span())?;
-                }
-                
-                if let Some(incr) = incr {
-                    self.check_expr(incr)?;
-                }
-                
+            Stmt::For(name, range, body, _) => {
+                let range_ty = self.check_expr(range)?;
+                self.expect_type(&range_ty, &Type::Unknown, range.span())?;
+
+                self.context.variables.insert(name.clone(), Type::I32);
                 self.check_block(body)?;
             }
         }
@@ -180,8 +171,8 @@ impl TypeChecker {
                 }
             }
             Expr::BinOp(left, op, right, span, expr_type) => {
-                let left_ty = self.check_expr(&mut **left)?;
-                let right_ty = self.check_expr(&mut **right)?;
+                let left_ty = self.check_expr(left)?;
+                let right_ty = self.check_expr(right)?;
 
                 let result_ty = match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
@@ -325,6 +316,20 @@ impl TypeChecker {
                         }
                     }
                 }
+            },
+            Expr::Range(start, end, span, _) => {
+                let start_ty = self.check_expr(start)?;
+                let end_ty = self.check_expr(end)?;
+
+                if start_ty != Type::I32 {
+                    self.report_error("Range start must be an integer", start.span());
+                }
+
+                if end_ty != Type::I32 {
+                    self.report_error("Range end must be an integer", end.span());
+                }
+
+                Ok(Type::Unknown)
             },
             Expr::Print(expr, span, _) => {
                 let expr_ty = self.check_expr(expr)?;

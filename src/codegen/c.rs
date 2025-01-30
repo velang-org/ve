@@ -200,39 +200,9 @@ impl CBackend {
                 }
                 self.body.push_str("}\n");
             },
-            ast::Stmt::For(init, cond, incr, body, _) => {
-                self.body.push_str("for (");
-                if let Some(init) = init {
-                    let mut init_code = String::new();
-                    let original_body = std::mem::replace(&mut self.body, init_code);
-                    self.emit_stmt(&*init)?;
-                    init_code = std::mem::replace(&mut self.body, original_body);
-
-                    let trimmed = init_code.trim_end();
-                    if trimmed.ends_with(';') {
-                        let stripped = &trimmed[..trimmed.len() - 1];
-                        self.body.push_str(stripped);
-                    } else {
-                        self.body.push_str(trimmed);
-                    }
-                }
-                self.body.push_str("; ");
-
-                if let Some(cond) = cond {
-                    let cond_code = self.emit_expr(cond)?;
-                    self.body.push_str(&cond_code);
-                } else {
-                    self.body.push('1');
-                }
-
-                self.body.push_str("; ");
-
-                if let Some(incr) = incr {
-                    let incr_code = self.emit_expr(incr)?;
-                    self.body.push_str(&incr_code);
-                }
-                self.body.push_str(") {\n");
-
+            ast::Stmt::For(var_name, range, body, _) => {
+                let range_code = self.emit_expr(range)?;
+                self.body.push_str(&format!("for (int {} = 0; {} < {}; {}++) {{\n", var_name, var_name, range_code, var_name));
                 for stmt in body {
                     self.emit_stmt(stmt)?;
                 }
@@ -416,6 +386,11 @@ impl CBackend {
                 };
 
                 Ok(format!("({})({})", target_c_ty, expr_code))
+            },
+            ast::Expr::Range(start, end, _, _) => {
+                let start_code = self.emit_expr(start)?;
+                let end_code = self.emit_expr(end)?;
+                Ok(format!("{} - {}", end_code, start_code))
             },
             _ => Err(CompileError::CodegenError {
                 message: "Unsupported expression".to_string(),
