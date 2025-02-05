@@ -31,24 +31,7 @@ git clone https://github.com/verve-lang/verve
 cd verve
 cargo install --path .
 ```
-## Example Usage
-```rust
-// examples/basic/control_flow.vrv
-fn main() {
-  let number = 7;
-  if (number > 5) {
-    print("Number is greater than 5");
-  } else {
-    print("Number is less than or equal to 5");
-  }
-  for (let i = 0; i < 5; i = i + 1) {
-    print(i);
-  }
-  while (number > 0) {
-    print(number);
-    number = number - 1;
-  }
-}
-```
+## Examples
+- [Basics](./examples/basics/README.md)
 ## Contributing
 Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTING.md) first.
