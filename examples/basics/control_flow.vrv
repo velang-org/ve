@@ -2,8 +2,12 @@ fn main() {
     let x = 10;
     let y = 20;
 
-    if x < y && x == 10 && y == 20 {
-        print("x is less than y and either x is 10 or y is 20");
+    if x < y {
+        print("x is less than y");
+    }
+
+    if x == 10 && y == 20 {
+        print("x is 10 and y is 20");
     }
 
     for i in 0..5 {

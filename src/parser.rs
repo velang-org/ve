@@ -278,20 +278,25 @@ impl<'a> Parser<'a> {
         }
         self.expect(Token::RBrace)?;
         let then_end = self.previous().map(|(_, s)| *s).unwrap();
-
         let mut else_branch = None;
-        let else_span = if self.check(Token::KwElse) {
+
+        let mut else_span = then_end;
+        if self.check(Token::KwElse) {
             self.advance();
-            self.expect(Token::LBrace)?;
-            let mut else_body = Vec::new();
-            while !self.check(Token::RBrace) {
-                else_body.push(self.parse_stmt()?);
+
+            if self.check(Token::KwIf) {
+                let else_if_stmt = self.parse_if()?;
+                else_branch = Some(vec![else_if_stmt]);
+            } else {
+                self.expect(Token::LBrace)?;
+                let mut else_body = Vec::new();
+                while !self.check(Token::RBrace) {
+                    else_body.push(self.parse_stmt()?);
+                }
+                self.expect(Token::RBrace)?;
+                else_branch = Some(else_body);
             }
-            self.expect(Token::RBrace)?;
-            else_branch = Some(else_body);
-            self.previous().map(|(_, s)| *s).unwrap()
-        } else {
-            then_end
+            else_span = self.previous().map(|(_, s)| *s).unwrap();
         };
 
         Ok(ast::Stmt::If(
