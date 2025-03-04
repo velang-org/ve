@@ -72,14 +72,9 @@ impl TypeChecker {
             local_ctx.variables.insert(name.clone(), ty.clone());
         }
 
-        let old_ctx = std::mem::replace(&mut self.context, local_ctx);
         for stmt in &mut func.body {
-            if let Err(errors) = self.check_stmt(stmt) {
-                self.errors.extend(errors);
-            }
+            self.check_stmt(stmt)?
         }
-        self.context = old_ctx;
-
         Ok(())
     }
 
@@ -90,10 +85,10 @@ impl TypeChecker {
 
                 if let Some(decl_ty) = decl_ty {
                     if !Self::is_convertible(&expr_ty, decl_ty) {
-                        self.report_error(
+                        return Err(self.report_error_vec(
                             &format!("Cannot convert {} to {}", expr_ty, decl_ty),
                             expr.span(),
-                        );
+                        ));
                     }
                 }
 
@@ -142,8 +137,7 @@ impl TypeChecker {
                 self.check_block(body)?;
             },
             Stmt::For(name, range, body, _) => {
-                let range_ty = self.check_expr(range)?;
-                self.expect_type(&range_ty, &Type::Unknown, range.span())?;
+                self.check_expr(range)?;
 
                 self.context.variables.insert(name.clone(), Type::I32);
                 self.check_block(body)?;
@@ -383,6 +377,12 @@ impl TypeChecker {
         }
         self.context.variables = old_vars;
         Ok(())
+    }
+    fn report_error_vec(&mut self, message: &str, span: Span) -> Vec<Diagnostic<FileId>> {
+            let diag = Diagnostic::error()
+                .with_message(message)
+                .with_labels(vec![Label::primary(self.file_id, span)]);
+            vec![diag]
     }
 
     fn report_error(&mut self, message: &str, span: Span) {
