@@ -192,6 +192,11 @@ impl CBackend {
                     self.body.push_str(&format!("{}\n", expr_code));
                 }
             },
+            ast::Stmt::Block(stmts, _) => {
+                for s in stmts {
+                    self.emit_stmt(s)?;
+                }
+            },
             ast::Stmt::While(cond, body, _) => {
                 let cond_code = self.emit_expr(cond)?;
                 self.body.push_str(&format!("while ({}) {{\n", cond_code));

@@ -309,12 +309,23 @@ impl<'a> Parser<'a> {
 
     fn parse_let(&mut self, expect_semi: bool) -> Result<ast::Stmt, Diagnostic<FileId>> {
         let let_span = self.previous().map(|(_, s)| *s).unwrap();
-        let token = self.advance().cloned();
-        let (ident, _) = match token.as_ref() {
-            Some((Token::Ident(name), span)) => (name.clone(), *span),
-            Some((_, span)) => return self.error("Expected identifier", *span),
-            None => return self.error("Expected identifier", Span::new(0, 0)),
-        };
+
+        // Parse comma-separated identifiers
+        let mut idents = vec![];
+        loop {
+            let token = self.advance().cloned();
+            let (ident, span) = match token.as_ref() {
+                Some((Token::Ident(name), sp)) => (name.clone(), *sp),
+                Some((_, sp)) => return self.error("Expected identifier", *sp),
+                None => return self.error("Expected identifier", Span::new(0, 0)),
+            };
+            idents.push((ident, span));
+
+            if !self.check(Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
 
         let type_annot = if self.check(Token::Colon) {
             self.advance();
@@ -324,20 +335,47 @@ impl<'a> Parser<'a> {
         };
 
         self.expect(Token::Eq)?;
-        let expr = self.parse_expr()?;
+
+        let mut exprs = vec![];
+        loop {
+            exprs.push(self.parse_expr()?);
+            if !self.check(Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
+
+        if idents.len() != exprs.len() {
+            return self.error(
+                &format!("Expected {} expressions, got {}", idents.len(), exprs.len()),
+                Span::new(idents[0].1.start(), exprs.last().unwrap().span().end())
+            );
+        }
+
+        let mut stmts = vec![];
+        for ((ident, span), expr) in idents.into_iter().zip(exprs) {
+            stmts.push(ast::Stmt::Let(
+                ident,
+                type_annot.clone(),
+                expr,
+                span,
+            ));
+        }
+
         if expect_semi {
             self.expect(Token::Semi)?;
         }
-        let end_span = if expect_semi {
-            self.previous().map(|(_, s)| *s).unwrap()
+
+        let start = let_span.start();
+        let end = if expect_semi {
+            self.previous().map(|(_, s)| s.end()).unwrap_or_else(|| let_span.end())
         } else {
-            expr.span()
+            stmts.last().map(|s| s.span().end()).unwrap_or_else(|| let_span.end())
         };
-        Ok(ast::Stmt::Let(
-            ident,
-            type_annot,
-            expr,
-            Span::new(let_span.start(), end_span.end()),
+
+        Ok(ast::Stmt::Block(
+            stmts,
+            Span::new(let_span.start(), end)
         ))
     }
 

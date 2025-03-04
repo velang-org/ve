@@ -47,6 +47,7 @@ pub enum Stmt {
     Defer(Expr, Span),
     While(Expr, Vec<Stmt>, Span),
     For(String, Expr, Vec<Stmt>, Span),
+    Block(Vec<Stmt>, Span),
 }
 
 #[derive(Debug)]
@@ -161,6 +162,21 @@ impl fmt::Display for Type {
             Type::Arena => write!(f, "arena"),
             Type::Pointer(ty) => write!(f, "*{}", ty),
             Type::RawPtr => write!(f, "rawptr"),
+        }
+    }
+}
+
+impl Stmt {
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::Let(_, _, _, span) => *span,
+            Stmt::Expr(_, span) => *span,
+            Stmt::If(_, _, _, span) => *span,
+            Stmt::Return(_, span) => *span,
+            Stmt::Defer(_, span) => *span,
+            Stmt::While(_, _, span) => *span,
+            Stmt::For(_, _, _, span) => *span,
+            Stmt::Block(_, span) => *span,
         }
     }
 }

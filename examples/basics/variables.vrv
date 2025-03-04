@@ -1,6 +1,6 @@
 fn main() {
-    let x = 10;
-    let y = 20;
+    let x, y = 10, 20;
+
     let name = "Verve";
 
     let sum = x + y;

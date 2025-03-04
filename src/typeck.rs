@@ -97,7 +97,8 @@ impl TypeChecker {
             }
             Stmt::Expr(expr, _) => {
                 self.check_expr(expr)?;
-            }
+            },
+            Stmt::Block(stmts, _) => self.check_block(stmts)?,
             Stmt::If(cond, then_branch, else_branch, _) => {
                 let cond_ty = self.check_expr(cond).unwrap_or(Type::Unknown);
                 self.expect_type(&cond_ty, &Type::Bool, cond.span())?;
@@ -106,7 +107,7 @@ impl TypeChecker {
                 if let Some(else_branch) = else_branch {
                     self.check_block(else_branch)?;
                 }
-            }
+            },
             Stmt::Return(expr, _) => {
                 let expr_ty = self.check_expr(expr).unwrap_or(Type::Unknown);
                 let expected_type = self.context.current_return_type.clone();
@@ -382,11 +383,9 @@ impl TypeChecker {
     }
 
     fn check_block(&mut self, stmts: &mut [Stmt]) -> Result<(), Vec<Diagnostic<FileId>>> {
-        let old_vars = self.context.variables.clone();
         for stmt in stmts {
             self.check_stmt(stmt)?;
         }
-        self.context.variables = old_vars;
         Ok(())
     }
     fn report_error_vec(&mut self, message: &str, span: Span) -> Vec<Diagnostic<FileId>> {
