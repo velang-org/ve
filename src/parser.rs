@@ -36,6 +36,7 @@ impl<'a> Parser<'a> {
         Ok(program)
     }
 
+
     fn parse_type(&mut self) -> Result<ast::Type, Diagnostic<FileId>> {
         let next = self.advance().map(|(t, s)| (t.clone(), *s));
 
@@ -155,6 +156,44 @@ impl<'a> Parser<'a> {
             Ok(ast::Stmt::Expr(expr, span))
         }
     }
+
+    fn parse_logical_or(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let mut expr = self.parse_logical_and()?;
+        while self.check(Token::OrOr) {
+           let op_span = self.peek().map(|(_, s)| *s).unwrap();
+          self.advance();
+            let right = self.parse_logical_and()?;
+            let span = Span::new(expr.span().start(), right.span().end());
+            expr = ast::Expr::BinOp(
+                Box::new(expr),
+                ast::BinOp::Or,
+                Box::new(right),
+                span,
+                ast::Type::Unknown
+            );
+        }
+        Ok(expr)
+    }
+
+    fn parse_logical_and(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let mut expr = self.parse_equality()?;
+        while self.check(Token::AndAnd) {
+            let op_span = self.peek().map(|(_, s)| *s).unwrap();
+            self.advance();
+            let right = self.parse_equality()?;
+            let expr_span = expr.span();
+            let right_span = right.span();
+            expr = ast::Expr::BinOp(
+                Box::new(expr),
+                ast::BinOp::And,
+                Box::new(right),
+                Span::new(expr_span.start(), right_span.end()),
+                ast::Type::Unknown
+            );
+        }
+        Ok(expr)
+    }
+
 
     fn parse_defer(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwDefer)?;
@@ -302,7 +341,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let expr = self.parse_equality()?;
+        let expr = self.parse_logical_or()?;
         if self.check(Token::Eq) {
             self.advance();
             let value = self.parse_assignment()?;

@@ -17,6 +17,7 @@ Verve is in **EARLY DEVELOPMENT** – syntax and features will change radically.
 - Operators:
   - Arithmetic: + - * /
   - Comparisons: == != > <
+  - Logical: && ||
 - print() function for debugging
 
 ## Installation

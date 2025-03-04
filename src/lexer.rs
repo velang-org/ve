@@ -72,6 +72,10 @@ pub enum Token {
     KwIn,
     #[token("..")]
     DotDot,
+    #[token("&&")]
+    AndAnd,
+    #[token("||")]
+    OrOr,
     
     
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]

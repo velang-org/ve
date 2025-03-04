@@ -191,6 +191,17 @@ impl TypeChecker {
                             Type::Unknown
                         }
                     },
+                    BinOp::And | BinOp::Or => {
+                        if left_ty == Type::Bool && right_ty == Type::Bool {
+                            Type::Bool
+                        } else {
+                            self.report_error(
+                                &format!("Logical {} requires bool operands, got {} and {}", op, left_ty, right_ty),
+                                *span,
+                            );
+                            Type::Unknown
+                        }
+                    }
                     &mut BinOp::Lt => {
                         if left_ty == Type::I32 && right_ty == Type::I32 {
                             Type::Bool

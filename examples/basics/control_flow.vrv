@@ -1,19 +1,17 @@
 fn main() {
-    let number = 7;
+    let x = 10;
+    let y = 20;
 
-    if number > 5 {
-        print("Number is greater than 5");
-    } else {
-        print("Number is less than or equal to 5");
+    if x < y && x == 10 && y == 20 {
+        print("x is less than y and either x is 10 or y is 20");
     }
 
     for i in 0..5 {
         print("meow");
     }
 
-    while number > 0 {
-        print(number);
-        number = number - 1;
+    while x > 0 {
+        print(x);
+        x = x - 1;
     }
 }
-

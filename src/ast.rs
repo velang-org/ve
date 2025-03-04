@@ -121,8 +121,25 @@ pub enum BinOp {
     Gt,
     Eq,
     Lt,
+    And,
+    Or,
 }
 
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BinOp::Add => write!(f, "+"),
+            BinOp::Sub => write!(f, "-"),
+            BinOp::Mul => write!(f, "*"),
+            BinOp::Div => write!(f, "/"),
+            BinOp::Gt => write!(f, ">"),
+            BinOp::Eq => write!(f, "=="),
+            BinOp::Lt => write!(f, "<"),
+            BinOp::And => write!(f, "&&"),
+            BinOp::Or => write!(f, "||"),
+        }
+    }
+}
 
 
 impl fmt::Display for Type {

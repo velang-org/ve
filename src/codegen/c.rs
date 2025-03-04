@@ -258,6 +258,8 @@ impl CBackend {
                     ast::BinOp::Gt => ">",
                     ast::BinOp::Eq => "==",
                     ast::BinOp::Lt => "<",
+                    ast::BinOp::And => "&&",
+                    ast::BinOp::Or => "||",
                 };
                 Ok(format!("({} {} {})", left_code, op_str, right_code))
             },
@@ -407,6 +409,7 @@ impl CBackend {
     fn unify_types(&self, t1: &Type, t2: &Type, span: Span) -> Result<Type, CompileError> {
         match (t1, t2) {
             (Type::I32, Type::I32) => Ok(Type::I32),
+            (Type::Bool, Type::Bool) => Ok(Type::Bool),
             (Type::Unknown, t) | (t, Type::Unknown) => Ok(t.clone()),
             _ => Err(CompileError::TypeError {
                 message: format!("Type mismatch: {:?} vs {:?}", t1, t2),
