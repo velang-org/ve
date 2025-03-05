@@ -72,9 +72,16 @@ impl TypeChecker {
             local_ctx.variables.insert(name.clone(), ty.clone());
         }
 
+        let original_ctx = std::mem::replace(&mut self.context, local_ctx);
+
+
         for stmt in &mut func.body {
-            self.check_stmt(stmt)?
+            self.check_stmt(stmt)?;
         }
+
+
+        self.context = original_ctx;
+
         Ok(())
     }
 
@@ -152,9 +159,9 @@ impl TypeChecker {
             Expr::Int(_, _, _) => Ok(Type::I32),
             Expr::Bool(_, _, _) => Ok(Type::Bool),
             Expr::Str(_, _, _) => Ok(Type::String),
-            Expr::Var(name, span, _) => {
-                match name.as_str() {
-                    "true" | "false" => Ok(Type::Bool),
+            Expr::Var(name, span, expr_type) => {
+                let ty = match name.as_str() {
+                    "true" | "false" => Type::Bool,
                     _ => self.context
                         .variables
                         .get(name)
@@ -162,15 +169,17 @@ impl TypeChecker {
                         .ok_or_else(|| {
                             self.report_error(&format!("Undefined variable '{}'", name), *span);
                             vec![]
-                        }),
-                }
+                        })?,
+                };
+                *expr_type = ty.clone();
+                Ok(ty)
             }
             Expr::BinOp(left, op, right, span, expr_type) => {
                 let left_ty = self.check_expr(left)?;
                 let right_ty = self.check_expr(right)?;
 
                 let result_ty = match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                    BinOp::Sub | BinOp::Mul | BinOp::Div => {
                         if left_ty == Type::I32 && right_ty == Type::I32 {
                             Type::I32
                         } else {
@@ -180,7 +189,47 @@ impl TypeChecker {
                             );
                             Type::Unknown
                         }
-                    }
+                    },
+                    BinOp::Add => {
+                        let left_ty = self.check_expr(left)?;
+                        let right_ty = self.check_expr(right)?;
+
+                        let result_ty = match (&left_ty, &right_ty) {
+                            (Type::String, _) => {
+                                if !Self::is_convertible(&right_ty, &Type::String) {
+                                    self.report_error(
+                                        &format!("Cannot convert {} to String", right_ty),
+                                        right.span(),
+                                    );
+                                    Type::Unknown
+                                } else {
+                                    Type::String
+                                }
+                            }
+                            (_, Type::String) => {
+                                if !Self::is_convertible(&left_ty, &Type::String) {
+                                    self.report_error(
+                                        &format!("Cannot convert {} to String", left_ty),
+                                        left.span(),
+                                    );
+                                    Type::Unknown
+                                } else {
+                                    Type::String
+                                }
+                            }
+                            (Type::I32, Type::I32) => Type::I32,
+                            _ => {
+                                self.report_error(
+                                    &format!("Cannot add {} and {}", left_ty, right_ty),
+                                    *span,
+                                );
+                                Type::Unknown
+                            }
+                        };
+
+                        *expr_type = result_ty.clone();
+                        result_ty
+                    },
                     BinOp::Gt | BinOp::Eq => {
                         if Self::is_convertible(&left_ty, &right_ty) {
                             Type::Bool
@@ -213,7 +262,7 @@ impl TypeChecker {
                             );
                             Type::Unknown
                         }
-                    }
+                    },
                 };
 
                 *expr_type = result_ty.clone();
@@ -372,13 +421,18 @@ impl TypeChecker {
     fn is_convertible(from: &Type, to: &Type) -> bool {
         match (from, to) {
             (Type::I32, Type::Bool) => true,
+            (Type::Bool, Type::I32) => true,
+            (Type::I32, Type::String) => true,
+            (Type::Bool, Type::String) => true,
+            (Type::Pointer(_), Type::String) => true,
+            (Type::RawPtr, Type::String) => true,
             (Type::RawPtr, Type::Pointer(_)) => true,
             (Type::Pointer(_), Type::RawPtr) => true,
             (Type::Pointer(_), Type::I32) => true,
             (Type::I32, Type::Pointer(_)) => true,
             (Type::I32, Type::I32) => true,
             (Type::Pointer(a), Type::Pointer(b)) => a == b,
-            _ => from == to
+            _ => from == to,
         }
     }
 

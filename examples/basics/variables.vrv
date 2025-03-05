@@ -5,11 +5,9 @@ fn main() {
 
     let sum = x + y;
 
-    print("Sum: ");
-    print(sum);
+    print("Sum: " + sum);
 
     let is_cool = true;
 
-    print("Is Verve cool? ");
-    print(is_cool);
+    print("Is Verve cool? " + is_cool);
 }

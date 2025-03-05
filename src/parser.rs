@@ -309,8 +309,7 @@ impl<'a> Parser<'a> {
 
     fn parse_let(&mut self, expect_semi: bool) -> Result<ast::Stmt, Diagnostic<FileId>> {
         let let_span = self.previous().map(|(_, s)| *s).unwrap();
-
-        // Parse comma-separated identifiers
+        
         let mut idents = vec![];
         loop {
             let token = self.advance().cloned();
@@ -354,6 +353,13 @@ impl<'a> Parser<'a> {
 
         let mut stmts = vec![];
         for ((ident, span), expr) in idents.into_iter().zip(exprs) {
+            let expr_type = match &expr {
+                ast::Expr::Int(..) => ast::Type::I32,
+                ast::Expr::Str(..) => ast::Type::String,
+                ast::Expr::Bool(..) => ast::Type::Bool,
+                _ => ast::Type::Unknown,
+            };
+
             stmts.push(ast::Stmt::Let(
                 ident,
                 type_annot.clone(),
