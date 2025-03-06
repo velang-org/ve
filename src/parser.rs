@@ -47,6 +47,26 @@ impl<'a> Parser<'a> {
         Ok(stmts)
     }
 
+    fn consume(&mut self, expected: Token, err_msg: &str) -> Result<Span, Diagnostic<FileId>> {
+        if self.check(expected.clone()) {
+            let span = self.peek().map(|(_, s)| *s).unwrap();
+            self.advance();
+            Ok(span)
+        } else {
+            let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
+            self.error(err_msg, span)
+        }
+    }
+
+    fn consume_ident(&mut self) -> Result<(String, Span), Diagnostic<FileId>> {
+        let token = self.advance().cloned();
+        match token.as_ref() {
+            Some((Token::Ident(name), span)) => Ok((name.clone(), *span)),
+            Some((_, span)) => self.error("Expected identifier", *span),
+            None => self.error("Expected identifier", Span::new(0, 0)),
+        }
+    }
+
     fn parse_type(&mut self) -> Result<ast::Type, Diagnostic<FileId>> {
         let next = self.advance().map(|(t, s)| (t.clone(), *s));
 
@@ -85,41 +105,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function(&mut self) -> Result<ast::Function, Diagnostic<FileId>> {
-        self.expect(Token::KwFn)?;
+        self.consume(Token::KwFn, "Expected 'fn'")?;
         let start_span = self.previous().map(|(_, s)| *s).unwrap();
 
-        let token = self.advance().cloned();
-        let (name, _name_span) = match token.as_ref() {
-            Some((Token::Ident(name), span)) => (name.clone(), *span),
-            Some((_, span)) => {
-                return self.error("Expected function name", *span);
-            }
-            None => {
-                return self.error("Expected function name", Span::new(0, 0));
-            }
-        };
-
-        self.expect(Token::LParen)?;
-        let mut params = Vec::new();
-        while !self.check(Token::RParen) {
-            let token = self.advance().cloned();
-
-            let (param_name, _param_span) = match token.as_ref() {
-                Some((Token::Ident(name), span)) => (name.clone(), *span),
-                Some((_, span)) => return self.error("Expected parameter name", *span),
-                None => return self.error("Expected parameter name", Span::new(0, 0)),
-            };
-
-            self.expect(Token::Colon)?;
-            let param_type = self.parse_type()?;
-            params.push((param_name, param_type));
-
-            if !self.check(Token::Comma) {
-                break;
-            }
-            self.advance();
-        }
-        self.expect(Token::RParen)?;
+        let (name, _name_span) = self.consume_ident()?;
+        let params = self.parse_parameters()?;
 
         let return_type = if self.check(Token::Arrow) {
             self.advance();
@@ -128,12 +118,7 @@ impl<'a> Parser<'a> {
             ast::Type::Void
         };
 
-        self.expect(Token::LBrace)?;
-        let mut body = Vec::new();
-        while !self.check(Token::RBrace) {
-            body.push(self.parse_stmt()?);
-        }
-        self.expect(Token::RBrace)?;
+        let body = self.parse_block()?;
 
         let end_span = self.previous().map(|(_, s)| *s).unwrap();
         Ok(ast::Function {
@@ -143,6 +128,26 @@ impl<'a> Parser<'a> {
             body,
             span: Span::new(start_span.start(), end_span.end()),
         })
+    }
+
+    fn parse_parameters(&mut self) -> Result<Vec<(String, ast::Type)>, Diagnostic<FileId>> {
+        self.consume(Token::LParen, "Expected '(' after function name")?;
+        let mut params = Vec::new();
+
+        while !self.check(Token::RParen) {
+            let (name, _) = self.consume_ident()?;
+            self.consume(Token::Colon, "Expected ':' after parameter name")?;
+            let param_type = self.parse_type()?;
+            params.push((name, param_type));
+
+            if !self.check(Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
+
+        self.consume(Token::RParen, "Expected ')' after parameters")?;
+        Ok(params)
     }
 
     fn parse_stmt(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
@@ -170,8 +175,7 @@ impl<'a> Parser<'a> {
     fn parse_logical_or(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut expr = self.parse_logical_and()?;
         while self.check(Token::OrOr) {
-           let op_span = self.peek().map(|(_, s)| *s).unwrap();
-          self.advance();
+            let _op_span = self.consume(Token::OrOr, "Expected '||'")?;
             let right = self.parse_logical_and()?;
             let span = Span::new(expr.span().start(), right.span().end());
             expr = ast::Expr::BinOp(
@@ -231,21 +235,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_for(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
-        self.expect(Token::KwFor)?;
+        self.consume(Token::KwFor, "Expected 'for'")?;
         let for_span = self.previous().map(|(_, s)| *s).unwrap();
-        
-        let (ident, ident_span) = match self.advance().cloned() {
-            Some((Token::Ident(name), span)) => (name, span),
-            _ => return self.error("Expected identifier after 'for'", Span::new(0, 0)),
-        };
-        
-        self.expect(Token::KwIn)?;
-        
+
+        let (ident, _) = self.consume_ident()?;
+        self.consume(Token::KwIn, "Expected 'in' after loop variable")?;
+
         let range_expr = self.parse_expr()?;
-        
-        self.expect(Token::LBrace)?;
         let body = self.parse_block()?;
-        
+
         Ok(ast::Stmt::For(
             ident,
             range_expr,
@@ -269,45 +267,34 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
-        self.expect(Token::KwIf)?;
+        self.consume(Token::KwIf, "Expected 'if'")?;
         let if_span = self.previous().map(|(_, s)| *s).unwrap();
         let condition = self.parse_expr()?;
-        self.expect(Token::LBrace)?;
-        let mut then_branch = Vec::new();
-        while !self.check(Token::RBrace) {
-            then_branch.push(self.parse_stmt()?);
-        }
-        self.expect(Token::RBrace)?;
-        let then_end = self.previous().map(|(_, s)| *s).unwrap();
+
+        let then_branch = self.parse_block()?;
         let mut else_branch = None;
 
-        let mut else_span = then_end;
         if self.check(Token::KwElse) {
             self.advance();
-
-            if self.check(Token::KwIf) {
-                let else_if_stmt = self.parse_if()?;
-                else_branch = Some(vec![else_if_stmt]);
+            else_branch = Some(if self.check(Token::KwIf) {
+                vec![self.parse_if()?]
             } else {
-                self.expect(Token::LBrace)?;
-                let mut else_body = Vec::new();
-                while !self.check(Token::RBrace) {
-                    else_body.push(self.parse_stmt()?);
-                }
-                self.expect(Token::RBrace)?;
-                else_branch = Some(else_body);
-            }
-            else_span = self.previous().map(|(_, s)| *s).unwrap();
-        };
+                self.parse_block()?
+            });
+        }
+
+        let end_span = else_branch.as_ref()
+            .and_then(|b| b.last())
+            .map(|s| s.span().end())
+            .unwrap_or_else(|| then_branch.last().unwrap().span().end());
 
         Ok(ast::Stmt::If(
             condition,
             then_branch,
             else_branch,
-            Span::new(if_span.start(), else_span.end()),
+            Span::new(if_span.start(), end_span),
         ))
     }
-
     fn parse_let(&mut self, expect_semi: bool) -> Result<ast::Stmt, Diagnostic<FileId>> {
         let let_span = self.previous().map(|(_, s)| *s).unwrap();
         

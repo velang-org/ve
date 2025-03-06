@@ -5,7 +5,7 @@ fn main() {
         print("x is less than y");
     }
 
-    if x == 10 && y == 20 {
+    if x == 10 || y == 20 {
         print("x is 10 and y is 20");
     }
 
