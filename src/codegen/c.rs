@@ -213,7 +213,11 @@ impl CBackend {
                         ast::Expr::Call(func_name, _, _, _) => {
                             self.functions_map.get(func_name)
                                 .cloned()
-                                .unwrap_or(Type::Unknown)
+                                .ok_or_else(|| CompileError::CodegenError {
+                                    message: format!("Undefined function '{}'", func_name),
+                                    span: Some(expr.span()),
+                                    file_id: self.file_id,
+                                })?
                         }
                         _ => expr.get_type()
                     }
