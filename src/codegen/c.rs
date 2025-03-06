@@ -73,13 +73,22 @@ impl CBackend {
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
 
+
         self.header.push_str("static char* concat(const char* s1, const char* s2) {\n");
         self.header.push_str("    size_t len1 = strlen(s1);\n");
         self.header.push_str("    size_t len2 = strlen(s2);\n");
         self.header.push_str("    char* result = malloc(len1 + len2 + 1);\n");
         self.header.push_str("    if (result) {\n");
-        self.header.push_str("        strcpy_s(result, len1 + len2 + 1, s1);\n");
-        self.header.push_str("        strcat_s(result, len1 + len2 + 1, s2);\n"); 
+        #[cfg(target_os = "windows")]
+        {
+            self.header.push_str("        strcpy_s(result, len1 + len2 + 1, s1);\n");
+            self.header.push_str("        strcat_s(result, len1 + len2 + 1, s2);\n");
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.header.push_str("        strcpy(result, s1);\n");
+            self.header.push_str("        strcat(result, s2);\n");
+        }
         self.header.push_str("    }\n");
         self.header.push_str("    return result;\n");
         self.header.push_str("}\n\n");
