@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use codespan::{FileId, Span};
 use crate::{ast, codegen::{CodegenConfig, CompileError}};
 use crate::ast::Type;
@@ -9,7 +9,7 @@ pub struct CBackend {
     header: String,
     body: String,
     file_id: FileId,
-    includes: RefCell<HashSet<&'static str>>,
+    includes: RefCell<BTreeSet<&'static str>>,
     variables: RefCell<HashMap<String, Type>>,
     functions_map: HashMap<String, Type>,
 }
@@ -21,7 +21,7 @@ impl CBackend {
             header: String::new(),
             body: String::new(),
             file_id,
-            includes: RefCell::new(HashSet::new()),
+            includes: RefCell::new(BTreeSet::new()),
             variables: RefCell::new(HashMap::new()),
             functions_map: HashMap::new(),
         }
