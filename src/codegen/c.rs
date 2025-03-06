@@ -115,7 +115,7 @@ impl CBackend {
     }
 
     fn is_constant_expr(&self, expr: &ast::Expr) -> bool {
-        matches!(expr, 
+        matches!(expr,
             ast::Expr::Int(..) |
             ast::Expr::Str(..) |
             ast::Expr::Bool(..)
@@ -347,8 +347,7 @@ impl CBackend {
                     Type::Bool => ("%s", format!("({} ? \"true\" : \"false\")", value)),
                     Type::String => ("%s", value),
                     Type::Pointer(_) | Type::RawPtr => {
-                        self.includes.borrow_mut().insert("<inttypes.h>");
-                        ("%\"PRIuPTR\"", format!("(uintptr_t){}", value))
+                        ("%p", format!("(void*){}", value))
                     },
                     _ => return Err(CompileError::CodegenError {
                         message: format!("Cannot print type {:?}", expr_ty),
