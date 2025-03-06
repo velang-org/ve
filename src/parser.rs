@@ -2,6 +2,8 @@ use super::{ast, lexer::{Lexer, Token}};
 use codespan::{FileId, Files, Span};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 
+type Precedence = u8;
+
 pub struct Parser<'a> {
     tokens: Vec<(Token, Span)>,
     current: usize,
@@ -36,6 +38,162 @@ impl<'a> Parser<'a> {
         Ok(program)
     }
 
+
+    fn parse_expr(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+        self.parse_expr_bp(0)
+    }
+
+    fn parse_expr_bp(&mut self, min_bp: Precedence) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let mut lhs = self.parse_prefix()?;
+
+        loop {
+            let op = match self.peek() {
+                Some((t, _)) => t.clone(),
+                None => break,
+            };
+            let op_span = self.peek_span();
+
+            let Some((lbp, rbp)) = self.get_infix_bp(&op) else {
+                break;
+            };
+
+            if lbp < min_bp {
+                break;
+            }
+
+            self.advance();
+            lhs = self.parse_infix(&op, lhs, lbp, rbp)?;
+        }
+
+        Ok(lhs)
+    }
+
+    fn peek_token(&self) -> Token {
+        self.peek().map(|(t, _)| t.clone()).unwrap_or(Token::Error)
+    }
+    fn peek_span(&self) -> Span {
+        self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0))
+    }
+
+
+    fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let token = self.peek_token();
+        match token {
+            Token::Star => {
+                let op_span = self.peek_span();
+                self.advance();
+                let prefix_bp = self.get_prefix_bp(&token);
+                let expr = self.parse_expr_bp(prefix_bp)?;
+                Ok(ast::Expr::Deref(Box::new(expr), op_span, ast::Type::Unknown))
+            }
+            Token::Minus | Token::Plus => {
+                let (op_token, _) = self.advance().unwrap();
+                let op_token = op_token.clone(); 
+                let prefix_bp = self.get_prefix_bp(&op_token);
+                let expr = self.parse_expr_bp(prefix_bp)?;
+                let span = expr.span();
+                Ok(ast::Expr::UnaryOp(
+                    match op_token {
+                        Token::Minus => ast::UnOp::Neg,
+                        Token::Plus => ast::UnOp::Plus,
+                        _ => unreachable!(),
+                    },
+                    Box::new(expr),
+                    span,
+                    ast::Type::Unknown
+                ))
+            }
+            _ => self.parse_atom(),
+        }
+    }
+
+
+    fn parse_infix(
+        &mut self,
+        op: &Token,
+        lhs: ast::Expr,
+        lbp: Precedence,
+        rbp: Precedence,
+    ) -> Result<ast::Expr, Diagnostic<FileId>> {
+        match op {
+            Token::Eq => {
+                let rhs = self.parse_expr_bp(rbp)?;
+                let span = Span::new(lhs.span().start(), rhs.span().end());
+                Ok(ast::Expr::Assign(Box::new(lhs), Box::new(rhs), span, ast::Type::Void))
+            }
+            Token::Plus | Token::Minus | Token::Star | Token::Slash
+            | Token::EqEq | Token::Gt | Token::Lt | Token::AndAnd | Token::OrOr => {
+                let bin_op = match op {
+                    Token::Plus => ast::BinOp::Add,
+                    Token::Minus => ast::BinOp::Sub,
+                    Token::Star => ast::BinOp::Mul,
+                    Token::Slash => ast::BinOp::Div,
+                    Token::EqEq => ast::BinOp::Eq,
+                    Token::Gt => ast::BinOp::Gt,
+                    Token::Lt => ast::BinOp::Lt,
+                    Token::AndAnd => ast::BinOp::And,
+                    Token::OrOr => ast::BinOp::Or,
+                    _ => unreachable!(),
+                };
+                let rhs = self.parse_expr_bp(rbp)?;
+                let span = Span::new(lhs.span().start(), rhs.span().end());
+                Ok(ast::Expr::BinOp(
+                    Box::new(lhs),
+                    bin_op,
+                    Box::new(rhs),
+                    span,
+                    ast::Type::Unknown
+                ))
+            }
+            Token::KwAs => {
+                let target_type = self.parse_type()?;
+                let span = Span::new(lhs.span().start(), self.previous().unwrap().1.end());
+                Ok(ast::Expr::Cast(
+                    Box::new(lhs),
+                    target_type.clone(),
+                    span,
+                    target_type
+                ))
+            }
+            Token::DotDot => {
+                let end = self.parse_expr_bp(rbp)?;
+                let span = Span::new(lhs.span().start(), end.span().end());
+                Ok(ast::Expr::Range(Box::new(lhs), Box::new(end), span, ast::Type::Unknown))
+            },
+            
+            
+            _ => {
+                let token = self.peek().unwrap();
+                println!("{:?}", token);
+                self.error("Unexpected infix operator", self.peek().unwrap().1)
+                
+            }
+        }
+    }
+
+    fn get_prefix_bp(&self, token: &Token) -> Precedence {
+        match token {
+            Token::Star | Token::Plus | Token::Minus => 8,
+            _ => 0,
+        }
+    }
+
+    fn get_infix_bp(&self, token: &Token) -> Option<(Precedence, Precedence)> {
+        match token {
+            Token::OrOr => Some((1, 2)),
+            Token::AndAnd => Some((3, 4)),
+            Token::EqEq => Some((5, 6)),
+            Token::Gt | Token::Lt => Some((7, 8)),
+            Token::Plus | Token::Minus => Some((9, 10)),
+            Token::Star | Token::Slash => Some((11, 12)),
+            Token::DotDot => Some((13, 14)),
+            Token::KwAs => Some((15, 16)),
+            Token::Eq => Some((0, 0)),
+            _ => None,
+        }
+    }
+    
+    
     
     fn parse_block(&mut self) -> Result<Vec<ast::Stmt>, Diagnostic<FileId>> {
         self.expect(Token::LBrace)?;
@@ -83,18 +241,7 @@ impl<'a> Parser<'a> {
             None => self.error("Expected type annotation", Span::new(0, 0)),
         }
     }
-
-    fn parse_unary(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        if self.check(Token::Star) {
-            let op_span = self.peek().map(|(_, s)| *s).unwrap();
-            self.advance();
-            let expr = self.parse_unary()?;
-            Ok(ast::Expr::Deref(Box::new(expr), op_span, ast::Type::Unknown))
-        } else {
-            self.parse_primary()
-        }
-    }
-
+    
     fn parse_return(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwReturn)?;
         let ret_span = self.previous().map(|(_, s)| *s).unwrap();
@@ -172,41 +319,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_logical_or(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_logical_and()?;
-        while self.check(Token::OrOr) {
-            let _op_span = self.consume(Token::OrOr, "Expected '||'")?;
-            let right = self.parse_logical_and()?;
-            let span = Span::new(expr.span().start(), right.span().end());
-            expr = ast::Expr::BinOp(
-                Box::new(expr),
-                ast::BinOp::Or,
-                Box::new(right),
-                span,
-                ast::Type::Unknown
-            );
-        }
-        Ok(expr)
-    }
 
-    fn parse_logical_and(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_equality()?;
-        while self.check(Token::AndAnd) {
-            let op_span = self.peek().map(|(_, s)| *s).unwrap();
-            self.advance();
-            let right = self.parse_equality()?;
-            let expr_span = expr.span();
-            let right_span = right.span();
-            expr = ast::Expr::BinOp(
-                Box::new(expr),
-                ast::BinOp::And,
-                Box::new(right),
-                Span::new(expr_span.start(), right_span.end()),
-                ast::Type::Unknown
-            );
-        }
-        Ok(expr)
-    }
+
 
 
     fn parse_defer(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
@@ -373,122 +487,27 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_expr(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        self.parse_assignment()
-    }
 
-    fn parse_assignment(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let expr = self.parse_logical_or()?;
-        if self.check(Token::Eq) {
-            self.advance();
-            let value = self.parse_assignment()?;
-            let span = Span::new(expr.span().start(), value.span().end());
-            Ok(ast::Expr::Assign(Box::new(expr), Box::new(value), span, ast::Type::Void))
-        } else {
-            Ok(expr)
-        }
-    }
 
-    fn parse_equality(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_comparison()?;
-        while self.check(Token::EqEq) {
-            let _op_span = self.peek().map(|(_, s)| *s).unwrap();
-            self.advance();
-            let right = self.parse_comparison()?;
-            let span = Span::new(expr.span().start(), right.span().end());
-            expr = ast::Expr::BinOp(Box::new(expr), ast::BinOp::Eq, Box::new(right), span, ast::Type::Unknown);
-        }
-        Ok(expr)
-    }
 
-    fn parse_comparison(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_additive()?;
-        while self.check(Token::Gt) || self.check(Token::Lt) {
-            let op = match self.advance().unwrap().0 {
-                Token::Gt => ast::BinOp::Gt,
-                Token::Lt => ast::BinOp::Lt,
-                _ => unreachable!(),
-            };
-            let right = self.parse_additive()?;
-            let span = Span::new(expr.span().start(), right.span().end());
-            expr = ast::Expr::BinOp(Box::new(expr), op, Box::new(right), span, ast::Type::Unknown);
-        }
-        Ok(expr)
-    }
-    fn parse_additive(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_multiplicative()?;
-        while self.check(Token::Plus) || self.check(Token::Minus) {
-            let op = match self.advance().unwrap().0 {
-                Token::Plus => ast::BinOp::Add,
-                Token::Minus => ast::BinOp::Sub,
-                _ => unreachable!(),
-            };
-            let right = self.parse_multiplicative()?;
-            let span = Span::new(expr.span().start(), right.span().end());
-            expr = ast::Expr::BinOp(
-                Box::new(expr),
-                op,
-                Box::new(right),
-                span,
-                ast::Type::Unknown
-            );
-        }
-        Ok(expr)
-    }
 
-    fn parse_multiplicative(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_unary()?;
-        while self.check(Token::Star) || self.check(Token::Slash) {
-            let op = match self.advance().unwrap().0 {
-                Token::Star => ast::BinOp::Mul,
-                Token::Slash => ast::BinOp::Div,
-                _ => unreachable!(),
-            };
-            let right = self.parse_unary()?;
-            let span = Span::new(expr.span().start(), right.span().end());
-            expr = ast::Expr::BinOp(
-                Box::new(expr),
-                op,
-                Box::new(right),
-                span,
-                ast::Type::Unknown
-            );
-        }
-        Ok(expr)
-    }
 
-    fn parse_primary(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let mut expr = self.parse_atom()?;
-        loop {
-            if self.check(Token::DotDot) {
-                let dotdot_span = self.peek().unwrap().1;
-                self.advance();
-                let end = self.parse_atom()?;
-                let span = Span::new(expr.span().start(), end.span().end());
-                expr = ast::Expr::Range(Box::new(expr), Box::new(end), span, ast::Type::Unknown);
-            } else if self.check(Token::KwAs) {
-                let start = expr.span().start();
-                self.advance();
-                let target_type = self.parse_type()?;
-                let end_span = self.previous().map(|(_, s)| *s).unwrap();
-                expr = ast::Expr::Cast(Box::new(expr), target_type.clone(), Span::new(start, end_span.end()), target_type);
-            } else {
-                break;
-            }
-        }
-        Ok(expr)
-    }
+
+
+
+
 
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let token = self.advance().cloned();
-        match token {
+        let current = self.advance().cloned();
+        match current {
             Some((Token::Int(n), span)) => Ok(ast::Expr::Int(n, span, ast::Type::I32)),
             Some((Token::Ident(name), span)) if name.starts_with("__") => {
                 self.parse_intrinsic_call(name, span)
             },
             Some((Token::Str(value), span)) => Ok(ast::Expr::Str(value, span, ast::Type::String)),
             Some((Token::Ident(name), span)) => {
-                if self.check(Token::LParen) {
+                let has_paren = self.check(Token::LParen);
+                if has_paren {
                     self.parse_function_call(name, span)
                 } else {
                     Ok(ast::Expr::Var(name, span, ast::Type::Unknown))
@@ -496,16 +515,14 @@ impl<'a> Parser<'a> {
             },
             Some((Token::LParen, _)) => {
                 let expr = self.parse_expr()?;
-                self.expect(Token::RParen).map_err(|e| {
-                    e.with_message("Missing closing parenthesis")
-                })?;
+                self.expect(Token::RParen)?;
                 Ok(expr)
-            }
+            },
             Some((Token::KwSafe, span)) => {
                 self.parse_safe_block(span)
             },
-            Some((_, span)) => self.error("Expected primary expression", span),
-            None => self.error("Expected primary expression", Span::new(0, 0)),
+            Some((t, span)) => self.error(&format!("Unexpected token: {:?}", t), span),
+            None => self.error("Unexpected end of input", Span::new(0, 0)),
         }
     }
 
@@ -555,7 +572,9 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) -> Option<&(Token, Span)> {
-        if !self.is_at_end() { self.current += 1; }
+        if !self.is_at_end() {
+            self.current += 1;
+        }
         self.previous()
     }
 

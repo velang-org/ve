@@ -65,6 +65,7 @@ pub enum Expr {
     Assign(Box<Expr>, Box<Expr>, Span, Type),
     Print(Box<Expr>, Span, Type),
     Range(Box<Expr>, Box<Expr>, Span, Type),
+    UnaryOp(UnOp, Box<Expr>, Span, Type),
 }
 
 impl Expr {
@@ -83,6 +84,7 @@ impl Expr {
             Expr::Assign(_, _, span, _) => *span,
             Expr::Print(_, span, _) => *span,
             Expr::Range(_, _, span, _) => *span,
+            Expr::UnaryOp(_, _, span, _) => *span,
         }
     }
 
@@ -101,6 +103,7 @@ impl Expr {
             Expr::Assign(_, _, _, ty) => ty.clone(),
             Expr::Print(_, _, ty) => ty.clone(),
             Expr::Range(_, _, _, ty) => ty.clone(),
+            Expr::UnaryOp(_, _, _, ty) => ty.clone(),
         }
     }
 
@@ -111,6 +114,12 @@ impl Expr {
             false
         }
     }
+}
+
+#[derive(Debug)]
+pub enum UnOp {
+    Neg,
+    Plus,
 }
 
 #[derive(Debug)]

@@ -282,7 +282,26 @@ impl TypeChecker {
                         Ok(Type::Unknown)
                     }
                 }
-            }
+            },
+            Expr::UnaryOp(op, operand, span, expr_type) => {
+                let operand_ty = self.check_expr(operand)?;
+                let result_ty = match op {
+                    ast::UnOp::Neg => {
+                        if operand_ty == Type::I32 {
+                            Type::I32
+                        } else {
+                            self.report_error(
+                                &format!("Cannot negate type {}", operand_ty),
+                                *span,
+                            );
+                            Type::Unknown
+                        }
+                    }
+                    ast::UnOp::Plus => operand_ty,
+                };
+                *expr_type = result_ty.clone();
+                Ok(result_ty)
+            },
             Expr::Assign(target, value, span, _) => {
                 let target_ty = self.check_expr(target)?;
                 let value_ty = self.check_expr(value)?;
