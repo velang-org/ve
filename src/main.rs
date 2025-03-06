@@ -18,11 +18,17 @@ impl fmt::Display for MyError {
 impl std::error::Error for MyError {}
 
 fn check_dependencies() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "windows")]
-    {
-        if std::process::Command::new("clang").arg("--version").status().is_err() {
-            return Err("Requires Clang. Install from: https://aka.ms/vs/17/release/vs_BuildTools.exe".into());
-        }
+    let has_compiler = std::process::Command::new("clang")
+        .arg("--version")
+        .status()
+        .or_else(|_| std::process::Command::new("gcc").arg("--version").status())
+        .is_ok();
+
+    if !has_compiler {
+        #[cfg(target_os = "windows")]
+        return Err("Requires Clang. Install from: https://aka.ms/vs/17/release/vs_BuildTools.exe".into());
+        #[cfg(not(target_os = "windows"))]
+        return Err("Requires Clang or GCC. Please install a C compiler".into());
     }
     Ok(())
 }
