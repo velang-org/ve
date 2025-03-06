@@ -46,6 +46,7 @@ impl CBackend {
             self.config.target_triple
         ));
         self.header.push_str("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n");
+        self.header.push_str("#include <stdbool.h>\n");
 
         for include in self.includes.borrow().iter() {
             self.header.push_str(&format!("#include {}\n", include));
