@@ -46,11 +46,8 @@ impl<'a> Parser<'a> {
     fn parse_expr_bp(&mut self, min_bp: Precedence) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut lhs = self.parse_prefix()?;
 
-        loop {
-            let op = match self.peek() {
-                Some((t, _)) => t.clone(),
-                None => break,
-            };
+        while let Some((op, _)) = self.peek() {
+            let op = op.clone();
             let op_span = self.peek_span();
 
             let Some((lbp, rbp)) = self.get_infix_bp(&op) else {

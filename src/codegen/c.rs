@@ -249,7 +249,7 @@ impl CBackend {
             },
             ast::Stmt::While(cond, body, _) => {
                 let cond_code = self.emit_expr(cond)?;
-                self.body.push_str(&format!("while ({}) {{\n", cond_code));
+                self.body.push_str(&format!("while ({}) {{\n", cond_code)); 
                 for stmt in body {
                     self.emit_stmt(stmt)?;
                 }
@@ -307,14 +307,25 @@ impl CBackend {
                         Ok(format!("concat({}, {})", left_conv, right_conv))
                     }
                     _ => {
-                        Ok(format!("({} + {})", left_code, right_code))
+                        let c_op = match op {
+                            ast::BinOp::Add => "+",
+                            ast::BinOp::Sub => "-",
+                            ast::BinOp::Mul => "*",
+                            ast::BinOp::Div => "/",
+                            ast::BinOp::Eq => "==",
+                            ast::BinOp::Gt => ">",
+                            ast::BinOp::Lt => "<",
+                            ast::BinOp::And => "&&",
+                            ast::BinOp::Or => "||",
+                        };
+                        Ok(format!("({} {} {})", left_code, c_op, right_code))
                     }
                 }
             },
             ast::Expr::Assign(target, value, _, _) => {
                 let target_code = self.emit_expr(target)?;
                 let value_code = self.emit_expr(value)?;
-                Ok(format!("({} = {})", target_code, value_code))
+                Ok(format!("({} = {})", target_code, value_code)) 
             },
             ast::Expr::Str(s, _, _) => Ok(format!("\"{}\"", s)),
             ast::Expr::Var(name, _, _) => {
