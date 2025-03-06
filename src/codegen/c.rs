@@ -115,7 +115,11 @@ impl CBackend {
     }
 
     fn is_constant_expr(&self, expr: &ast::Expr) -> bool {
-        matches!(expr, ast::Expr::Int(..) | ast::Expr::Str(..))
+        matches!(expr, 
+            ast::Expr::Int(..) |
+            ast::Expr::Str(..) |
+            ast::Expr::Bool(..)
+        )
     }
 
     fn emit_main_if_missing(&mut self, program: &ast::Program) -> Result<(), CompileError> {
