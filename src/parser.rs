@@ -36,6 +36,16 @@ impl<'a> Parser<'a> {
         Ok(program)
     }
 
+    
+    fn parse_block(&mut self) -> Result<Vec<ast::Stmt>, Diagnostic<FileId>> {
+        self.expect(Token::LBrace)?;
+        let mut stmts = Vec::new();
+        while !self.check(Token::RBrace) {
+            stmts.push(self.parse_stmt()?);
+        }
+        self.expect(Token::RBrace)?;
+        Ok(stmts)
+    }
 
     fn parse_type(&mut self) -> Result<ast::Type, Diagnostic<FileId>> {
         let next = self.advance().map(|(t, s)| (t.clone(), *s));
@@ -211,12 +221,7 @@ impl<'a> Parser<'a> {
         
         let condition = self.parse_expr()?;
 
-        self.expect(Token::LBrace)?;
-        let mut body = Vec::new();
-        while !self.check(Token::RBrace) {
-            body.push(self.parse_stmt()?);
-        }
-        self.expect(Token::RBrace)?;
+        let body = self.parse_block()?;
 
         Ok(ast::Stmt::While(
             condition,
@@ -239,11 +244,7 @@ impl<'a> Parser<'a> {
         let range_expr = self.parse_expr()?;
         
         self.expect(Token::LBrace)?;
-        let mut body = Vec::new();
-        while !self.check(Token::RBrace) {
-            body.push(self.parse_stmt()?);
-        }
-        self.expect(Token::RBrace)?;
+        let body = self.parse_block()?;
         
         Ok(ast::Stmt::For(
             ident,
