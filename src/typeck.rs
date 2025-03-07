@@ -391,7 +391,7 @@ impl TypeChecker {
                     }
                 }
             },
-            Expr::Range(start, end, span, _) => {
+            Expr::Range(start, end, _span, _) => {
                 let start_ty = self.check_expr(start)?;
                 let end_ty = self.check_expr(end)?;
 

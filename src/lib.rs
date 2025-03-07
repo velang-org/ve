@@ -5,3 +5,5 @@ pub mod typeck;
 pub mod codegen;
 
 pub mod cli;
+
+pub mod error;

@@ -48,7 +48,7 @@ impl<'a> Parser<'a> {
 
         while let Some((op, _)) = self.peek() {
             let op = op.clone();
-            let op_span = self.peek_span();
+            self.peek_span();
 
             let Some((lbp, rbp)) = self.get_infix_bp(&op) else {
                 break;
@@ -316,10 +316,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-
-
-
-
     fn parse_defer(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwDefer)?;
         let start_span = self.previous().map(|(_, s)| *s).unwrap();
@@ -452,7 +448,7 @@ impl<'a> Parser<'a> {
 
         let mut stmts = vec![];
         for ((ident, span), expr) in idents.into_iter().zip(exprs) {
-            let expr_type = match &expr {
+            match &expr {
                 ast::Expr::Int(..) => ast::Type::I32,
                 ast::Expr::Str(..) => ast::Type::String,
                 ast::Expr::Bool(..) => ast::Type::Bool,
@@ -471,7 +467,7 @@ impl<'a> Parser<'a> {
             self.expect(Token::Semi)?;
         }
 
-        let start = let_span.start();
+        let_span.start();
         let end = if expect_semi {
             self.previous().map(|(_, s)| s.end()).unwrap_or_else(|| let_span.end())
         } else {
@@ -483,17 +479,7 @@ impl<'a> Parser<'a> {
             Span::new(let_span.start(), end)
         ))
     }
-
-
-
-
-
-
-
-
-
-
-
+    
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let current = self.advance().cloned();
         match current {

@@ -29,7 +29,7 @@ fn run_compiler(relative_path: &str) -> (bool, String, String) {
 
 #[test]
 fn test_valid_program_compilation() {
-    let (success, stdout, stderr) = run_compiler("valid/arithmetic.vrv");
+    let (success, stdout, stderr) = run_compiler("valid/arithmetic.ve");
 
     assert!(
         success,
@@ -46,7 +46,7 @@ fn test_valid_program_compilation() {
 
 #[test]
 fn test_invalid_program() {
-    let (success, stdout, stderr) = run_compiler("invalid/type_mismatch.vrv");
+    let (success, stdout, stderr) = run_compiler("invalid/type_mismatch.ve");
 
     assert!(
         !success,

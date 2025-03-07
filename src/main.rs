@@ -1,3 +1,5 @@
+mod error;
+
 use verve_lang::{lexer, parser, typeck, codegen, cli::{Args, Command}};
 
 use clap::Parser;
@@ -5,9 +7,17 @@ use codespan::{FileId, Files};
 use codespan_reporting::diagnostic::Diagnostic;
 use std::fmt;
 use std::path::PathBuf;
+use std::process::Stdio;
+use dunce::canonicalize;
+use anyhow::{anyhow, Context};
+use colored::Colorize;
 
 #[derive(Debug)]
 struct MyError(Diagnostic<FileId>);
+
+
+unsafe impl Send for MyError {}
+unsafe impl Sync for MyError {}
 
 impl fmt::Display for MyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -17,24 +27,32 @@ impl fmt::Display for MyError {
 
 impl std::error::Error for MyError {}
 
-fn check_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+
+
+
+fn check_dependencies() -> anyhow::Result<()> {
     let has_compiler = std::process::Command::new("clang")
         .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
-        .or_else(|_| std::process::Command::new("gcc").arg("--version").status())
+        .or_else(|_| std::process::Command::new("gcc")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status())
         .is_ok();
 
     if !has_compiler {
         #[cfg(target_os = "windows")]
-        return Err("Requires Clang. Install from: https://aka.ms/vs/17/release/vs_BuildTools.exe".into());
+        return Err(anyhow!("Requires Clang. Install from: https://aka.ms/vs/17/release/vs_BuildTools.exe"));
         #[cfg(not(target_os = "windows"))]
-        return Err("Requires Clang or GCC. Please install a C compiler".into());
+        return Err(anyhow!("Requires Clang or GCC. Please install a C compiler"));
     }
     Ok(())
 }
-
 #[cfg(target_os = "windows")]
-fn get_msvc_lib_paths() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn get_msvc_lib_paths() -> anyhow::Result<Vec<String>> {
     use std::env;
     let mut paths = Vec::new();
 
@@ -58,15 +76,17 @@ fn get_msvc_lib_paths() -> Result<Vec<String>, Box<dyn std::error::Error>> {
 
     for path in &paths {
         if !std::path::Path::new(path).exists() {
-            return Err(format!("Missing library path: {}\nInstall VS Build Tools: https://aka.ms/vs/17/release/vs_BuildTools.exe", path).into());
+            return Err(anyhow!(
+                "Missing library path: {}\nInstall VS Build Tools: https://aka.ms/vs/17/release/vs_BuildTools.exe",
+                path
+            ));
         }
     }
-
     Ok(paths)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    check_dependencies()?;
+fn main() -> anyhow::Result<()> {
+    check_dependencies().context("Dependency check failed")?;
     let args = Args::parse();
 
     let (input, output, optimize, target_triple, verbose) = match args.command {
@@ -76,21 +96,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                  optimize,
                  target_triple,
                  verbose,
-             }) => (input, output, optimize, target_triple, verbose),
-        None => (
-            args.input.unwrap(),
-            args.output,
-            args.optimize,
-            args.target_triple,
-            args.verbose,
-        ),
+             }) => {
+            let validated_input = canonicalize(&input)
+                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
+            (validated_input, output, optimize, target_triple, verbose)
+        },
+        None => {
+            let input = args.input.unwrap();
+            let validated_input = canonicalize(&input)
+                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
+            (validated_input, args.output, args.optimize, args.target_triple, args.verbose)
+        }
     };
 
+    if !input.exists() {
+        let display_path = input.display().to_string().bold().red();
+        let msg = format!("File {} not found", display_path);
 
+        error::report_error(
+            "File not found",
+            &msg,
+            &input,
+            "",
+            None,
+        )?;
+        return Err(anyhow!("Missing input file"));
+    }
 
-    let mut files = Files::new();
-    let content = std::fs::read_to_string(&input)?;
-    let file_id = files.add(input.to_str().unwrap(), content);
+    let mut files = Files::<String>::new();
+    let content = std::fs::read_to_string(&input)
+        .with_context(|| format!("Reading file '{}'", input.display()))?;
+
+    let file_id = files.add(input.to_str().unwrap().to_string(), content);
 
     let lexer = lexer::Lexer::new(&files, file_id);
     let mut parser = parser::Parser::new(lexer);
@@ -105,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for error in errors {
             eprintln!("Type error: {:?}", error);
         }
-        return Err("Type check failed".into());
+        return Err(anyhow!("Type check failed"));
     }
 
     let config = codegen::CodegenConfig {
@@ -141,10 +178,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let status = std::process::Command::new("clang").args(&clang_args).status()?;
         if !status.success() {
-            return Err("C compilation failed".into());
+            return Err(anyhow!("C compilation failed"));
         }
     }
 
     println!("Program compiled to: {}", output.display());
     Ok(())
 }
+

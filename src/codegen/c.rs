@@ -1,8 +1,8 @@
-use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use codespan::{FileId, Span};
-use crate::{ast, codegen::{CodegenConfig, CompileError}};
 use crate::ast::Type;
+use crate::{ast, codegen::{CodegenConfig, CompileError}};
+use codespan::{FileId, Span};
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap};
 
 pub struct CBackend {
     config: CodegenConfig,
