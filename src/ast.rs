@@ -29,10 +29,19 @@ pub struct Function {
     pub return_type: Type,
     pub body: Vec<Stmt>,
     pub span: Span,
+    pub exported: bool,
+}
+
+
+#[derive(Debug)]
+pub struct Import {
+    pub path: String,
+    pub span: Span,
 }
 
 #[derive(Debug)]
 pub struct Program {
+    pub imports: Vec<Import>,
     pub stmts: Vec<Stmt>,
     pub functions: Vec<Function>,
 }

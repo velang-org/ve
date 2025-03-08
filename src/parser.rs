@@ -23,12 +23,21 @@ impl<'a> Parser<'a> {
 
     pub fn parse(&mut self) -> Result<ast::Program, Diagnostic<FileId>> {
         let mut program = ast::Program {
+            imports: Vec::new(),
             stmts: Vec::new(),
             functions: Vec::new(),
         };
 
         while !self.is_at_end() {
-            if self.check(Token::KwFn) {
+            if self.check(Token::KwImport) {
+                let import = self.parse_import()?;
+                program.imports.push(import);
+            } else if self.check(Token::KwExport) {
+                self.advance(); 
+                let mut func = self.parse_function()?;
+                func.exported = true;
+                program.functions.push(func);
+            } else if self.check(Token::KwFn) {
                 program.functions.push(self.parse_function()?);
             } else {
                 program.stmts.push(self.parse_stmt()?);
@@ -39,6 +48,29 @@ impl<'a> Parser<'a> {
     }
 
 
+    fn parse_import(&mut self) -> Result<ast::Import, Diagnostic<FileId>> {
+        self.consume(Token::KwImport, "Expected 'import'")?;
+        let start_span = self.previous().map(|(_, s)| *s).unwrap();
+
+        let next_token = self.advance();
+        let path = match next_token {
+            Some((Token::Str(path), _)) => path.clone(),
+            Some((_, span)) => {
+                let span = *span;
+                return self.error("Expected string literal", span);
+            },
+            None => return self.error("Expected string literal", Span::new(0, 0)),
+        };
+
+        self.expect(Token::Semi)?;
+        let end_span = self.previous().map(|(_, s)| *s).unwrap();
+
+        Ok(ast::Import {
+            path,
+            span: Span::new(start_span.start(), end_span.end()),
+        })
+    }
+    
     fn parse_expr(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         self.parse_expr_bp(0)
     }
@@ -271,6 +303,7 @@ impl<'a> Parser<'a> {
             return_type,
             body,
             span: Span::new(start_span.start(), end_span.end()),
+            exported: false,
         })
     }
 

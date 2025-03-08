@@ -27,6 +27,10 @@ pub enum Token {
     KwWhile,
     #[token("for")]
     KwFor,
+    #[token("import")]
+    KwImport,
+    #[token("export")]
+    KwExport,
     
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Str(String),

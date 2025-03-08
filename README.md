@@ -19,6 +19,9 @@ Verve is in **EARLY DEVELOPMENT** – syntax and features will change radically.
   - Comparisons: == != > <
   - Logical: && ||
 - print() function for debugging
+- Modularity:
+  - Import other Verve files
+  - Export functions for use in other files
 
 ## Installation
 Requirements:

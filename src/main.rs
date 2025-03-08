@@ -1,16 +1,18 @@
 mod error;
 
-use verve_lang::{lexer, parser, typeck, codegen, cli::{Args, Command}};
+use std::collections::HashMap;
+use verve_lang::{lexer, parser, typeck, codegen, cli::{Args, Command}, ast};
 
 use clap::Parser;
 use codespan::{FileId, Files};
 use codespan_reporting::diagnostic::Diagnostic;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use dunce::canonicalize;
 use anyhow::{anyhow, Context};
 use colored::Colorize;
+use verve_lang::ast::Type;
 
 #[derive(Debug)]
 struct MyError(Diagnostic<FileId>);
@@ -85,6 +87,37 @@ fn get_msvc_lib_paths() -> anyhow::Result<Vec<String>> {
     Ok(paths)
 }
 
+
+fn process_imports(
+    files: &mut Files<String>,
+    imports: &[ast::Import],
+    base_path: &Path,
+) -> anyhow::Result<(HashMap<String, (Vec<Type>, Type)>, Vec<ast::Function>)> {
+    let mut functions_map = HashMap::new();
+    let mut functions_ast = Vec::new();
+    for import in imports {
+        let path = base_path.parent().unwrap().join(&import.path);
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Reading imported file {}", path.display()))?;
+
+        let file_id = files.add(path.to_str().unwrap().to_string(), content);
+        let lexer = lexer::Lexer::new(files, file_id);
+        let mut parser = parser::Parser::new(lexer);
+        let program = parser.parse().map_err(MyError)?;
+        let (nested_functions_map, nested_functions_ast) = process_imports(files, &program.imports, &path)?;
+        for func in program.functions {
+            if func.exported {
+                let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
+                functions_map.insert(func.name.clone(), (params, func.return_type.clone()));
+                functions_ast.push(func)
+            }
+        }
+        functions_map.extend(nested_functions_map);
+        functions_ast.extend(nested_functions_ast);
+    }
+    Ok((functions_map, functions_ast))
+}
+
 fn main() -> anyhow::Result<()> {
     check_dependencies().context("Dependency check failed")?;
     let args = Args::parse();
@@ -137,7 +170,10 @@ fn main() -> anyhow::Result<()> {
         println!("Parsed AST:\n{:#?}", program);
     }
 
-    let mut type_checker = typeck::TypeChecker::new(file_id);
+    let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &input)?;
+    program.functions.extend(imported_asts);
+    
+    let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone());
     if let Err(errors) = type_checker.check(&mut program) {
         for error in errors {
             eprintln!("Type error: {:?}", error);
@@ -148,7 +184,10 @@ fn main() -> anyhow::Result<()> {
     let config = codegen::CodegenConfig {
         target_triple: target_triple.clone(),
     };
-    let mut target = codegen::Target::create(config, file_id);
+
+
+
+    let mut target = codegen::Target::create(config, file_id, imported_functions.clone());
     target.compile(&program)?;
 
     #[cfg(target_os = "windows")]

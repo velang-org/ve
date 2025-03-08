@@ -29,17 +29,17 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new(file_id: FileId) -> Self {
+    pub fn new(file_id: FileId, imported_functions: HashMap<String, (Vec<Type>, Type)>) -> Self {
         TypeChecker {
             file_id,
             errors: Vec::new(),
             context: Context::new(),
-            functions: HashMap::new(),
+            functions: imported_functions,
         }
     }
 
     pub fn check(&mut self, program: &mut ast::Program) -> Result<(), Vec<Diagnostic<FileId>>> {
-        for func in &mut program.functions {
+        for func in &program.functions {
             let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
             self.functions.insert(
                 func.name.clone(),

@@ -12,10 +12,11 @@ pub struct CBackend {
     includes: RefCell<BTreeSet<&'static str>>,
     variables: RefCell<HashMap<String, Type>>,
     functions_map: HashMap<String, Type>,
+    imported_functions: HashMap<String, (Vec<Type>, Type)>,
 }
 
 impl CBackend {
-    pub fn new(config: CodegenConfig, file_id: FileId) -> Self {
+    pub fn new(config: CodegenConfig, file_id: FileId, imported_functions: HashMap<String, (Vec<Type>, Type)>) -> Self {
         Self {
             config,
             header: String::new(),
@@ -24,17 +25,18 @@ impl CBackend {
             includes: RefCell::new(BTreeSet::new()),
             variables: RefCell::new(HashMap::new()),
             functions_map: HashMap::new(),
+            imported_functions,
         }
     }
 
     pub fn compile(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         self.functions_map = program.functions.iter()
             .map(|f| (f.name.clone(), f.return_type.clone()))
+            .chain(self.imported_functions.iter().map(|(k, v)| (k.clone(), v.1.clone())))
             .collect();
         self.emit_globals(program)?;
         self.emit_functions(program)?;
         self.emit_main_if_missing(program)?;
-
         self.emit_header();
         self.write_output()?;
         Ok(())
@@ -142,7 +144,7 @@ impl CBackend {
         }
         Ok(())
     }
-
+    
     fn emit_functions(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         for func in &program.functions {
             let return_type = if func.name == "main" {
@@ -156,13 +158,24 @@ impl CBackend {
                 .join(", ");
             self.body.push_str(&format!("{} {}({});\n", return_type, func.name, params));
         }
-        self.body.push('\n');
+
+        for (name, (param_types, return_type)) in &self.imported_functions {
+            let return_type_c = self.type_to_c(return_type);
+            let params_c = param_types.iter()
+                .map(|ty| self.type_to_c(ty))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            self.body.push_str(&format!("{} {}({});\n", return_type_c, name, params_c));
+        }
 
         for func in &program.functions {
             self.emit_function(func)?;
         }
+
         Ok(())
     }
+
 
     fn emit_function(&mut self, func: &ast::Function) -> Result<(), CompileError> {
         let return_type = if func.name == "main" {

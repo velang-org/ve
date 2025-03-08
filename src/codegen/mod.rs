@@ -13,8 +13,8 @@ pub struct CodegenConfig {
 }
 
 impl Target {
-    pub fn create(config: CodegenConfig, file_id: FileId) -> Self {
-        Target::Native(c::CBackend::new(config, file_id))
+    pub fn create(config: CodegenConfig, file_id: FileId, imported_return_types: std::collections::HashMap<String, (Vec<crate::ast::Type>, crate::ast::Type)>) -> Self {
+        Target::Native(c::CBackend::new(config, file_id, imported_return_types))
     }
 
     pub fn compile(&mut self, program: &crate::ast::Program) -> Result<(), CompileError> {
