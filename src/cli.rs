@@ -81,9 +81,9 @@ pub struct Args {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Compile and run a Verve program
-    Run {
+    Build {
         /// Input file to compile
+        #[arg(value_parser = validate_ve_file)]
         input: PathBuf,
 
         /// Output executable path
@@ -93,13 +93,13 @@ pub enum Command {
         /// Disable optimizations
         #[arg(long, action = clap::ArgAction::SetFalse)]
         optimize: bool,
-
+        
         /// Target triple for code generation
         #[arg(long, default_value = "x86_64-pc-windows-msvc")]
         target_triple: String,
-
+        
         /// Show verbose output
         #[arg(short, long)]
         verbose: bool,
-    },
+    }
 }

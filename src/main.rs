@@ -13,7 +13,7 @@ use codespan::{FileId, Files};
 use codespan_reporting::diagnostic::Diagnostic;
 use dunce::canonicalize;
 
-use verve_lang::{
+use Velang::{
     ast::{self, Type},
     cli::{Args, Command},
     codegen,
@@ -37,7 +37,7 @@ impl std::error::Error for MyError {}
 type ImportedFunctions = HashMap<String, (Vec<Type>, Type)>;
 type ParsedProgram = anyhow::Result<(ast::Program, ImportedFunctions)>;
 
-type ProcessedArgs = (PathBuf, PathBuf, bool, String, bool);
+
 fn check_dependencies() -> anyhow::Result<()> {
     let has_compiler = std::process::Command::new("clang")
         .arg("--version")
@@ -89,23 +89,28 @@ fn get_msvc_lib_paths() -> anyhow::Result<Vec<String>> {
     Ok(paths)
 }
 
+use tempfile::NamedTempFile;
 
-
+type ProcessedArgs = (PathBuf, PathBuf, bool, String, bool, bool);
 fn resolve_args(args: Args) -> anyhow::Result<ProcessedArgs> {
-    let (input, output, optimize, target_triple, verbose) = match args.command {
-        Some(Command::Run { input, output, optimize, target_triple, verbose }) => {
-            let validated_input = canonicalize(&input)
-                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
-            (validated_input, output, optimize, target_triple, verbose)
-        }
+    match args.command {
+        Some(Command::Build { input, output, optimize, target_triple, verbose }) => {
+            let validated_input = canonicalize(&input)?;
+            Ok((validated_input, output, optimize, target_triple, verbose, false))
+        },
         None => {
-            let input = args.input.unwrap();
-            let validated_input = canonicalize(&input)
-                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
-            (validated_input, args.output, args.optimize, args.target_triple, args.verbose)
+            let input = args.input.context("Missing input file")?;
+            let temp_exe = NamedTempFile::new()?.into_temp_path();
+            Ok((
+                canonicalize(&input)?,
+                temp_exe.to_path_buf(), 
+                false,
+                "x86_64-pc-windows-msvc".to_string(),
+                args.verbose,
+                true 
+            ))
         }
-    };
-    Ok((input, output, optimize, target_triple, verbose))
+    }
 }
 
 fn process_imports(
@@ -142,7 +147,7 @@ fn main() -> anyhow::Result<()> {
     check_dependencies().context("Dependency check failed")?;
     let args = Args::parse();
 
-    let (input, output, optimize, target_triple, verbose) = resolve_args(args)?;
+    let (input, output, optimize, target_triple, verbose, is_temp) = resolve_args(args)?;
     
     let mut files = Files::<String>::new();
     let content = std::fs::read_to_string(&input)
@@ -156,8 +161,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     type_check(&mut program, file_id, &imported_functions)?;
-    compile_to_target(program, output, optimize, target_triple, verbose, file_id, imported_functions)
+    compile_to_target(program, &output, optimize, target_triple, verbose, file_id, imported_functions)?;
+
+    if is_temp {
+        std::process::Command::new(output.clone())
+            .status()
+            .context("Failed to execute program")?;
+        
+        if output.exists() {
+            std::fs::remove_file(&output)?;
+        }
+    } else {
+        println!("Program compiled to: {}", output.display());
+    }
+    
+    Ok(())
 }
+
 
 
 fn parse_and_process_imports(
@@ -193,7 +213,7 @@ fn type_check(
 
 fn compile_to_target(
     program: ast::Program,
-    output: PathBuf,
+    output: &Path, 
     optimize: bool,
     target_triple: String,
     verbose: bool,
@@ -205,7 +225,7 @@ fn compile_to_target(
     target.compile(&program)?;
 
     #[cfg(target_os = "windows")]
-    let clang_args = prepare_windows_clang_args(&output, optimize, verbose)?;
+    let clang_args = prepare_windows_clang_args(output, optimize, verbose)?;
     #[cfg(not(target_os = "windows"))]
     let clang_args = prepare_unix_clang_args(&output, optimize);
 
@@ -217,8 +237,6 @@ fn compile_to_target(
     if !status.success() {
         return Err(anyhow!("C compilation failed"));
     }
-
-    println!("Program compiled to: {}", output.display());
     Ok(())
 }
 

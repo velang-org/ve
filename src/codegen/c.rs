@@ -134,12 +134,7 @@ impl CBackend {
                     self.emit_stmt(stmt)?;
                 }
             }
-
-            #[cfg(target_os = "windows")]
-            self.body.push_str("    system(\"pause\");\n");
-            #[cfg(not(target_os = "windows"))]
-            self.body.push_str("    getchar();\n");
-
+            
             self.body.push_str("    return 0;\n}\n");
         }
         Ok(())
@@ -199,11 +194,6 @@ impl CBackend {
         }
 
         if func.name == "main" {
-            #[cfg(target_os = "windows")]
-            self.body.push_str("    system(\"pause\");\n");
-            #[cfg(not(target_os = "windows"))]
-            self.body.push_str("    getchar();\n");
-
             let last_is_return = func.body.last().is_some_and(|s| matches!(s, ast::Stmt::Return(..)));
 
             if !last_is_return {

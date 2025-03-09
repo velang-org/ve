@@ -1,4 +1,4 @@
-use verve_lang::lexer::{Lexer, Token};
+use Velang::lexer::{Lexer, Token};
 use codespan::Files;
 
 #[test]
