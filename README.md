@@ -31,7 +31,7 @@ Requirements:
 
 Install:
 ```bash
-git clone https://github.com/verve-lang/verve
+git clone https://github.com/velang-org/ve
 cd verve
 cargo install --path .
 ```
