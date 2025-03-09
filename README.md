@@ -1,8 +1,8 @@
-![Verve Language](https://img.shields.io/static/v1?label=&message=Verve&color=2b7489&logo=asciidoc&logoColor=white)
+![Ve Language](https://img.shields.io/static/v1?label=&message=Velang&color=2b7489&logo=asciidoc&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ⚠️ Experimental Status
-Verve is in **EARLY DEVELOPMENT** – syntax and features will change radically. Not suitable for any production use. Use at your own risk!
+Velang is in **EARLY DEVELOPMENT** – syntax and features will change radically. Not suitable for any production use. Use at your own risk!
 
 ## Current Features
 - Compiles to human-readable C

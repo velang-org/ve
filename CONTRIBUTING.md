@@ -1,4 +1,4 @@
-# Contributing to Verve
+# Contributing to Ve
 
 We welcome contributions! As Verve is in **early experimental phase**, your input will directly shape the language's future.
 
