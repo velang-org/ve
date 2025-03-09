@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "Velang"
+name = "Ve"
 version = "0.0.1"
 dependencies = [
  "anyhow",
