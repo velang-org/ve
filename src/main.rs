@@ -1,25 +1,29 @@
 mod error;
 
-use std::collections::HashMap;
-use verve_lang::{lexer, parser, typeck, codegen, cli::{Args, Command}, ast};
+use std::{
+    collections::HashMap,
+    fmt,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 
+use anyhow::{anyhow, Context};
 use clap::Parser;
 use codespan::{FileId, Files};
 use codespan_reporting::diagnostic::Diagnostic;
-use std::fmt;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use dunce::canonicalize;
-use anyhow::{anyhow, Context};
-use colored::Colorize;
-use verve_lang::ast::Type;
+
+use verve_lang::{
+    ast::{self, Type},
+    cli::{Args, Command},
+    codegen,
+    lexer,
+    parser,
+    typeck,
+};
 
 #[derive(Debug)]
 struct MyError(Diagnostic<FileId>);
-
-
-unsafe impl Send for MyError {}
-unsafe impl Sync for MyError {}
 
 impl fmt::Display for MyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -30,19 +34,17 @@ impl fmt::Display for MyError {
 impl std::error::Error for MyError {}
 
 
+type ImportedFunctions = HashMap<String, (Vec<Type>, Type)>;
+type ParsedProgram = anyhow::Result<(ast::Program, ImportedFunctions)>;
 
-
+type ProcessedArgs = (PathBuf, PathBuf, bool, String, bool);
 fn check_dependencies() -> anyhow::Result<()> {
     let has_compiler = std::process::Command::new("clang")
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .or_else(|_| std::process::Command::new("gcc")
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status())
+        .or_else(|_| std::process::Command::new("gcc").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status())
         .is_ok();
 
     if !has_compiler {
@@ -77,7 +79,7 @@ fn get_msvc_lib_paths() -> anyhow::Result<Vec<String>> {
     }
 
     for path in &paths {
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             return Err(anyhow!(
                 "Missing library path: {}\nInstall VS Build Tools: https://aka.ms/vs/17/release/vs_BuildTools.exe",
                 path
@@ -88,14 +90,30 @@ fn get_msvc_lib_paths() -> anyhow::Result<Vec<String>> {
 }
 
 
+
+fn resolve_args(args: Args) -> anyhow::Result<ProcessedArgs> {
+    let (input, output, optimize, target_triple, verbose) = match args.command {
+        Some(Command::Run { input, output, optimize, target_triple, verbose }) => {
+            let validated_input = canonicalize(&input)
+                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
+            (validated_input, output, optimize, target_triple, verbose)
+        }
+        None => {
+            let input = args.input.unwrap();
+            let validated_input = canonicalize(&input)
+                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
+            (validated_input, args.output, args.optimize, args.target_triple, args.verbose)
+        }
+    };
+    Ok((input, output, optimize, target_triple, verbose))
+}
+
 fn process_imports(
     files: &mut Files<String>,
     imports: &[ast::Import],
     base_path: &Path,
-) -> anyhow::Result<(HashMap<String, (Vec<Type>, Type)>, Vec<ast::Function>)> {
-    let mut functions_map = HashMap::new();
-    let mut functions_ast = Vec::new();
-    for import in imports {
+) -> anyhow::Result<(ImportedFunctions, Vec<ast::Function>)>{
+    imports.iter().try_fold((HashMap::new(), Vec::new()), |(mut map, mut ast), import| {
         let path = base_path.parent().unwrap().join(&import.path);
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Reading imported file {}", path.display()))?;
@@ -104,124 +122,132 @@ fn process_imports(
         let lexer = lexer::Lexer::new(files, file_id);
         let mut parser = parser::Parser::new(lexer);
         let program = parser.parse().map_err(MyError)?;
-        let (nested_functions_map, nested_functions_ast) = process_imports(files, &program.imports, &path)?;
-        for func in program.functions {
-            if func.exported {
-                let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
-                functions_map.insert(func.name.clone(), (params, func.return_type.clone()));
-                functions_ast.push(func)
-            }
-        }
-        functions_map.extend(nested_functions_map);
-        functions_ast.extend(nested_functions_ast);
-    }
-    Ok((functions_map, functions_ast))
+
+        let (nested_map, nested_ast) = process_imports(files, &program.imports, &path)?;
+        program.functions.iter()
+            .filter(|f| f.exported)
+            .for_each(|f| {
+                let params = f.params.iter().map(|(_, t)| t.clone()).collect();
+                map.insert(f.name.clone(), (params, f.return_type.clone()));
+            });
+
+        ast.extend(program.functions.into_iter().filter(|f| f.exported));
+        map.extend(nested_map);
+        ast.extend(nested_ast);
+        Ok((map, ast))
+    })
 }
 
 fn main() -> anyhow::Result<()> {
     check_dependencies().context("Dependency check failed")?;
     let args = Args::parse();
 
-    let (input, output, optimize, target_triple, verbose) = match args.command {
-        Some(Command::Run {
-                 input,
-                 output,
-                 optimize,
-                 target_triple,
-                 verbose,
-             }) => {
-            let validated_input = canonicalize(&input)
-                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
-            (validated_input, output, optimize, target_triple, verbose)
-        },
-        None => {
-            let input = args.input.unwrap();
-            let validated_input = canonicalize(&input)
-                .with_context(|| format!("Resolving path for '{}'", input.display()))?;
-            (validated_input, args.output, args.optimize, args.target_triple, args.verbose)
-        }
-    };
-
-    if !input.exists() {
-        let display_path = input.display().to_string().bold().red();
-        let msg = format!("File {} not found", display_path);
-
-        error::report_error(
-            "File not found",
-            &msg,
-            &input,
-            "",
-            None,
-        )?;
-        return Err(anyhow!("Missing input file"));
-    }
-
+    let (input, output, optimize, target_triple, verbose) = resolve_args(args)?;
+    
     let mut files = Files::<String>::new();
     let content = std::fs::read_to_string(&input)
         .with_context(|| format!("Reading file '{}'", input.display()))?;
 
     let file_id = files.add(input.to_str().unwrap().to_string(), content);
-
-    let lexer = lexer::Lexer::new(&files, file_id);
-    let mut parser = parser::Parser::new(lexer);
-    let mut program = parser.parse().map_err(MyError)?;
+    let (mut program, imported_functions) = parse_and_process_imports(&mut files, &input)?;
 
     if verbose {
         println!("Parsed AST:\n{:#?}", program);
     }
 
-    let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &input)?;
+    type_check(&mut program, file_id, &imported_functions)?;
+    compile_to_target(program, output, optimize, target_triple, verbose, file_id, imported_functions)
+}
+
+
+fn parse_and_process_imports(
+    files: &mut Files<String>,
+    input: &Path,
+) -> ParsedProgram {
+    let file_id = files.add(input.to_str().unwrap().to_string(),
+                            std::fs::read_to_string(input).with_context(|| format!("Reading {}", input.display()))?);
+
+    let lexer = lexer::Lexer::new(files, file_id);
+    let mut parser = parser::Parser::new(lexer);
+    let mut program = parser.parse().map_err(MyError)?;
+
+    let (imported_functions, imported_asts) = process_imports(files, &program.imports, input)?;
     program.functions.extend(imported_asts);
-    
+
+    Ok((program, imported_functions))
+}
+
+fn type_check(
+    program: &mut ast::Program,
+    file_id: FileId,
+    imported_functions: &HashMap<String, (Vec<Type>, Type)>,
+) -> anyhow::Result<()> {
     let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone());
-    if let Err(errors) = type_checker.check(&mut program) {
+    type_checker.check(program).map_err(|errors| {
         for error in errors {
             eprintln!("Type error: {:?}", error);
         }
-        return Err(anyhow!("Type check failed"));
-    }
+        anyhow!("Type check failed")
+    })
+}
 
-    let config = codegen::CodegenConfig {
-        target_triple: target_triple.clone(),
-    };
-
-
-
-    let mut target = codegen::Target::create(config, file_id, imported_functions.clone());
+fn compile_to_target(
+    program: ast::Program,
+    output: PathBuf,
+    optimize: bool,
+    target_triple: String,
+    verbose: bool,
+    file_id: FileId,
+    imported_functions: HashMap<String, (Vec<Type>, Type)>,
+) -> anyhow::Result<()> {
+    let config = codegen::CodegenConfig { target_triple };
+    let mut target = codegen::Target::create(config, file_id, imported_functions);
     target.compile(&program)?;
 
     #[cfg(target_os = "windows")]
-    {
-        let msvc_lib_paths = get_msvc_lib_paths()?;
-        let mut clang_args = vec![
-            if optimize { "-O3" } else { "-O0" }.to_string(),
-            "output.c".to_string(),
-            "-o".to_string(),
-            output.to_str().unwrap().to_string(),
-        ];
+    let clang_args = prepare_windows_clang_args(&output, optimize, verbose)?;
+    #[cfg(not(target_os = "windows"))]
+    let clang_args = prepare_unix_clang_args(&output, optimize);
 
-        for path in msvc_lib_paths {
-            clang_args.push("-L".to_string());
-            clang_args.push(path);
-        }
+    let status = std::process::Command::new("clang")
+        .args(&clang_args)
+        .status()
+        .context("Failed to execute C compiler")?;
 
-        clang_args.extend_from_slice(&[
-            "-lmsvcrt".to_string(),
-            "-Xlinker".to_string(),
-            "/NODEFAULTLIB:libcmt".to_string(),
-        ]);
-
-        if verbose {
-            println!("Invoking clang with args: {:?}", clang_args);
-        }
-
-        let status = std::process::Command::new("clang").args(&clang_args).status()?;
-        if !status.success() {
-            return Err(anyhow!("C compilation failed"));
-        }
+    if !status.success() {
+        return Err(anyhow!("C compilation failed"));
     }
 
     println!("Program compiled to: {}", output.display());
     Ok(())
 }
+
+
+fn prepare_windows_clang_args(output: &Path, optimize: bool, verbose: bool) -> anyhow::Result<Vec<String>> {
+    let msvc_lib_paths = get_msvc_lib_paths()?;
+    let mut clang_args = vec![
+        if optimize { "-O3" } else { "-O0" }.to_string(),
+        "output.c".to_string(),
+        "-o".to_string(),
+        output.to_str().unwrap().to_string(),
+    ];
+
+    for path in msvc_lib_paths {
+        clang_args.push("-L".to_string());
+        clang_args.push(path);
+    }
+
+    clang_args.extend_from_slice(&[
+        "-lmsvcrt".to_string(),
+        "-Xlinker".to_string(),
+        "/NODEFAULTLIB:libcmt".to_string(),
+    ]);
+
+    if verbose {
+        println!("Windows Clang args: {:?}", clang_args);
+    }
+
+    Ok(clang_args)
+}
+
 
