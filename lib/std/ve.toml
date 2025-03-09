@@ -1,0 +1,8 @@
+
+[package]
+name = "std"
+version = "0.1.0"
+description = "A new Velang project"
+
+[dependencies]
+# Add dependencies here

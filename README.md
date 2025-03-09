@@ -37,5 +37,6 @@ cargo install --path .
 ```
 ## Examples
 - [Basics](./examples/basics/README.md)
+- [Modularity](./examples/modularity/README.md)
 ## Contributing
 Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTING.md) first.
