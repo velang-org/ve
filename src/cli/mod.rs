@@ -29,7 +29,6 @@ pub enum CliCommand {
         optimize: bool,
         target_triple: String,
         verbose: bool,
-        is_temp: bool,
     },
     Init {
         directory: PathBuf,
@@ -116,7 +115,6 @@ pub fn parse() -> anyhow::Result<CliCommand> {
                 optimize,
                 target_triple,
                 verbose,
-                is_temp: output_clone == PathBuf::from("program.exe"),
             })
         }
         Some(Command::Init { directory, project_name }) => {
@@ -134,7 +132,6 @@ pub fn parse() -> anyhow::Result<CliCommand> {
                 optimize: args.optimize,
                 target_triple: args.target_triple,
                 verbose: args.verbose,
-                is_temp: output == PathBuf::from("program.exe"),
             })
         }
     }
@@ -147,27 +144,35 @@ pub fn process_build(
     optimize: bool,
     target_triple: String,
     verbose: bool,
-    is_temp: bool,
 ) -> anyhow::Result<()> {
-    if let Some(parent) = output.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create output directory")?;
-        }
-    }
+    let build_dir = input.parent()
+        .ok_or_else(|| anyhow!("Invalid input file path"))?
+        .join("build");
 
+    if build_dir.exists() {
+        if verbose {
+            println!("Cleaning build directory: {}", build_dir.display());
+        }
+        std::fs::remove_dir_all(&build_dir)?;
+    }
+    std::fs::create_dir_all(&build_dir)?;
+
+    let output = build_dir.join(output.file_name().unwrap());
+
+    let c_file = build_dir.join("temp.c");
 
     let mut files = Files::<String>::new();
+    let file_id = files.add(
+        input.to_str().unwrap().to_string(),
+        std::fs::read_to_string(input.clone())
+            .with_context(|| format!("Reading input file {}", input.display()))?,
+    );
 
-    let file_id = files.add(input.to_str().unwrap().to_string(),
-                            std::fs::read_to_string(input.clone()).with_context(|| format!("Reading {}", input.display()))?);
-
-    let output = canonicalize(&output)
-        .unwrap_or_else(|_| output.clone());
 
     if verbose {
         println!("Input file: {}", input.display());
         println!("Output file: {}", output.display());
+        println!("Build directory: {}", build_dir.display());
     }
 
     let lexer = lexer::Lexer::new(&files, file_id);
@@ -195,13 +200,10 @@ pub fn process_build(
 
     let config = codegen::CodegenConfig { target_triple };
     let mut target = codegen::Target::create(config, file_id, imported_functions);
-    target.compile(&program)?;
 
-    #[cfg(target_os = "windows")]
-    let c_file = output.with_extension("c");
+    target.compile(&program, &c_file)?;
+
     let clang_args = prepare_windows_clang_args(&output, optimize, &c_file )?;
-    #[cfg(not(target_os = "windows"))]
-    let clang_args = prepare_unix_clang_args(&output, optimize);
 
     let status = std::process::Command::new("clang")
         .args(&clang_args)
@@ -212,18 +214,17 @@ pub fn process_build(
         return Err(anyhow!("C compilation failed"));
     }
 
-    if is_temp {
-        let status = std::process::Command::new(output.clone())
-            .status()
-            .context("Failed to execute program")?;
+    let status = std::process::Command::new(output.clone())
+        .status()
+        .context("Failed to execute program")?;
 
-        if !status.success() {
-            return Err(anyhow!("Program failed with exit code: {}", status));
-        }
-    } else {
-        println!("Program compiled to: {}", output.display());
+    if !status.success() {
+        return Err(anyhow!("Program failed with exit code: {}", status));
     }
 
+    if !verbose {
+        std::fs::remove_file(&c_file)?;
+    }
     Ok(())
 }
 

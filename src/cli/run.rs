@@ -7,6 +7,5 @@ pub fn run_project() -> anyhow::Result<()> {
         false,
         "x86_64-pc-windows-msvc".into(),
         false,
-        true
     )
 }

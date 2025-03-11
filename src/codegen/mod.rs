@@ -18,9 +18,9 @@ impl Target {
         Target::Native(c::CBackend::new(config, file_id, imported_return_types))
     }
 
-    pub fn compile(&mut self, program: &crate::ast::Program) -> Result<(), CompileError> {
+    pub fn compile(&mut self, program: &crate::ast::Program, output_path: &Path) -> Result<(), CompileError> {
         match self {
-            Target::Native(c_backend) => c_backend.compile(program),
+            Target::Native(c_backend) => c_backend.compile(program, output_path),
         }
     }
 }

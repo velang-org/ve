@@ -16,8 +16,8 @@ fn main() -> anyhow::Result<()> {
     check_dependencies().context("Dependency check failed")?;
 
     match parse()? {
-        CliCommand::Build { input, output, optimize, target_triple, verbose, is_temp } => {
-            cli::process_build(input, output, optimize, target_triple, verbose, is_temp)
+        CliCommand::Build { input, output, optimize, target_triple, verbose} => {
+            cli::process_build(input, output, optimize, target_triple, verbose)
         }
         CliCommand::Init { directory, project_name } => {
             cli::init::create_project(&directory, &project_name)

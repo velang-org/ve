@@ -29,9 +29,9 @@ pub fn prepare_windows_clang_args(output: &Path, optimize: bool, c_file: &Path) 
     let msvc_lib_paths = get_msvc_lib_paths()?;
     let mut clang_args = vec![
         if optimize { "-O3" } else { "-O0" }.to_string(),
+        c_file.to_str().unwrap().into(),
         "-o".to_string(),
-        output.to_str().unwrap().to_string(),
-        c_file.to_str().unwrap().to_string(),
+        output.to_str().unwrap().into(),
     ];
 
     for path in msvc_lib_paths {
