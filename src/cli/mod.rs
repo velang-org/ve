@@ -195,7 +195,7 @@ pub fn process_build(
 
     let config = codegen::CodegenConfig { target_triple };
     let mut target = codegen::Target::create(config, file_id, imported_functions);
-    target.compile(&program, output.as_path())?;
+    target.compile(&program)?;
 
     #[cfg(target_os = "windows")]
     let c_file = output.with_extension("c");

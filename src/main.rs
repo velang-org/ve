@@ -6,9 +6,7 @@ mod parser;
 mod typeck;
 mod codegen;
 
-use anyhow::{anyhow, Context};
-use clap::Parser;
-
+use anyhow::Context;
 
 use crate::cli::parse;
 use crate::cli::CliCommand;

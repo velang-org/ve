@@ -31,7 +31,7 @@ impl CBackend {
         }
     }
 
-    pub fn compile(&mut self, program: &ast::Program, output: &Path) -> Result<(), CompileError> {
+    pub fn compile(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         self.functions_map = program.functions.iter()
             .map(|f| (f.name.clone(), f.return_type.clone()))
             .chain(self.imported_functions.iter().map(|(k, v)| (k.clone(), v.1.clone())))
@@ -40,7 +40,7 @@ impl CBackend {
         self.emit_functions(program)?;
         self.emit_main_if_missing(program)?;
         self.emit_header();
-        self.write_output(output)?;
+        self.write_output()?;
         Ok(())
     }
 
@@ -508,9 +508,17 @@ impl CBackend {
         }
     }
 
-    fn write_output(&self, output: &Path) -> Result<(), CompileError> {
-        let full_output = format!("{}{}", self.header, self.body);
-        std::fs::write(output, full_output).map_err(CompileError::IOError)?;
+    fn write_output(&self) -> Result<(), CompileError> {
+        // TODO: create build directory in the file path, not in the current directory
+        let build_dir = Path::new("build");
+        if !build_dir.exists() {
+            std::fs::create_dir_all(build_dir).map_err(CompileError::IOError)?;
+        }
+        
+        let file_path = build_dir.join("output.c");
+            std::fs::write(file_path, format!("{}{}", self.header, self.body))
+            .map_err(CompileError::IOError)?;
+
         Ok(())
     }
 
