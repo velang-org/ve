@@ -216,7 +216,7 @@ impl CBackend {
                     ty.clone()
                 } else {
                     match expr {
-                        ast::Expr::Call(func_name, _, _, _) => {
+                        ast::Expr::Call(func_name, _, _) => {
                             self.functions_map.get(func_name)
                                 .cloned()
                                 .ok_or_else(|| CompileError::CodegenError {
@@ -298,8 +298,8 @@ impl CBackend {
 
     fn emit_expr(&mut self, expr: &ast::Expr) -> Result<String, CompileError> {
         match expr {
-            ast::Expr::Int(n, _, _) => Ok(n.to_string()),
-            ast::Expr::BinOp(left, op, right, _span, _) => {
+            ast::Expr::Int(n, _) => Ok(n.to_string()),
+            ast::Expr::BinOp(left, op, right, _) => {
                 let left_code = self.emit_expr(left)?;
                 let right_code = self.emit_expr(right)?;
 
@@ -327,13 +327,13 @@ impl CBackend {
                     }
                 }
             },
-            ast::Expr::Assign(target, value, _, _) => {
+            ast::Expr::Assign(target, value, _) => {
                 let target_code = self.emit_expr(target)?;
                 let value_code = self.emit_expr(value)?;
                 Ok(format!("({} = {})", target_code, value_code)) 
             },
-            ast::Expr::Str(s, _, _) => Ok(format!("\"{}\"", s)),
-            ast::Expr::Var(name, _, _) => {
+            ast::Expr::Str(s, _) => Ok(format!("\"{}\"", s)),
+            ast::Expr::Var(name, _) => {
                 if name == "true" || name == "false" {
                     self.includes.borrow_mut().insert("<stdbool.h>");
                     Ok(name.clone())
@@ -351,10 +351,10 @@ impl CBackend {
                     }
                 }
             },
-            ast::Expr::Print(expr, _span, _) => {
+            ast::Expr::Print(expr, _) => {
                 let value = self.emit_expr(expr)?;
                 let expr_ty = match &**expr {
-                    ast::Expr::Var(name, _, _) => {
+                    ast::Expr::Var(name, _) => {
                         self.variables.borrow()
                             .get(name)
                             .cloned()
@@ -378,14 +378,14 @@ impl CBackend {
                 };
                 Ok(format!("printf(\"{}\\n\", {});", format_spec, arg))
             },
-            ast::Expr::Call(name, args, _, _) => {
+            ast::Expr::Call(name, args, _) => {
                 let mut args_code = Vec::new();
                 for arg in args {
                     args_code.push(self.emit_expr(arg)?);
                 }
                 Ok(format!("{}({})", name, args_code.join(", ")))
             },
-            ast::Expr::IntrinsicCall(name, args, span, _) => match name.as_str() {
+            ast::Expr::IntrinsicCall(name, args, ast::ExprInfo { span, ty: _}) => match name.as_str() {
                 "__alloc" => {
                     if args.len() != 1 {
                         return Err(CompileError::CodegenError {
@@ -414,7 +414,7 @@ impl CBackend {
                     file_id: self.file_id,
                 }),
             },
-            ast::Expr::SafeBlock(stmts, _span, _) => {
+            ast::Expr::SafeBlock(stmts, _) => {
                 let mut code = String::new();
                 code.push_str("{\n");
                 let mut defers = Vec::new();
@@ -439,11 +439,11 @@ impl CBackend {
                 code.push_str("}\n");
                 Ok(code)
             },
-            ast::Expr::Deref(expr, _, _) => {
+            ast::Expr::Deref(expr, _) => {
                 let inner = self.emit_expr(expr)?;
                 Ok(format!("(*{})", inner))
             }
-            ast::Expr::Cast(expr, target_ty, _, _) => {
+            ast::Expr::Cast(expr, target_ty, _) => {
                 let expr_code = self.emit_expr(expr)?;
                 let expr_type = expr.get_type();
 
@@ -456,7 +456,7 @@ impl CBackend {
 
                 Ok(format!("({})({})", target_c_ty, expr_code))
             },
-            ast::Expr::Range(start, end, _, _) => {
+            ast::Expr::Range(start, end, _) => {
                 let start_code = self.emit_expr(start)?;
                 let end_code = self.emit_expr(end)?;
                 Ok(format!("{} .. {}", start_code, end_code))
@@ -514,7 +514,7 @@ impl CBackend {
         if !build_dir.exists() {
             std::fs::create_dir_all(build_dir).map_err(CompileError::IOError)?;
         }
-        
+
         let file_path = build_dir.join("output.c");
             std::fs::write(file_path, format!("{}{}", self.header, self.body))
             .map_err(CompileError::IOError)?;

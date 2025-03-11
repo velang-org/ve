@@ -130,7 +130,7 @@ impl TypeChecker {
                     );
                 }
 
-                if let Expr::IntrinsicCall(name, _, _, _) = expr {
+                if let Expr::IntrinsicCall(name, _, _) = expr {
                     if !self.context.in_safe && (name == "__dealloc" || name == "__free") {
                         self.report_error(
                             "Memory operations require safe context",
@@ -156,10 +156,10 @@ impl TypeChecker {
 
     fn check_expr(&mut self, expr:  &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
         match expr {
-            Expr::Int(_, _, _) => Ok(Type::I32),
-            Expr::Bool(_, _, _) => Ok(Type::Bool),
-            Expr::Str(_, _, _) => Ok(Type::String),
-            Expr::Var(name, span, expr_type) => {
+            Expr::Int(_, _) => Ok(Type::I32),
+            Expr::Bool(_, _) => Ok(Type::Bool),
+            Expr::Str(_, _) => Ok(Type::String),
+            Expr::Var(name, ast::ExprInfo {span, ty: expr_type } ) => {
                 let ty = match name.as_str() {
                     "true" | "false" => Type::Bool,
                     _ => self.context
@@ -174,7 +174,7 @@ impl TypeChecker {
                 *expr_type = ty.clone();
                 Ok(ty)
             }
-            Expr::BinOp(left, op, right, span, expr_type) => {
+            Expr::BinOp(left, op, right, ast::ExprInfo { span, ty: expr_type } ) => {
                 let left_ty = self.check_expr(left)?;
                 let right_ty = self.check_expr(right)?;
 
@@ -269,21 +269,23 @@ impl TypeChecker {
                 
                 Ok(result_ty)
             },
-            Expr::Deref(expr, span, _) => {
-                let ty = self.check_expr(expr)?;
-                match ty {
-                    Type::Pointer(inner) => Ok(*inner),
-                    Type::RawPtr => Ok(Type::Unknown),
+            Expr::Deref(inner_expr, info) => {
+                let inner_ty = self.check_expr(inner_expr)?;
+                let result_ty = match inner_ty {
+                    Type::Pointer(t) => *t,
+                    Type::RawPtr => Type::Unknown,
                     _ => {
                         self.report_error(
-                            &format!("Cannot dereference value of type {}", ty),
-                            *span
+                            &format!("Cannot dereference type {}", inner_ty),
+                            info.span
                         );
-                        Ok(Type::Unknown)
+                        Type::Unknown
                     }
-                }
-            },
-            Expr::UnaryOp(op, operand, span, expr_type) => {
+                };
+                info.ty = result_ty.clone();
+                Ok(result_ty)
+            }
+            Expr::UnaryOp(op, operand, ast::ExprInfo { span, ty: expr_type }) => {
                 let operand_ty = self.check_expr(operand)?;
                 let result_ty = match op {
                     ast::UnOp::Neg => {
@@ -302,7 +304,7 @@ impl TypeChecker {
                 *expr_type = result_ty.clone();
                 Ok(result_ty)
             },
-            Expr::Assign(target, value, span, _) => {
+            Expr::Assign(target, value, ast::ExprInfo { span, ty: _expr_type }) => {
                 let target_ty = self.check_expr(target)?;
                 let value_ty = self.check_expr(value)?;
 
@@ -315,7 +317,7 @@ impl TypeChecker {
 
                 Ok(Type::Void)
             },
-            Expr::Call(name, args, span, _) => {
+            Expr::Call(name, args, ast::ExprInfo { span, ty: expr_type }) => {
                 let Some((param_types, return_type)) = self.functions.get(name).cloned() else {
                     self.report_error(&format!("Undefined function '{}'", name), *span);
                     return Ok(Type::Unknown);
@@ -340,7 +342,7 @@ impl TypeChecker {
 
                 Ok(return_type)
             },
-            Expr::IntrinsicCall(name, args, span, _) => match name.as_str() {
+            Expr::IntrinsicCall(name, args, ast::ExprInfo { span, ty: _expr_type }) => match name.as_str() {
                 "__alloc" => {
                     if args.len() != 1 {
                         self.report_error("__alloc expects 1 argument", *span);
@@ -358,7 +360,7 @@ impl TypeChecker {
                     Ok(Type::Unknown)
                 }
             },
-            Expr::SafeBlock(stmts, _, _) => {
+            Expr::SafeBlock(stmts, _) => {
                 let old_in_safe = self.context.in_safe;
                 self.context.in_safe = true;
                 let result = self.check_block(stmts);
@@ -367,7 +369,7 @@ impl TypeChecker {
                 result?;
                 Ok(Type::Void)
             },
-            Expr::Cast(expr, target_ty, span, _) => {
+            Expr::Cast(expr, target_ty, ast::ExprInfo { span, ty: _expr_type }) => {
                 let source_ty = self.check_expr(expr)?;
 
                 match (&source_ty, &target_ty) {
@@ -391,7 +393,7 @@ impl TypeChecker {
                     }
                 }
             },
-            Expr::Range(start, end, _span, _) => {
+            Expr::Range(start, end, _) => {
                 let start_ty = self.check_expr(start)?;
                 let end_ty = self.check_expr(end)?;
 
@@ -405,7 +407,7 @@ impl TypeChecker {
 
                 Ok(Type::Unknown)
             },
-            Expr::Print(expr, span, _) => {
+            Expr::Print(expr, ast::ExprInfo { span, ty: _expr_type }) => {
                 let expr_ty = self.check_expr(expr)?;
 
                 if !matches!(

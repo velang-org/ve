@@ -9,7 +9,6 @@ pub enum Type {
     Void,
     Function(Vec<Type>, Box<Type>),
     Unknown,
-
     Arena,
     Pointer(Box<Type>),
     RawPtr,
@@ -21,7 +20,6 @@ impl Type {
     }
 }
 
-
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
@@ -31,7 +29,6 @@ pub struct Function {
     pub span: Span,
     pub exported: bool,
 }
-
 
 #[derive(Debug)]
 pub struct Import {
@@ -46,7 +43,6 @@ pub struct Program {
     pub functions: Vec<Function>,
 }
 
-
 #[derive(Debug)]
 pub enum Stmt {
     Let(String, Option<Type>, Expr, Span),
@@ -60,64 +56,59 @@ pub enum Stmt {
 }
 
 #[derive(Debug)]
+pub struct ExprInfo {
+    pub span: Span,
+    pub ty: Type,
+}
+
+#[derive(Debug)]
 pub enum Expr {
-    Int(i64, Span, Type),
-    Bool(bool, Span, Type),
-    Str(String, Span, Type),
-    BinOp(Box<Expr>, BinOp, Box<Expr>, Span, Type),
-    Var(String, Span, Type),
-    Call(String, Vec<Expr>, Span, Type),
-    SafeBlock(Vec<Stmt>, Span, Type),
-    IntrinsicCall(String, Vec<Expr>, Span, Type),
-    Cast(Box<Expr>, Type, Span, Type),
-    Deref(Box<Expr>, Span, Type),
-    Assign(Box<Expr>, Box<Expr>, Span, Type),
-    Print(Box<Expr>, Span, Type),
-    Range(Box<Expr>, Box<Expr>, Span, Type),
-    UnaryOp(UnOp, Box<Expr>, Span, Type),
+    Int(i64, ExprInfo),
+    Bool(bool, ExprInfo),
+    Str(String, ExprInfo),
+    BinOp(Box<Expr>, BinOp, Box<Expr>, ExprInfo),
+    Var(String, ExprInfo),
+    Call(String, Vec<Expr>, ExprInfo),
+    SafeBlock(Vec<Stmt>, ExprInfo),
+    IntrinsicCall(String, Vec<Expr>, ExprInfo),
+    Cast(Box<Expr>, Type, ExprInfo),
+    Deref(Box<Expr>, ExprInfo),
+    Assign(Box<Expr>, Box<Expr>, ExprInfo),
+    Print(Box<Expr>, ExprInfo),
+    Range(Box<Expr>, Box<Expr>, ExprInfo),
+    UnaryOp(UnOp, Box<Expr>, ExprInfo),
 }
 
 impl Expr {
     pub fn span(&self) -> Span {
-        match self {
-            Expr::Int(_, span, _) => *span,
-            Expr::Bool(_, span, _) => *span,
-            Expr::Str(_, span, _) => *span,
-            Expr::BinOp(_, _, _, span, _) => *span,
-            Expr::Var(_, span, _) => *span,
-            Expr::Call(_, _, span, _) => *span,
-            Expr::SafeBlock(_, span, _) => *span,
-            Expr::IntrinsicCall(_, _, span, _) => *span,
-            Expr::Cast(_, _, span, _) => *span,
-            Expr::Deref(_, span, _) => *span,
-            Expr::Assign(_, _, span, _) => *span,
-            Expr::Print(_, span, _) => *span,
-            Expr::Range(_, _, span, _) => *span,
-            Expr::UnaryOp(_, _, span, _) => *span,
-        }
+        self.info().span
     }
 
     pub fn get_type(&self) -> Type {
+        self.info().ty.clone()
+    }
+
+    fn info(&self) -> &ExprInfo {
         match self {
-            Expr::Int(_, _, ty) => ty.clone(),
-            Expr::Bool(_, _, ty) => ty.clone(),
-            Expr::Str(_, _, ty) => ty.clone(),
-            Expr::BinOp(_, _, _, _, ty) => ty.clone(),
-            Expr::Var(_, _, ty) => ty.clone(),
-            Expr::Call(_, _, _, ty) => ty.clone(),
-            Expr::SafeBlock(_, _, ty) => ty.clone(),
-            Expr::IntrinsicCall(_, _, _, ty) => ty.clone(),
-            Expr::Cast(_, target_ty, _, _) => target_ty.clone(),
-            Expr::Deref(_, _, ty) => ty.clone(),
-            Expr::Assign(_, _, _, ty) => ty.clone(),
-            Expr::Print(_, _, ty) => ty.clone(),
-            Expr::Range(_, _, _, ty) => ty.clone(),
-            Expr::UnaryOp(_, _, _, ty) => ty.clone(),
+            Expr::Int(_, info) => info,
+            Expr::Bool(_, info) => info,
+            Expr::Str(_, info) => info,
+            Expr::BinOp(_, _, _, info) => info,
+            Expr::Var(_, info) => info,
+            Expr::Call(_, _, info) => info,
+            Expr::SafeBlock(_, info) => info,
+            Expr::IntrinsicCall(_, _, info) => info,
+            Expr::Cast(_, _, info) => info,
+            Expr::Deref(_, info) => info,
+            Expr::Assign(_, _, info) => info,
+            Expr::Print(_, info) => info,
+            Expr::Range(_, _, info) => info,
+            Expr::UnaryOp(_, _, info) => info,
         }
     }
 
     pub(crate) fn is_pointer_cast(&self) -> bool {
-        if let Expr::Cast(inner, target_ty, _, _) = self {
+        if let Expr::Cast(inner, target_ty, _) = self {
             inner.get_type().is_pointer() && *target_ty == Type::I32
         } else {
             false
@@ -146,20 +137,23 @@ pub enum BinOp {
 
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BinOp::Add => write!(f, "+"),
-            BinOp::Sub => write!(f, "-"),
-            BinOp::Mul => write!(f, "*"),
-            BinOp::Div => write!(f, "/"),
-            BinOp::Gt => write!(f, ">"),
-            BinOp::Eq => write!(f, "=="),
-            BinOp::Lt => write!(f, "<"),
-            BinOp::And => write!(f, "&&"),
-            BinOp::Or => write!(f, "||"),
-        }
+        write!(
+            f,
+            "{}",
+            match self {
+                BinOp::Add => "+",
+                BinOp::Sub => "-",
+                BinOp::Mul => "*",
+                BinOp::Div => "/",
+                BinOp::Gt => ">",
+                BinOp::Eq => "==",
+                BinOp::Lt => "<",
+                BinOp::And => "&&",
+                BinOp::Or => "||",
+            }
+        )
     }
 }
-
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -169,12 +163,12 @@ impl fmt::Display for Type {
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
             Type::Function(params, ret) => {
-                write!(f, "fn(")?;
-                for (i, param) in params.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}", param)?;
-                }
-                write!(f, ") -> {}", ret)
+                let params_str = params
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "fn({}) -> {}", params_str, ret)
             }
             Type::Unknown => write!(f, "<?>"),
             Type::Arena => write!(f, "arena"),

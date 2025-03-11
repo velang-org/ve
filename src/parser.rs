@@ -113,7 +113,10 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let prefix_bp = self.get_prefix_bp(&token);
                 let expr = self.parse_expr_bp(prefix_bp)?;
-                Ok(ast::Expr::Deref(Box::new(expr), op_span, ast::Type::Unknown))
+                Ok(ast::Expr::Deref(Box::new(expr), ast::ExprInfo {
+                    span: op_span,
+                    ty: ast::Type::Unknown
+                }))
             }
             Token::Minus | Token::Plus => {
                 let (op_token, _) = self.advance().unwrap();
@@ -128,8 +131,10 @@ impl<'a> Parser<'a> {
                         _ => unreachable!(),
                     },
                     Box::new(expr),
-                    span,
-                    ast::Type::Unknown
+                    ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown
+                    }
                 ))
             }
             _ => self.parse_atom(),
@@ -148,7 +153,10 @@ impl<'a> Parser<'a> {
             Token::Eq => {
                 let rhs = self.parse_expr_bp(rbp)?;
                 let span = Span::new(lhs.span().start(), rhs.span().end());
-                Ok(ast::Expr::Assign(Box::new(lhs), Box::new(rhs), span, ast::Type::Void))
+                Ok(ast::Expr::Assign(Box::new(lhs), Box::new(rhs), ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown
+                }))
             }
             Token::Plus | Token::Minus | Token::Star | Token::Slash
             | Token::EqEq | Token::Gt | Token::Lt | Token::AndAnd | Token::OrOr => {
@@ -170,8 +178,10 @@ impl<'a> Parser<'a> {
                     Box::new(lhs),
                     bin_op,
                     Box::new(rhs),
-                    span,
-                    ast::Type::Unknown
+                    ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown
+                    }
                 ))
             }
             Token::KwAs => {
@@ -180,14 +190,21 @@ impl<'a> Parser<'a> {
                 Ok(ast::Expr::Cast(
                     Box::new(lhs),
                     target_type.clone(),
-                    span,
-                    target_type
+                    ast::ExprInfo {
+                        span,
+                        ty: target_type
+                    }
                 ))
             }
             Token::DotDot => {
                 let end = self.parse_expr_bp(rbp)?;
                 let span = Span::new(lhs.span().start(), end.span().end());
-                Ok(ast::Expr::Range(Box::new(lhs), Box::new(end), span, ast::Type::Unknown))
+                Ok(ast::Expr::Range(Box::new(lhs), Box::new(end),
+                    ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown
+                    }
+                ))
             },
             
             
@@ -195,7 +212,6 @@ impl<'a> Parser<'a> {
                 let token = self.peek().unwrap();
                 println!("{:?}", token);
                 self.error("Unexpected infix operator", self.peek().unwrap().1)
-                
             }
         }
     }
@@ -401,7 +417,10 @@ impl<'a> Parser<'a> {
         self.expect(Token::Semi)?;
         let end_span = self.previous().map(|(_, s)| *s).unwrap();
         Ok(ast::Stmt::Expr(
-            ast::Expr::Print(Box::new(expr), Span::new(start_span.start(), end_span.end()), ast::Type::Void),
+            ast::Expr::Print(Box::new(expr), ast::ExprInfo {
+                span: Span::new(start_span.start(), end_span.end()),
+                ty: ast::Type::Void
+            }),
             Span::new(start_span.start(), end_span.end())
         ))
     }
@@ -516,17 +535,26 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let current = self.advance().cloned();
         match current {
-            Some((Token::Int(n), span)) => Ok(ast::Expr::Int(n, span, ast::Type::I32)),
+            Some((Token::Int(n), span)) => Ok(ast::Expr::Int(n, ast::ExprInfo {
+                span,
+                ty: ast::Type::I32
+            })),
             Some((Token::Ident(name), span)) if name.starts_with("__") => {
                 self.parse_intrinsic_call(name, span)
             },
-            Some((Token::Str(value), span)) => Ok(ast::Expr::Str(value, span, ast::Type::String)),
+            Some((Token::Str(value), span)) => Ok(ast::Expr::Str(value, ast::ExprInfo {
+                span,
+                ty: ast::Type::String
+            })),
             Some((Token::Ident(name), span)) => {
                 let has_paren = self.check(Token::LParen);
                 if has_paren {
                     self.parse_function_call(name, span)
                 } else {
-                    Ok(ast::Expr::Var(name, span, ast::Type::Unknown))
+                    Ok(ast::Expr::Var(name, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown
+                    }))
                 }
             },
             Some((Token::LParen, _)) => {
@@ -553,7 +581,10 @@ impl<'a> Parser<'a> {
             self.advance();
         }
         self.expect(Token::RParen)?;
-        Ok(ast::Expr::Call(name, args, span, ast::Type::Unknown))
+        Ok(ast::Expr::Call(name, args, ast::ExprInfo {
+            span,
+            ty: ast::Type::Unknown
+        }))
     }
 
     fn parse_safe_block(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
@@ -568,7 +599,10 @@ impl<'a> Parser<'a> {
         }
         self.expect(Token::RBrace)?;
         let end_span = self.previous().map(|(_, s)| *s).unwrap();
-        Ok(ast::Expr::SafeBlock(stmts, Span::new(start_span.start(), end_span.end()), ast::Type::Void))
+        Ok(ast::Expr::SafeBlock(stmts, ast::ExprInfo {
+            span: Span::new(start_span.start(), end_span.end()),
+            ty: ast::Type::Unknown
+        }))
     }
 
     fn parse_intrinsic_call(&mut self, name: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
@@ -580,7 +614,10 @@ impl<'a> Parser<'a> {
             self.advance();
         }
         self.expect(Token::RParen)?;
-        Ok(ast::Expr::IntrinsicCall(name, args, span, ast::Type::Unknown))
+        Ok(ast::Expr::IntrinsicCall(name, args, ast::ExprInfo {
+            span,
+            ty: ast::Type::Unknown
+        }))
     }
 
     fn check(&self, expected: Token) -> bool {
