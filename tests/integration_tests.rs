@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn get_compiler_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_velang"))
+    PathBuf::from(env!("CARGO_BIN_EXE_Ve"))
 }
 
 fn test_file_path(relative_path: &str) -> PathBuf {

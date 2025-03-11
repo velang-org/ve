@@ -1,5 +1,5 @@
 use codespan::Files;
-use Velang::lexer::Lexer;
+use Ve::lexer::Lexer;
 
 #[test]
 fn test_function_parsing() {
@@ -9,7 +9,7 @@ fn test_function_parsing() {
     let file_id = files.add("test", source);
 
     let lexer = Lexer::new(&files, file_id);
-    let mut parser = Velang::parser::Parser::new(lexer);
+    let mut parser = Ve::parser::Parser::new(lexer);
     let program = parser.parse().unwrap();
 
     assert_eq!(program.functions.len(), 1);
