@@ -21,16 +21,18 @@ pub enum Token {
     KwDefer,
     #[token("as")]
     KwAs,
-    #[token("print")]
-    KwPrint,
     #[token("while")]
     KwWhile,
     #[token("for")]
     KwFor,
     #[token("import")]
     KwImport,
+    #[token("from")]
+    KwFrom,
     #[token("export")]
     KwExport,
+    #[token("intrinsic")]
+    KwIntrinsic,
     
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Str(String),
@@ -40,6 +42,8 @@ pub enum Token {
     TyBool,
     #[token("string")]
     TyString,
+    #[token("void")]
+    TyVoid,
     #[token("->")]
     Arrow,
     #[token(":")]

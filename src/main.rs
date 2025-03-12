@@ -6,6 +6,7 @@ mod parser;
 mod typeck;
 mod codegen;
 
+
 use anyhow::Context;
 
 use crate::cli::parse;
@@ -22,8 +23,8 @@ fn main() -> anyhow::Result<()> {
         CliCommand::Init { directory, project_name } => {
             cli::init::create_project(&directory, &project_name)
         },
-        CliCommand::Run => {
-            cli::run::run_project()
+        CliCommand::Run { verbose } => {
+            cli::run::run_project(verbose)
         }
     }?;
 

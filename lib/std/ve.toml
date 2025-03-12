@@ -2,7 +2,7 @@
 [package]
 name = "std"
 version = "0.1.0"
-description = "A new Velang project"
+type = "lib"
 
 [dependencies]
 # Add dependencies here

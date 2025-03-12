@@ -378,12 +378,15 @@ impl CBackend {
                 };
                 Ok(format!("printf(\"{}\\n\", {});", format_spec, arg))
             },
-            ast::Expr::Call(name, args, _) => {
+            ast::Expr::Call(name, args, expr_info) => {
                 let mut args_code = Vec::new();
                 for arg in args {
                     args_code.push(self.emit_expr(arg)?);
                 }
-                Ok(format!("{}({})", name, args_code.join(", ")))
+                let call_str = format!("{}({})", name, args_code.join(", "));
+
+
+                Ok(call_str)
             },
             ast::Expr::IntrinsicCall(name, args, ast::ExprInfo { span, ty: _}) => match name.as_str() {
                 "__alloc" => {
@@ -407,7 +410,32 @@ impl CBackend {
                     }
                     let ptr = self.emit_expr(&args[0])?;
                     Ok(format!("free({})", ptr))
-                }
+                },
+                "__print" => {
+                    if args.len() != 1 {
+                        return Err(CompileError::CodegenError {
+                            message: "__print expects 1 argument".to_string(),
+                            span: Some(*span),
+                            file_id: self.file_id,
+                        });
+                    }
+                    let value = self.emit_expr(&args[0])?;
+                    let value_ty = args[0].get_type();
+                    let (format_spec, arg) = match value_ty {
+                        Type::I32 => ("%d", value),
+                        Type::Bool => ("%s", format!("({} ? \"true\" : \"false\")", value)),
+                        Type::String => ("%s", value),
+                        Type::Pointer(_) | Type::RawPtr => {
+                            ("%p", format!("(void*){}", value))
+                        },
+                        _ => return Err(CompileError::CodegenError {
+                            message: format!("Cannot print type {:?}", value_ty),
+                            span: Some(args[0].span()),
+                            file_id: self.file_id,
+                        }),
+                    };
+                    Ok(format!("printf(\"{}\\n\", {});", format_spec, arg))
+                },
                 _ => Err(CompileError::CodegenError {
                     message: format!("Unknown intrinsic function: {}", name),
                     span: Some(*span),
@@ -447,14 +475,12 @@ impl CBackend {
                 let expr_code = self.emit_expr(expr)?;
                 let expr_type = expr.get_type();
 
-                let target_c_ty = if expr_type.is_pointer() && *target_ty == Type::I32 {
-                    self.includes.borrow_mut().insert("<stdint.h>");
-                    "uintptr_t".to_string()
-                } else {
-                    self.type_to_c(target_ty)
-                };
-
-                Ok(format!("({})({})", target_c_ty, expr_code))
+                match (&expr_type, target_ty) {
+                    (Type::I32, Type::String) => Ok(format!("int_to_str({})", expr_code)),
+                    (Type::Bool, Type::String) => Ok(format!("bool_to_str({})", expr_code)),
+                    (Type::Pointer(_), Type::String) | (Type::RawPtr, Type::String) => Ok(format!("ptr_to_str({})", expr_code)),
+                    _ => Ok(format!("({})({})", self.type_to_c(target_ty), expr_code)),
+                }
             },
             ast::Expr::Range(start, end, _) => {
                 let start_code = self.emit_expr(start)?;

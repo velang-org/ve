@@ -48,32 +48,98 @@ impl<'a> Parser<'a> {
     }
 
 
-    fn parse_import(&mut self) -> Result<ast::Import, Diagnostic<FileId>> {
+    fn parse_import(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
         self.consume(Token::KwImport, "Expected 'import'")?;
-        let start_span = self.previous().map(|(_, s)| *s).unwrap();
-
-        let next_token = self.advance();
-        let path = match next_token {
-            Some((Token::Str(path), _)) => path.clone(),
-            Some((_, span)) => {
-                let span = *span;
-                return self.error("Expected string literal", span);
-            },
-            None => return self.error("Expected string literal", Span::new(0, 0)),
+        let import_decl = match self.peek_token() {
+            Token::Str(_) => self.parse_import_all()?,
+            Token::LBrace => self.parse_import_specifiers()?,
+            Token::Ident(_) => self.parse_import_specifier()?,
+            _ => return self.error("Invalid import statement", self.peek_span()),
         };
 
         self.expect(Token::Semi)?;
-        let end_span = self.previous().map(|(_, s)| *s).unwrap();
+        Ok(import_decl)
+    }
 
-        Ok(ast::Import {
-            path,
-            span: Span::new(start_span.start(), end_span.end()),
+    fn parse_import_all(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
+        let module_path = match self.advance().cloned() {
+            Some((Token::Str(path), _)) => path.clone(),
+            _ => return self.error("Expected module path", self.peek_span()),
+        };
+
+        let alias = if self.check(Token::KwAs) {
+            self.advance();
+            match self.consume_ident()? {
+                (name, _) => Some(name),
+            }
+        } else {
+            None
+        };
+
+        Ok(ast::ImportDeclaration::ImportAll { module_path, alias })
+    }
+
+    fn parse_import_specifiers(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
+        self.expect(Token::LBrace)?;
+        let mut specifiers = Vec::new();
+
+        loop {
+            let (name, alias) = self.parse_import_specifier_item()?;
+            specifiers.push(ast::ImportSpecifier { name, alias });
+
+            if !self.check(Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
+
+        self.expect(Token::RBrace)?;
+        self.expect(Token::KwFrom)?;
+        let module_path = match self.advance().cloned() {
+            Some((Token::Str(path), _)) => path.clone(),
+            _ => return self.error("Expected module path", self.peek_span()),
+        };
+
+        Ok(ast::ImportDeclaration::ImportSpecifiers { module_path, specifiers })
+    }
+
+    fn parse_import_specifier(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
+        let (name, alias) = self.parse_import_specifier_item()?;
+        self.expect(Token::KwFrom)?;
+        let module_path = match self.advance().cloned() {
+            Some((Token::Str(path), _)) => path.clone(),
+            _ => return self.error("Expected module path", self.peek_span()),
+        };
+
+        Ok(ast::ImportDeclaration::ImportSpecifiers {
+            module_path,
+            specifiers: vec![ast::ImportSpecifier { name, alias }],
         })
     }
-    
+
+    fn parse_import_specifier_item(&mut self) -> Result<(String, Option<String>), Diagnostic<FileId>> {
+        let name = match self.consume_ident()? {
+            (name, _) => name,
+        };
+
+        let alias = if self.check(Token::KwAs) {
+            self.advance();
+            match self.consume_ident()? {
+                (alias, _) => Some(alias),
+            }
+        } else {
+            None
+        };
+
+        Ok((name, alias))
+    }
+
+
     fn parse_expr(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         self.parse_expr_bp(0)
     }
+
+
 
     fn parse_expr_bp(&mut self, min_bp: Precedence) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut lhs = self.parse_prefix()?;
@@ -277,6 +343,7 @@ impl<'a> Parser<'a> {
             Some((Token::TyI32, _)) => Ok(ast::Type::I32),
             Some((Token::TyBool, _)) => Ok(ast::Type::Bool),
             Some((Token::TyString, _)) => Ok(ast::Type::String),
+            Some((Token::TyVoid, _)) => Ok(ast::Type::Void),
             Some((Token::KwRawPtr, _)) => Ok(ast::Type::RawPtr),
             Some((Token::Star, _)) => {
                 let target_type = self.parse_type()?;
@@ -351,8 +418,6 @@ impl<'a> Parser<'a> {
             self.parse_if()
         } else if self.check(Token::KwReturn) {
             self.parse_return()
-        } else if self.check(Token::KwPrint) {
-            self.parse_print()
         } else if self.check(Token::KwWhile) {
           self.parse_while()
         } else if self.check(Token::KwFor) {
@@ -405,23 +470,6 @@ impl<'a> Parser<'a> {
             range_expr,
             body,
             Span::new(for_span.start(), self.previous().unwrap().1.end()),
-        ))
-    }
-
-    fn parse_print(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
-        self.expect(Token::KwPrint)?;
-        let start_span = self.previous().map(|(_, s)| *s).unwrap();
-        self.expect(Token::LParen)?;
-        let expr = self.parse_expr()?;
-        self.expect(Token::RParen)?;
-        self.expect(Token::Semi)?;
-        let end_span = self.previous().map(|(_, s)| *s).unwrap();
-        Ok(ast::Stmt::Expr(
-            ast::Expr::Print(Box::new(expr), ast::ExprInfo {
-                span: Span::new(start_span.start(), end_span.end()),
-                ty: ast::Type::Void
-            }),
-            Span::new(start_span.start(), end_span.end())
         ))
     }
 
@@ -539,9 +587,9 @@ impl<'a> Parser<'a> {
                 span,
                 ty: ast::Type::I32
             })),
-            Some((Token::Ident(name), span)) if name.starts_with("__") => {
-                self.parse_intrinsic_call(name, span)
-            },
+            Some((Token::KwIntrinsic, span)) => {
+                self.parse_intrinsic_call(span)
+            }
             Some((Token::Str(value), span)) => Ok(ast::Expr::Str(value, ast::ExprInfo {
                 span,
                 ty: ast::Type::String
@@ -605,7 +653,8 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_intrinsic_call(&mut self, name: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+    fn parse_intrinsic_call(&mut self, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let (name, name_span) = self.consume_ident()?;
         self.expect(Token::LParen)?;
         let mut args = Vec::new();
         while !self.check(Token::RParen) {
@@ -615,7 +664,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(Token::RParen)?;
         Ok(ast::Expr::IntrinsicCall(name, args, ast::ExprInfo {
-            span,
+            span: Span::new(span.start(), name_span.end()),
             ty: ast::Type::Unknown
         }))
     }

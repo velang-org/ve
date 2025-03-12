@@ -1,6 +1,5 @@
+import "../../lib/std/src/io.ve";
 import "./math.ve";
 
-
 let x = add(10, 20);
-
 print(x);

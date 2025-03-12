@@ -20,7 +20,7 @@ impl Type {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
     pub params: Vec<(String, Type)>,
@@ -30,20 +30,15 @@ pub struct Function {
     pub exported: bool,
 }
 
-#[derive(Debug)]
-pub struct Import {
-    pub path: String,
-    pub span: Span,
-}
 
 #[derive(Debug)]
 pub struct Program {
-    pub imports: Vec<Import>,
+    pub imports: Vec<ImportDeclaration>,
     pub stmts: Vec<Stmt>,
     pub functions: Vec<Function>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Let(String, Option<Type>, Expr, Span),
     Expr(Expr, Span),
@@ -55,13 +50,13 @@ pub enum Stmt {
     Block(Vec<Stmt>, Span),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExprInfo {
     pub span: Span,
     pub ty: Type,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Int(i64, ExprInfo),
     Bool(bool, ExprInfo),
@@ -78,6 +73,20 @@ pub enum Expr {
     Range(Box<Expr>, Box<Expr>, ExprInfo),
     UnaryOp(UnOp, Box<Expr>, ExprInfo),
 }
+
+#[derive(Debug)]
+pub enum ImportDeclaration {
+    ImportAll { module_path: String, alias: Option<String>},
+    ImportSpecifiers { module_path: String, specifiers: Vec<ImportSpecifier> },
+}
+
+#[derive(Debug)]
+pub struct ImportSpecifier {
+    pub name: String,
+    pub alias: Option<String>
+}
+
+
 
 impl Expr {
     pub fn span(&self) -> Span {
@@ -116,13 +125,13 @@ impl Expr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UnOp {
     Neg,
     Plus,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BinOp {
     Add,
     Sub,

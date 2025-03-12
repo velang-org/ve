@@ -1,4 +1,3 @@
-
 pub mod init;
 pub(crate) mod run;
 
@@ -6,9 +5,10 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context};
 use codespan::Files;
-use dunce::canonicalize;
+use codespan_reporting::term;
+use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use crate::{codegen, lexer, parser, typeck};
-use crate::utils::{process_imports, prepare_windows_clang_args};
+use crate::utils::{process_imports, prepare_windows_clang_args, validate_ve_file};
 
 #[derive(Debug)]
 pub struct CliError(pub String);
@@ -34,10 +34,10 @@ pub enum CliCommand {
         directory: PathBuf,
         project_name: String,
     },
-    Run,
+    Run {
+        verbose: bool,
+    }
 }
-
-
 
 #[derive(Parser)]
 #[command(
@@ -67,9 +67,6 @@ pub struct Args {
     verbose: bool,
 }
 
-
-
-
 #[derive(Subcommand)]
 enum Command {
     Build {
@@ -94,10 +91,10 @@ enum Command {
         directory: PathBuf,
     },
     Run {
-
+        #[arg(short, long)]
+        verbose: bool,
     }
 }
-
 
 pub fn parse_args() -> Args {
     Args::parse()
@@ -108,7 +105,6 @@ pub fn parse() -> anyhow::Result<CliCommand> {
 
     match args.command {
         Some(Command::Build { input, output, optimize, target_triple, verbose }) => {
-            let output_clone = output.clone();
             Ok(CliCommand::Build {
                 input,
                 output,
@@ -120,12 +116,11 @@ pub fn parse() -> anyhow::Result<CliCommand> {
         Some(Command::Init { directory, project_name }) => {
             Ok(CliCommand::Init { directory, project_name })
         },
-        Some(Command::Run {}) => {
-            Ok(CliCommand::Run)
+        Some(Command::Run { verbose}) => {
+            Ok(CliCommand::Run { verbose })
         }
         None => {
             let input = args.input.ok_or_else(|| anyhow!("Input file is required"))?;
-            let output = args.output.clone();
             Ok(CliCommand::Build {
                 input,
                 output: args.output,
@@ -136,7 +131,6 @@ pub fn parse() -> anyhow::Result<CliCommand> {
         }
     }
 }
-
 
 pub fn process_build(
     input: PathBuf,
@@ -168,7 +162,6 @@ pub fn process_build(
             .with_context(|| format!("Reading input file {}", input.display()))?,
     );
 
-
     if verbose {
         println!("Input file: {}", input.display());
         println!("Output file: {}", output.display());
@@ -185,18 +178,22 @@ pub fn process_build(
     let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &*input)?;
     program.functions.extend(imported_asts);
 
-
     if verbose {
         println!("Parsed AST:\n{:#?}", program);
     }
 
     let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone());
-    type_checker.check(&mut program).map_err(|errors| {
-        for error in errors {
-            eprintln!("Type error: {:?}", error);
+    match type_checker.check(&mut program) {
+        Ok(()) => (),
+        Err(errors) => {
+            let writer = StandardStream::stderr(ColorChoice::Auto);
+            let config = term::Config::default();
+            for error in errors {
+                term::emit(&mut writer.lock(), &config, &files, &error)?;
+            }
+            return Err(anyhow!("Type check failed"));
         }
-        anyhow!("Type check failed")
-    })?;
+    }
 
     let config = codegen::CodegenConfig { target_triple };
     let mut target = codegen::Target::create(config, file_id, imported_functions);
@@ -226,44 +223,4 @@ pub fn process_build(
         std::fs::remove_file(&c_file)?;
     }
     Ok(())
-}
-
-fn validate_ve_file(path: &str) -> Result<PathBuf, String> {
-    let path = Path::new(path);
-    let path = if path.extension().is_none() {
-        path.with_extension("ve")
-    } else {
-        path.to_path_buf()
-    };
-
-    if !path.exists() {
-        let suggestions = suggest_similar_files(&*path.clone())
-            .map(|s| format!("\nDid you mean:\n{}", s))
-            .unwrap_or_default();
-
-        return Err(format!(
-            "File '{}' not found.{}",
-            path.display(),
-            suggestions
-        ));
-    }
-    Ok(path)
-}
-
-fn suggest_similar_files(missing_path: &Path) -> Option<String> {
-    let dir = missing_path.parent()?;
-    let target_name = missing_path.file_stem()?.to_string_lossy();
-    let target_name = target_name.as_ref();
-
-    let matches: Vec<_> = dir.read_dir()
-        .ok()?
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            let name = path.file_stem()?.to_string_lossy();
-            (name.contains(target_name) && path.extension() == Some("ve".as_ref()))
-                .then_some(format!("  • {}", path.display()))
-        })
-        .collect();
-
-    (!matches.is_empty()).then(|| matches.join("\n"))
 }

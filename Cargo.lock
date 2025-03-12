@@ -13,6 +13,7 @@ dependencies = [
  "colored",
  "dunce",
  "logos",
+ "once_cell",
  "tempfile",
 ]
 

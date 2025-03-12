@@ -74,11 +74,9 @@ impl TypeChecker {
 
         let original_ctx = std::mem::replace(&mut self.context, local_ctx);
 
-
         for stmt in &mut func.body {
             self.check_stmt(stmt)?;
         }
-
 
         self.context = original_ctx;
 
@@ -317,7 +315,7 @@ impl TypeChecker {
 
                 Ok(Type::Void)
             },
-            Expr::Call(name, args, ast::ExprInfo { span, ty: expr_type }) => {
+            Expr::Call(name, args, ast::ExprInfo { span, ty: expr_type}) => {
                 let Some((param_types, return_type)) = self.functions.get(name).cloned() else {
                     self.report_error(&format!("Undefined function '{}'", name), *span);
                     return Ok(Type::Unknown);
@@ -326,7 +324,7 @@ impl TypeChecker {
                 if args.len() != param_types.len() {
                     self.report_error(
                         &format!("Expected {} arguments, got {}", param_types.len(), args.len()),
-                        *span,
+                        *span
                     );
                 }
 
@@ -334,13 +332,14 @@ impl TypeChecker {
                     let arg_ty = self.check_expr(arg).unwrap_or(Type::Unknown);
                     if !Self::is_convertible(&arg_ty, param_ty) {
                         self.report_error(
-                            &format!("Argument {}: expected {}, got {}", i + 1, param_ty, arg_ty),
+                            &format!("Expected {}, got {}", param_ty, arg_ty),
                             arg.span(),
                         );
                     }
                 }
+                *expr_type = return_type.clone();
 
-                Ok(return_type)
+                Ok(return_type.clone())
             },
             Expr::IntrinsicCall(name, args, ast::ExprInfo { span, ty: _expr_type }) => match name.as_str() {
                 "__alloc" => {
@@ -353,6 +352,14 @@ impl TypeChecker {
                     if args.len() != 1 {
                         self.report_error("__dealloc expects 1 argument", *span);
                     }
+                    Ok(Type::Void)
+                },
+                "__print" => {
+                 if args.len() != 1 {
+                     self.report_error("__print expects 1 argument", *span);
+                 }
+                    let arg_type = self.check_expr(&mut args[0])?;
+                    self.expect_type(&arg_type, &Type::String, args[0].span())?;
                     Ok(Type::Void)
                 }
                 _ => {
@@ -443,7 +450,6 @@ impl TypeChecker {
         match (from, to) {
             (Type::I32, Type::Bool) => true,
             (Type::Bool, Type::I32) => true,
-            (Type::I32, Type::String) => true,
             (Type::Bool, Type::String) => true,
             (Type::Pointer(_), Type::String) => true,
             (Type::RawPtr, Type::String) => true,

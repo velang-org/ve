@@ -1,3 +1,4 @@
+import "../../lib/std/src/io.ve";
 fn main() {
     let x, y = 10, 20;
 

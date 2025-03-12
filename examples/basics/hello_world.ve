@@ -1,3 +1,5 @@
+import "../../lib/std/src/io.ve";
+
 fn main() {
     print("Hello, World!");
 }
