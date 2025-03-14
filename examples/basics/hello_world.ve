@@ -1,4 +1,4 @@
-import "../../lib/std/src/io.ve";
+import "std/io";
 
 fn main() {
     print("Hello, World!");

@@ -3,6 +3,7 @@ use crate::{ast, lexer, parser};
 use anyhow::{anyhow, Context, Result};
 use codespan::{Files, Span};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -55,12 +56,18 @@ pub fn process_imports(
     imports.iter().try_fold((HashMap::new(), Vec::new()), |(mut map, mut ast), import_decl| {
         match import_decl {
             ast::ImportDeclaration::ImportAll { module_path, alias } => {
-                let current_dir = base_path.parent()
-                    .ok_or_else(|| anyhow!("Base path has no parent"))?;
+                let path_result: Result<PathBuf, anyhow::Error> = if !module_path.starts_with("./") && !module_path.starts_with("../") {
+                    resolve_library_path(module_path)
+                } else {
+                    let current_dir = base_path.parent()
+                        .ok_or_else(|| anyhow!("Base path has no parent"))?;
+                    Ok(current_dir.join(module_path))
+                };
 
-                let path = current_dir.join(module_path);
-                let path = std::fs::canonicalize(&path)
-                    .with_context(|| format!("Resolving import path: {}", path.display()))?;
+                let path = path_result
+                    .with_context(|| format!("Failed to resolve import: {}", module_path))?
+                    .canonicalize()
+                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
 
                 let content = std::fs::read_to_string(&path)
                     .with_context(|| format!("Reading imported file {}", path.display()))?;
@@ -78,7 +85,7 @@ pub fn process_imports(
                 for f in program.functions.iter().filter(|f| f.exported) {
                     let params: Vec<Type> = f.params.iter().map(|(_, t)| t.clone()).collect();
                     let name = match alias {
-                        Some(inner_alias) => format!("{}_{}", inner_alias, f.name),
+                        Some(inner_alias) => format!("{}::{}", inner_alias, f.name),
                         None => f.name.clone(),
                     };
                     map.insert(name, (params, f.return_type.clone()));
@@ -89,12 +96,18 @@ pub fn process_imports(
                 ast.extend(nested_ast);
             }
             ast::ImportDeclaration::ImportSpecifiers { module_path, specifiers } => {
-                let current_dir = base_path.parent()
-                    .ok_or_else(|| anyhow!("Base path has no parent"))?;
+                let path_result: Result<PathBuf, anyhow::Error> = if !module_path.starts_with("./") && !module_path.starts_with("../") {
+                    resolve_library_path(module_path)
+                } else {
+                    let current_dir = base_path.parent()
+                        .ok_or_else(|| anyhow!("Base path has no parent"))?;
+                    Ok(current_dir.join(module_path))
+                };
 
-                let path = current_dir.join(module_path);
-                let path = std::fs::canonicalize(&path)
-                    .with_context(|| format!("Resolving import path: {}", path.display()))?;
+                let path = path_result
+                    .with_context(|| format!("Failed to resolve import: {}", module_path))?
+                    .canonicalize()
+                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
                 let content = std::fs::read_to_string(&path)
                     .with_context(|| format!("Reading imported file {}", path.display()))?;
 
@@ -205,18 +218,47 @@ fn suggest_similar_files(missing_path: &Path) -> Option<String> {
     (!matches.is_empty()).then(|| matches.join("\n"))
 }
 
-fn get_std_path() -> Result<PathBuf> {
-    let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path.parent().context("Executable path has no parent")?;
-    let std_path = exe_dir
-        .parent().unwrap().parent()
-        .context("Executable directory has no parent")?
-        .join("lib/std/src/");
-    if std_path.exists() {
-        Ok(std_path)
+fn resolve_library_path(module_path: &str) -> Result<PathBuf> {
+    let lib_dir = get_lib_path()?;
+    let components: Vec<&str> = module_path.split('/').collect();
+    if components.is_empty() {
+        return Err(anyhow!("Invalid module path: {}", module_path));
+    }
+
+    let mut path = lib_dir.join(components[0]).join("src");
+    for component in &components[1..] {
+        path.push(component);
+    }
+
+    let ve_file = path.with_extension("ve");
+    if ve_file.exists() {
+        Ok(ve_file)
     } else {
-        anyhow::bail!("Standard library not found at: {}", std_path.display())
+        let index_file = path.join("index.ve");
+        if index_file.exists() {
+            Ok(index_file)
+        } else {
+            Err(anyhow!("Module '{}' not found in library", module_path))
+        }
     }
 }
 
+
+
+
+fn get_lib_path() -> Result<PathBuf> {
+    let exe_path = env::current_exe().context("Failed to get current executable path")?;
+    let project_root = exe_path.parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .context("Failed to determine project root")?;
+
+    let lib_dir = project_root.join("lib");
+
+    if !lib_dir.exists() {
+        return Err(anyhow::anyhow!("Library directory not found: {}", lib_dir.display()));
+    }
+
+    Ok(lib_dir)
+}
 pub type ImportedFunctions = HashMap<String, (Vec<Type>, Type)>;

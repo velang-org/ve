@@ -453,6 +453,7 @@ impl TypeChecker {
             (Type::Bool, Type::String) => true,
             (Type::Pointer(_), Type::String) => true,
             (Type::RawPtr, Type::String) => true,
+            (Type::I32, Type::String) => true,
             (Type::RawPtr, Type::Pointer(_)) => true,
             (Type::Pointer(_), Type::RawPtr) => true,
             (Type::Pointer(_), Type::I32) => true,

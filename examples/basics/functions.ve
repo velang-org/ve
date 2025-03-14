@@ -1,14 +1,12 @@
-import "../../lib/std/src/io.ve";
+import "std/io";
 
 fn add(a: i32, b: i32) -> i32 {
     return a + b;
 }
 
 fn main() {
-    let x, y = 10, 20;
- 
-    let sum = add(x, y);
+    let x, y, sum =
+    10, 20, add(x, y);
 
-    print("Sum: ");
-    print(sum);
+    print("Sum: " + sum);
 }

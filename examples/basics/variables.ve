@@ -1,13 +1,8 @@
+import "std/io";
+
 fn main() {
-    let x, y = 10, 20;
+    let x, y, name =
+    10, 20, "Verve";
 
-    let name = "Verve";
-
-    let sum = x + y;
-
-    print("Sum: " + sum);
-
-    let is_cool = true;
-
-    print("Is Verve cool? " + is_cool);
+    print("Sum: " + (x + y));
 }

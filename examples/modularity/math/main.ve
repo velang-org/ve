@@ -1,5 +1,5 @@
-import "../../lib/std/src/io.ve";
+import "std/io";
 import "./math.ve";
 
 let x = add(10, 20);
-print(x);
+print(x + " is the sum of 10 and 20");

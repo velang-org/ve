@@ -1,21 +1,23 @@
-import "../../lib/std/src/io.ve";
+import "std/io";
+
 fn main() {
-    let x, y = 10, 20;
+    let x, y =
+    10, 20;
 
     if x < y {
-        print("x is less than y");
+         print("x is less than y");
     }
 
     if x == 10 || y == 20 {
-        print("x is 10 and y is 20");
+       print("Logical OR");
     }
 
     for i in 0..5 {
-        print("meow");
+       print("This should print 5 times");
     }
 
     while x > 0 {
-        print(x);
+        print("x: " + x);
         x = x - 1;
     }
 }
