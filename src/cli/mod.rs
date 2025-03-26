@@ -30,6 +30,7 @@ pub enum CliCommand {
         optimize: bool,
         target_triple: String,
         verbose: bool,
+        use_cranelift: bool,
     },
     Init {
         directory: PathBuf,
@@ -42,6 +43,7 @@ pub enum CliCommand {
         input: PathBuf,
         iterations: usize,
         verbose: bool,
+        use_cranelift: bool,
     }
 }
 
@@ -74,6 +76,9 @@ pub struct Args {
 
     #[arg(long)]
     iterations: Option<usize>,
+    
+    #[arg(long, help = "Use Cranelift backend instead of C")]
+    use_cranelift: bool,
 }
 
 #[derive(Subcommand)]
@@ -93,6 +98,9 @@ enum Command {
 
         #[arg(short, long)]
         verbose: bool,
+        
+        #[arg(long, help = "Use Cranelift backend instead of C")]
+        use_cranelift: bool,
     },
     Init {
         project_name: String,
@@ -112,6 +120,9 @@ enum Command {
         
         #[arg(short, long)]
         verbose: bool,
+        
+        #[arg(long, help = "Use Cranelift backend instead of C")]
+        use_cranelift: bool,
     }
 }
 
@@ -119,13 +130,14 @@ pub fn parse() -> anyhow::Result<CliCommand> {
     let args = Args::parse();
 
     match args.command {
-        Some(Command::Build { input, output, optimize, target_triple, verbose }) => {
+        Some(Command::Build { input, output, optimize, target_triple, verbose, use_cranelift }) => {
             Ok(CliCommand::Build {
                 input,
                 output,
                 optimize,
                 target_triple,
                 verbose,
+                use_cranelift,
             })
         }
         Some(Command::Init { directory, project_name }) => {
@@ -134,8 +146,8 @@ pub fn parse() -> anyhow::Result<CliCommand> {
         Some(Command::Run { verbose}) => {
             Ok(CliCommand::Run { verbose })
         },
-        Some(Command::Benchmark { input, iterations, verbose }) => {
-            Ok(CliCommand::Benchmark { input, iterations, verbose })
+        Some(Command::Benchmark { input, iterations, verbose, use_cranelift }) => {
+            Ok(CliCommand::Benchmark { input, iterations, verbose, use_cranelift })
         }
         None => {
             let input = args.input.ok_or_else(|| anyhow!("Input file is required"))?;
@@ -145,6 +157,7 @@ pub fn parse() -> anyhow::Result<CliCommand> {
                     input,
                     iterations,
                     verbose: args.verbose,
+                    use_cranelift: args.use_cranelift,
                 });
             }
             
@@ -154,6 +167,7 @@ pub fn parse() -> anyhow::Result<CliCommand> {
                 optimize: args.optimize,
                 target_triple: args.target_triple,
                 verbose: args.verbose,
+                use_cranelift: args.use_cranelift,
             })
         }
     }
@@ -165,6 +179,7 @@ pub fn process_build(
     optimize: bool,
     target_triple: String,
     verbose: bool,
+    use_cranelift: bool,
 ) -> anyhow::Result<()> {
     let build_dir = input.parent()
         .ok_or_else(|| anyhow!("Invalid input file path"))?
@@ -193,6 +208,11 @@ pub fn process_build(
         println!("Input file: {}", input.display());
         println!("Output file: {}", output.display());
         println!("Build directory: {}", build_dir.display());
+        if use_cranelift {
+            println!("Using Cranelift backend");
+        } else {
+            println!("Using C backend");
+        }
     }
 
     let lexer = lexer::Lexer::new(&files, file_id);
@@ -228,20 +248,29 @@ pub fn process_build(
         }
     }
 
-    let config = codegen::CodegenConfig { target_triple };
+    let config = codegen::CodegenConfig { 
+        target_triple,
+        use_cranelift
+    };
     let mut target = codegen::Target::create(config, file_id, imported_functions);
 
-    target.compile(&program, &c_file)?;
+    if use_cranelift {
+        // Dla Cranelift generujemy bezpośrednio plik wykonywalny
+        target.compile(&program, &output)?;
+    } else {
+        // Dla C generujemy plik C, a następnie kompilujemy go
+        target.compile(&program, &c_file)?;
 
-    let clang_args = prepare_windows_clang_args(&output, optimize, &c_file )?;
+        let clang_args = prepare_windows_clang_args(&output, optimize, &c_file )?;
 
-    let status = std::process::Command::new("clang")
-        .args(&clang_args)
-        .status()
-        .context("Failed to execute C compiler")?;
+        let status = std::process::Command::new("clang")
+            .args(&clang_args)
+            .status()
+            .context("Failed to execute C compiler")?;
 
-    if !status.success() {
-        return Err(anyhow!("C compilation failed"));
+        if !status.success() {
+            return Err(anyhow!("C compilation failed"));
+        }
     }
 
     let status = std::process::Command::new(output.clone())
@@ -252,7 +281,7 @@ pub fn process_build(
         return Err(anyhow!("Program failed with exit code: {}", status));
     }
 
-    if !verbose {
+    if !verbose && !use_cranelift {
         std::fs::remove_file(&c_file)?;
     }
     Ok(())

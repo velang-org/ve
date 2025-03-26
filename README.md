@@ -24,6 +24,9 @@ Velang is in **EARLY DEVELOPMENT** – syntax and features will change radically
   - Export functions for use in other files
 - Development Tools:
   - Benchmarking capabilities
+- Multiple Backend Options:
+  - C-based compilation (default)
+  - Cranelift JIT compilation (experimental)
 
 ## Discord 
 Join our [Discord](https://dsc.gg/velang) server to chat with the community and get help with the language.
@@ -44,18 +47,22 @@ cargo install --path .
 ## Usage
 ```bash
 # Compile and run a file
-ve example.ve
+velang example.ve
 
 # Initialize a new project
-ve init my_project
+velang init my_project
 
 # Run a project (from the current directory)
-ve run
+velang run
 
 # Run benchmarks - two approaches
-ve benchmark example.ve --iterations 5 --verbose
+velang benchmark example.ve --iterations 5 --verbose
 # or
-ve example.ve --iterations 10 --verbose
+velang example.ve --iterations 10 --verbose
+
+# Use Cranelift backend instead of C
+velang example.ve --use-cranelift
+velang benchmark example.ve --use-cranelift
 ```
 
 ## Examples

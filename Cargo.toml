@@ -17,6 +17,14 @@ codespan = "0.11.1"
 codespan-reporting = "0.11.0"
 clap = { version = "4.5.23", features = ["derive"]}
 anyhow = "1.0.95"
+cranelift = "0.101.0"
+cranelift-module = "0.101.0"
+cranelift-jit = "0.101.0"
+cranelift-native = "0.101.0"
+cranelift-codegen = "0.101.0"
+cranelift-frontend = "0.101.0"
+cranelift-object = "0.101.0"
+
 [[test]]
 name = "unit"
 path = "tests/unit/mod.rs"

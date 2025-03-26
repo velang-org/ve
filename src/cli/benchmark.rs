@@ -13,6 +13,7 @@ pub fn run_benchmark(
     input: PathBuf,
     iterations: usize,
     verbose: bool,
+    use_cranelift: bool,
 ) -> anyhow::Result<()> {
     let build_dir = input.parent()
         .ok_or_else(|| anyhow!("Invalid input file path"))?
@@ -134,38 +135,51 @@ pub fn run_benchmark(
     stdout.flush()?;
     
     let codegen_start = Instant::now();
-    let config = codegen::CodegenConfig { target_triple: "x86_64-pc-windows-msvc".to_string() };
+    let config = codegen::CodegenConfig { 
+        target_triple: "x86_64-pc-windows-msvc".to_string(),
+        use_cranelift 
+    };
     let mut target = codegen::Target::create(config, file_id, imported_functions);
-    target.compile(&program, &c_file)?;
+    
+    if use_cranelift {
+        // Dla Cranelift generujemy bezpośrednio plik wykonywalny
+        target.compile(&program, &output)?;
+    } else {
+        // Dla C generujemy plik C, a następnie kompilujemy go
+        target.compile(&program, &c_file)?;
+    }
+    
     let codegen_time = codegen_start.elapsed();
     
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
     writeln!(&mut stdout, "DONE ✓ ({:.2?})", codegen_time)?;
     stdout.reset()?;
 
-    // C compilation
-    stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
-    write!(&mut stdout, "  [4/4] Compiling C... ")?;
-    stdout.flush()?;
-    
-    let compile_start = Instant::now();
-    let clang_args = prepare_windows_clang_args(&output, false, &c_file)?;
-    let status = std::process::Command::new("clang")
-        .args(&clang_args)
-        .status()
-        .context("Failed to execute C compiler")?;
+    // C compilation - only if not using Cranelift
+    if !use_cranelift {
+        stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
+        write!(&mut stdout, "  [4/4] Compiling C... ")?;
+        stdout.flush()?;
+        
+        let compile_start = Instant::now();
+        let clang_args = prepare_windows_clang_args(&output, false, &c_file)?;
+        let status = std::process::Command::new("clang")
+            .args(&clang_args)
+            .status()
+            .context("Failed to execute C compiler")?;
 
-    if !status.success() {
-        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
-        writeln!(&mut stdout, "FAILED")?;
+        if !status.success() {
+            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
+            writeln!(&mut stdout, "FAILED")?;
+            stdout.reset()?;
+            return Err(anyhow!("C compilation failed"));
+        }
+        let compile_time = compile_start.elapsed();
+        
+        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
+        writeln!(&mut stdout, "DONE ✓ ({:.2?})", compile_time)?;
         stdout.reset()?;
-        return Err(anyhow!("C compilation failed"));
     }
-    let compile_time = compile_start.elapsed();
-    
-    stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
-    writeln!(&mut stdout, "DONE ✓ ({:.2?})", compile_time)?;
-    stdout.reset()?;
 
     // Running benchmarks
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)).set_bold(true))?;
@@ -332,7 +346,7 @@ mod tests {
         }
         
         // We're only testing benchmark setup functionality, not running the full benchmark
-        let result = run_benchmark(test_file, 1, true);
+        let result = run_benchmark(test_file, 1, true, false);
         
         // We expect an error because we likely don't have the C compiler or standard library files available during tests
         assert!(result.is_err());
