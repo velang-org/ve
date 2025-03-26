@@ -5,23 +5,26 @@
 Velang is in **EARLY DEVELOPMENT** – syntax and features will change radically. Not suitable for any production use. Use at your own risk!
 
 ## Current Features
-- Compiles to human-readable C
-- Basic type system:
+- Types:
   - Primitives: i32, bool, string, void
-  - Type inference for variables
-  - Scoped variables/functions
+  - Arrays
+  - Structures
+  - Functions
+  - Modules
 - Control flow:
   - if/else conditions
   - while/for loops
   - Early function returns
 - Operators:
-  - Arithmetic: + - * /
-  - Comparisons: == != > <
-  - Logical: && ||
-- print() function for debugging
+  - Arithmetic: + - * / % **
+  - Comparisons: == != > < >= <=
+  - Logical: && || !
 - Modularity:
   - Import other Verve files
   - Export functions for use in other files
+
+## Discord 
+Join our [Discord](https://dsc.gg/velang) server to chat with the community and get help with the language.
 
 ## Installation
 Requirements:
