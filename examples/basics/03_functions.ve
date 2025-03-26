@@ -8,5 +8,5 @@ fn main() {
     let x, y, sum =
     10, 20, add(x, y);
 
-    print("Sum: " + sum);
-}
+    print(`Sum: ${sum}`);
+} 

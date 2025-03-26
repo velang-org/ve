@@ -1,0 +1,33 @@
+import "std/io";
+
+fn main() {
+    let numbers = [10, 20, 30, 40, 50];
+
+    // Accessing array elements
+    print("Accessing array elements:");
+    print(`First element: ${numbers[0]}`);
+    print(`Second element: ${numbers[1]}`);
+    print(`Third element: ${numbers[2]}`);
+    print(`Fourth element: ${numbers[3]}`);
+    print(`Fifth element: ${numbers[4]}`);
+
+    // Simple arithmetic operations
+    let a = 5;
+    let b = 3;
+
+    print("\nSimple arithmetic operations:");
+    print(`Addition: a + b = ${a + b}`);
+    print(`Subtraction: a - b = ${a - b}`);
+    print(`Multiplication: a * b = ${a * b}`);
+    print(`Division: a / b = ${a / b}`);
+    print(`Modulo: a % b = ${a % b}`);
+    print(`Exponentiation: a ** b = ${a ** b}`);
+
+    // Array operations (individual elements)
+    let elem1 = numbers[0];
+    let elem2 = numbers[1];
+    let sum = elem1 + elem2;
+
+    print("\nArray operations (using intermediate variables):");
+    print(`Sum of the first and second elements: ${sum}`);
+}

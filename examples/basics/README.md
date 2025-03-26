@@ -1,30 +1,53 @@
-# Verve Basics Example
+# Basic Examples of the Verve Language
 
-These examples demonstrate the basics features of the Verve language.
+This directory contains examples demonstrating the basic features of the Verve language.
 
-## 1. Hello World
-**File**: [hello_world.ve](./hello_world.ve)
-Prints "Hello, World!" to the console.
+## Examples Structure
+
+### 1. Hello World
+**File**: [01_hello_world.ve](./01_hello_world.ve)
+
+Displays "Hello, World!" in the console.
 ```bash
-verve-lang.exe ./examples/basics/hello_world.ve
+cargo run --bin Ve examples/basics/01_hello_world.ve
 ```
-## 2. Variables
-**File:** [variables.ve](./variables.ve)
+
+### 2. Variables
+**File:** [02_variables.ve](./02_variables.ve)
+
 Demonstrates variable declaration and assignment.
 ```bash
-verve-lang.exe ./examples/basics/variables.ve
+cargo run --bin Ve examples/basics/02_variables.ve
 ```
 
-## 3. Functions
-**File:** [functions.ve](./functions.ve)
+### 3. Functions
+**File:** [03_functions.ve](./03_functions.ve)
+
 Demonstrates function definitions and calls.
 ```bash
-verve-lang.exe ./examples/basics/functions.ve
+cargo run --bin Ve examples/basics/03_functions.ve
 ```
 
-## 4. Control Flow
-**File:** [control_flow.ve](./control_flow.ve)
-Demonstrates control flow with `if` statements and `for`, `while`, loops.
+### 4. Data Types
+**File:** [04_types.ve](./04_types.ve)
+
+Demonstrates basic data types in Verve language.
 ```bash
-verve-lang.exe ./examples/basics/control_flow.ve
+cargo run --bin Ve examples/basics/04_types.ve
+```
+
+### 5. Control Flow
+**File:** [05_control_flow.ve](./05_control_flow.ve)
+
+Demonstrates control flow using `if` statements and `for` and `while` loops.
+```bash
+cargo run --bin Ve examples/basics/05_control_flow.ve
+```
+
+### 6. Structures
+**File:** [06_struct.ve](./06_struct.ve)
+
+Demonstrates defining and using structures.
+```bash
+cargo run --bin Ve examples/basics/06_struct.ve
 ```

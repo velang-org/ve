@@ -1,0 +1,10 @@
+import "std/io";
+
+fn main() {
+    let num, boolean, text = 
+    10, true, "Types in Verve";
+
+    print(`Number: ${num}`);
+    print(`Boolean: ${boolean}`);
+    print(`Text: ${text}`);
+} 

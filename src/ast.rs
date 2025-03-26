@@ -12,11 +12,21 @@ pub enum Type {
     Arena,
     Pointer(Box<Type>),
     RawPtr,
+    Struct(String),
+    Array(Box<Type>),
+    SizedArray(Box<Type>, usize),
+    Any,
 }
 
 impl Type {
+    #[allow(dead_code)]
     pub(crate) fn is_pointer(&self) -> bool {
-        matches!(self, Type::Pointer(_))
+        matches!(self, Type::Pointer(_) | Type::RawPtr)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_array(&self) -> bool {
+        matches!(self, Type::Array(_))
     }
 }
 
@@ -26,16 +36,33 @@ pub struct Function {
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
+    #[allow(dead_code)]
     pub span: Span,
     pub exported: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct StructField {
+    pub name: String,
+    pub ty: Type,
+    #[allow(dead_code)]
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<StructField>,
+    #[allow(dead_code)]
+    pub span: Span,
+}
 
 #[derive(Debug)]
 pub struct Program {
     pub imports: Vec<ImportDeclaration>,
     pub stmts: Vec<Stmt>,
     pub functions: Vec<Function>,
+    pub structs: Vec<StructDef>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,20 +85,31 @@ pub struct ExprInfo {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Int(i64, ExprInfo),
+    Int(i32, ExprInfo),
     Bool(bool, ExprInfo),
     Str(String, ExprInfo),
-    BinOp(Box<Expr>, BinOp, Box<Expr>, ExprInfo),
     Var(String, ExprInfo),
+    BinOp(Box<Expr>, BinOp, Box<Expr>, ExprInfo),
+    UnaryOp(UnOp, Box<Expr>, ExprInfo),
     Call(String, Vec<Expr>, ExprInfo),
-    SafeBlock(Vec<Stmt>, ExprInfo),
     IntrinsicCall(String, Vec<Expr>, ExprInfo),
+    Print(Box<Expr>, ExprInfo),
     Cast(Box<Expr>, Type, ExprInfo),
+    SafeBlock(Vec<Stmt>, ExprInfo),
     Deref(Box<Expr>, ExprInfo),
     Assign(Box<Expr>, Box<Expr>, ExprInfo),
-    Print(Box<Expr>, ExprInfo),
     Range(Box<Expr>, Box<Expr>, ExprInfo),
-    UnaryOp(UnOp, Box<Expr>, ExprInfo),
+    StructInit(String, Vec<(String, Expr)>, ExprInfo),
+    FieldAccess(Box<Expr>, String, ExprInfo),
+    ArrayInit(Vec<Expr>, ExprInfo),
+    ArrayAccess(Box<Expr>, Box<Expr>, ExprInfo),
+    TemplateStr(Vec<TemplateStrPart>, ExprInfo),
+}
+
+#[derive(Debug, Clone)]
+pub enum TemplateStrPart {
+    Literal(String),
+    Expression(Box<Expr>),
 }
 
 #[derive(Debug)]
@@ -86,36 +124,61 @@ pub struct ImportSpecifier {
     pub alias: Option<String>
 }
 
-
-
 impl Expr {
     pub fn span(&self) -> Span {
-        self.info().span
-    }
-
-    pub fn get_type(&self) -> Type {
-        self.info().ty.clone()
-    }
-
-    fn info(&self) -> &ExprInfo {
         match self {
-            Expr::Int(_, info) => info,
-            Expr::Bool(_, info) => info,
-            Expr::Str(_, info) => info,
-            Expr::BinOp(_, _, _, info) => info,
-            Expr::Var(_, info) => info,
-            Expr::Call(_, _, info) => info,
-            Expr::SafeBlock(_, info) => info,
-            Expr::IntrinsicCall(_, _, info) => info,
-            Expr::Cast(_, _, info) => info,
-            Expr::Deref(_, info) => info,
-            Expr::Assign(_, _, info) => info,
-            Expr::Print(_, info) => info,
-            Expr::Range(_, _, info) => info,
-            Expr::UnaryOp(_, _, info) => info,
+            Expr::Int(_, info) => info.span,
+            Expr::Bool(_, info) => info.span,
+            Expr::Str(_, info) => info.span,
+            Expr::Var(_, info) => info.span,
+            Expr::BinOp(_, _, _, info) => info.span,
+            Expr::UnaryOp(_, _, info) => info.span,
+            Expr::Call(_, _, info) => info.span,
+            Expr::IntrinsicCall(_, _, info) => info.span,
+            Expr::Print(_, info) => info.span,
+            Expr::Cast(_, _, info) => info.span,
+            Expr::SafeBlock(_, info) => info.span,
+            Expr::Deref(_, info) => info.span,
+            Expr::Assign(_, _, info) => info.span,
+            Expr::Range(_, _, info) => info.span,
+            Expr::StructInit(_, _, info) => info.span,
+            Expr::FieldAccess(_, _, info) => info.span,
+            Expr::ArrayInit(_, info) => info.span,
+            Expr::ArrayAccess(_, _, info) => info.span,
+            Expr::TemplateStr(_, info) => info.span,
         }
     }
 
+    pub fn get_type(&self) -> Type {
+        match self {
+            Expr::Int(_, info) => info.ty.clone(),
+            Expr::Bool(_, info) => info.ty.clone(),
+            Expr::Str(_, info) => info.ty.clone(),
+            Expr::Var(_, info) => info.ty.clone(),
+            Expr::BinOp(_, _, _, info) => info.ty.clone(),
+            Expr::UnaryOp(_, _, info) => info.ty.clone(),
+            Expr::Call(_, _, info) => info.ty.clone(),
+            Expr::IntrinsicCall(_, _, info) => info.ty.clone(),
+            Expr::Print(_, info) => info.ty.clone(),
+            Expr::Cast(_, _, info) => info.ty.clone(),
+            Expr::SafeBlock(_, info) => info.ty.clone(),
+            Expr::Deref(_, info) => info.ty.clone(),
+            Expr::Assign(_, _, info) => info.ty.clone(),
+            Expr::Range(_, _, info) => info.ty.clone(),
+            Expr::StructInit(_, _, info) => info.ty.clone(),
+            Expr::FieldAccess(_, _, info) => info.ty.clone(),
+            Expr::ArrayInit(_, info) => info.ty.clone(),
+            Expr::ArrayAccess(_, _, info) => info.ty.clone(),
+            Expr::TemplateStr(_, info) => info.ty.clone(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_constant(&self) -> bool {
+        matches!(self, Expr::Int(_, _) | Expr::Str(_, _) | Expr::Bool(_, _))
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn is_pointer_cast(&self) -> bool {
         if let Expr::Cast(inner, target_ty, _) = self {
             inner.get_type().is_pointer() && *target_ty == Type::I32
@@ -137,9 +200,15 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Pow,
+    Pow2,
+    Mod,
     Gt,
     Eq,
     Lt,
+    NotEq,
+    GtEq,
+    LtEq,
     And,
     Or,
 }
@@ -154,9 +223,15 @@ impl fmt::Display for BinOp {
                 BinOp::Sub => "-",
                 BinOp::Mul => "*",
                 BinOp::Div => "/",
+                BinOp::Pow => "**",
+                BinOp::Pow2 => "^",
+                BinOp::Mod => "%",
                 BinOp::Gt => ">",
                 BinOp::Eq => "==",
                 BinOp::Lt => "<",
+                BinOp::NotEq => "!=",
+                BinOp::GtEq => ">=",
+                BinOp::LtEq => "<=",
                 BinOp::And => "&&",
                 BinOp::Or => "||",
             }
@@ -165,24 +240,30 @@ impl fmt::Display for BinOp {
 }
 
 impl fmt::Display for Type {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::I32 => write!(f, "i32"),
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
-            Type::Function(params, ret) => {
-                let params_str = params
-                    .iter()
-                    .map(|p| p.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "fn({}) -> {}", params_str, ret)
-            }
+            Type::Function(args, ret) => {
+                write!(f, "fn(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ") -> {}", ret)
+            },
             Type::Unknown => write!(f, "<?>"),
             Type::Arena => write!(f, "arena"),
             Type::Pointer(ty) => write!(f, "*{}", ty),
-            Type::RawPtr => write!(f, "rawptr"),
+            Type::RawPtr => write!(f, "*void"),
+            Type::Struct(name) => write!(f, "{}", name),
+            Type::Array(ty) => write!(f, "[]{}", ty),
+            Type::SizedArray(ty, size) => write!(f, "[{}; {}]", ty, size),
+            Type::Any => write!(f, "any"),
         }
     }
 }

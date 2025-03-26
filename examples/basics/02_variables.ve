@@ -4,5 +4,5 @@ fn main() {
     let x, y, name =
     10, 20, "Verve";
 
-    print("Sum: " + (x + y));
-}
+    print(`Sum: ${x + y}`);
+} 

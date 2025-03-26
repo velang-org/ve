@@ -2,7 +2,7 @@ pub mod init;
 pub(crate) mod run;
 
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use anyhow::{anyhow, Context};
 use codespan::Files;
 use codespan_reporting::term;
@@ -96,10 +96,6 @@ enum Command {
     }
 }
 
-pub fn parse_args() -> Args {
-    Args::parse()
-}
-
 pub fn parse() -> anyhow::Result<CliCommand> {
     let args = Args::parse();
 
@@ -170,10 +166,16 @@ pub fn process_build(
 
     let lexer = lexer::Lexer::new(&files, file_id);
     let mut parser = parser::Parser::new(lexer);
-    let mut program = parser.parse().map_err(|error| {
-        eprintln!("Parser error: {:?}", error);
-        anyhow!("Parser failed")
-    })?;
+    let mut program = match parser.parse() {
+        Ok(program) => program,
+        Err(error) => {
+            let writer = StandardStream::stderr(ColorChoice::Auto);
+            let config = term::Config::default();
+            term::emit(&mut writer.lock(), &config, &files, &error)?;
+            return Err(anyhow!("Parser failed"));
+        }
+    };
+
 
     let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &*input)?;
     program.functions.extend(imported_asts);

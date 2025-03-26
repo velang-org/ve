@@ -15,6 +15,7 @@ pub struct CBackend {
     variables: RefCell<HashMap<String, Type>>,
     functions_map: HashMap<String, Type>,
     imported_functions: HashMap<String, (Vec<Type>, Type)>,
+    struct_defs: HashMap<String, Vec<(String, Type)>>,
 }
 
 impl CBackend {
@@ -28,18 +29,101 @@ impl CBackend {
             variables: RefCell::new(HashMap::new()),
             functions_map: HashMap::new(),
             imported_functions,
+            struct_defs: HashMap::new(),
+        }
+    }
+
+    fn generate_struct_to_str_functions(&mut self, program: &ast::Program) {
+        for struct_def in &program.structs {
+            let struct_name = &struct_def.name;
+
+            self.header.push_str(&format!("static char* {}_to_str(const {} *obj) {{\n", struct_name, struct_name));
+            self.header.push_str("    char *buffer = malloc(256);\n");
+            self.header.push_str(&format!("    if (!buffer) return \"<failed to allocate memory for {}>\";\n", struct_name));
+
+            let mut format_parts = Vec::new();
+            let mut args = Vec::new();
+
+            format_parts.push(format!("{}{{", struct_name));
+
+            for (i, field) in struct_def.fields.iter().enumerate() {
+                let (fmt, arg) = match field.ty {
+                    Type::I32 => ("%d", format!("obj->{}", field.name)),
+                    Type::Bool => ("%s", format!("(obj->{} ? \"true\" : \"false\")", field.name)),
+                    Type::String => ("%s", format!("(obj->{} ? obj->{} : \"null\")", field.name, field.name)),
+                    Type::Pointer(_) | Type::RawPtr => ("%p", format!("(void*)obj->{}", field.name)),
+                    Type::Struct(ref s) => ("%s", format!("{}_to_str(&obj->{})", s, field.name)),
+                    _ => ("?", "\"<unknown type>\"".to_string())
+                };
+
+                if i > 0 {
+                    format_parts.push(format!(" {}:{}", field.name, fmt));
+                } else {
+                    format_parts.push(format!("{}:{}", field.name, fmt));
+                }
+                
+                args.push(arg);
+            }
+
+            format_parts.push("}".to_string());
+            let format_str = format_parts.join("");
+
+            self.header.push_str(&format!("    sprintf(buffer, \"{}\"", format_str));
+            
+            for arg in args {
+                self.header.push_str(&format!(", {}", arg));
+            }
+            
+            self.header.push_str(");\n");
+            self.header.push_str("    return buffer;\n");
+            self.header.push_str("}\n\n");
         }
     }
 
     pub fn compile(&mut self, program: &ast::Program, output_path: &Path) -> Result<(), CompileError> {
+        self.emit_header();
+
+        self.header.push_str("void print_str(char* s) { printf(\"%s\\n\", s); }\n");
+        self.header.push_str("void print_int(int n) { printf(\"%d\\n\", n); }\n");
+        self.header.push_str("void print_bool(int b) { printf(\"%s\\n\", b ? \"true\" : \"false\"); }\n");
+        self.header.push_str("void print_array(int* arr, int size) {\n");
+        self.header.push_str("    printf(\"[\");\n");
+        self.header.push_str("    for(int i = 0; i < size; i++) {\n");
+        self.header.push_str("        if (i > 0) printf(\", \");\n");
+        self.header.push_str("        printf(\"%d\", arr[i]);\n");
+        self.header.push_str("    }\n");
+        self.header.push_str("    printf(\"]\\n\");\n");
+        self.header.push_str("}\n");
+        self.header.push_str("void print_generic(void* x, int type) {\n");
+        self.header.push_str("    if (type == 1) print_str((char*)x);\n");
+        self.header.push_str("    else if (type == 2) print_int(*(int*)&x);\n");
+        self.header.push_str("    else if (type == 3) printf(\"%s\\n\", (*(int*)&x) ? \"true\" : \"false\");\n");
+        self.header.push_str("}\n\n");
+
+        for struct_def in &program.structs {
+            let fields: Vec<(String, Type)> = struct_def.fields
+                .iter()
+                .map(|f| (f.name.clone(), f.ty.clone()))
+                .collect();
+            self.struct_defs.insert(struct_def.name.clone(), fields);
+        }
+
+        for struct_def in &program.structs {
+            self.emit_struct(struct_def)?;
+        }
+
+        let std_functions = vec!["print"];
+        
         self.functions_map = program.functions.iter()
+            .filter(|f| !std_functions.contains(&f.name.as_str()))
             .map(|f| (f.name.clone(), f.return_type.clone()))
             .chain(self.imported_functions.iter().map(|(k, v)| (k.clone(), v.1.clone())))
             .collect();
+
         self.emit_globals(program)?;
-        self.emit_functions(program)?;
+        self.emit_functions(program, &std_functions)?;
         self.emit_main_if_missing(program)?;
-        self.emit_header();
+        self.generate_struct_to_str_functions(&program);
         self.write_output(output_path)?;
         Ok(())
     }
@@ -51,13 +135,14 @@ impl CBackend {
         ));
         self.header.push_str("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n");
         self.header.push_str("#include <stdbool.h>\n");
+        self.header.push_str("#include <math.h>\n");
 
         for include in self.includes.borrow().iter() {
             self.header.push_str(&format!("#include {}\n", include));
         }
 
         self.header.push('\n');
-
+        
         self.header.push_str("static char* int_to_str(int num) {\n");
         self.header.push_str("    char* buffer = malloc(12);\n");
         self.header.push_str("    sprintf(buffer, \"%d\", num);\n");
@@ -68,7 +153,7 @@ impl CBackend {
         self.header.push_str("    const char* val = b ? \"true\" : \"false\";\n");
         self.header.push_str("    size_t len = strlen(val) + 1;\n");
         self.header.push_str("    char* buffer = malloc(len);\n");
-        self.header.push_str("    if (buffer) strcpy_s(buffer, len, val);\n");
+        self.header.push_str("    if (buffer) memcpy(buffer, val, len);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
 
@@ -77,7 +162,6 @@ impl CBackend {
         self.header.push_str("    sprintf(buffer, \"%p\", ptr);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
-
 
         self.header.push_str("static char* concat(const char* s1, const char* s2) {\n");
         self.header.push_str("    size_t len1 = strlen(s1);\n");
@@ -97,7 +181,6 @@ impl CBackend {
         self.header.push_str("    }\n");
         self.header.push_str("    return result;\n");
         self.header.push_str("}\n\n");
-
     }
 
     fn emit_globals(&mut self, program: &ast::Program) -> Result<(), CompileError> {
@@ -142,8 +225,12 @@ impl CBackend {
         Ok(())
     }
     
-    fn emit_functions(&mut self, program: &ast::Program) -> Result<(), CompileError> {
+    fn emit_functions(&mut self, program: &ast::Program, skip_functions: &[&str]) -> Result<(), CompileError> {
         for func in &program.functions {
+            if skip_functions.contains(&func.name.as_str()) {
+                continue;
+            }
+            
             let return_type = if func.name == "main" {
                 "int".to_string()
             } else {
@@ -157,6 +244,10 @@ impl CBackend {
         }
 
         for (name, (param_types, return_type)) in &self.imported_functions {
+            if skip_functions.contains(&name.as_str()) {
+                continue;
+            }
+            
             let return_type_c = self.type_to_c(return_type);
             let params_c = param_types.iter()
                 .map(|ty| self.type_to_c(ty))
@@ -167,6 +258,10 @@ impl CBackend {
         }
 
         for func in &program.functions {
+            if skip_functions.contains(&func.name.as_str()) {
+                continue;
+            }
+            
             self.emit_function(func)?;
         }
 
@@ -299,6 +394,10 @@ impl CBackend {
     fn emit_expr(&mut self, expr: &ast::Expr) -> Result<String, CompileError> {
         match expr {
             ast::Expr::Int(n, _) => Ok(n.to_string()),
+            ast::Expr::Bool(b, _) => {
+                self.includes.borrow_mut().insert("<stdbool.h>");
+                Ok(if *b { "true" } else { "false" }.to_string())
+            },
             ast::Expr::BinOp(left, op, right, _) => {
                 let left_code = self.emit_expr(left)?;
                 let right_code = self.emit_expr(right)?;
@@ -317,12 +416,23 @@ impl CBackend {
                             ast::BinOp::Sub => "-",
                             ast::BinOp::Mul => "*",
                             ast::BinOp::Div => "/",
+                            ast::BinOp::Mod => "%",
                             ast::BinOp::Eq => "==",
+                            ast::BinOp::NotEq => "!=",
                             ast::BinOp::Gt => ">",
                             ast::BinOp::Lt => "<",
+                            ast::BinOp::GtEq => ">=",
+                            ast::BinOp::LtEq => "<=",
                             ast::BinOp::And => "&&",
                             ast::BinOp::Or => "||",
+                            ast::BinOp::Pow | ast::BinOp::Pow2 => "",
                         };
+                        
+                        if matches!(op, ast::BinOp::Pow | ast::BinOp::Pow2) {
+                            self.includes.borrow_mut().insert("<math.h>");
+                            return Ok(format!("pow({}, {})", left_code, right_code));
+                        }
+                        
                         Ok(format!("({} {} {})", left_code, c_op, right_code))
                     }
                 }
@@ -332,61 +442,102 @@ impl CBackend {
                 let value_code = self.emit_expr(value)?;
                 Ok(format!("({} = {})", target_code, value_code)) 
             },
-            ast::Expr::Str(s, _) => Ok(format!("\"{}\"", s)),
-            ast::Expr::Var(name, _) => {
+            ast::Expr::Str(s, _) => Ok(format!("\"{}\"", s.replace("\n", "\\n").replace("\"", "\\\""))),
+            ast::Expr::Var(name, info) => {
                 if name == "true" || name == "false" {
                     self.includes.borrow_mut().insert("<stdbool.h>");
-                    Ok(name.clone())
-                } else {
-                    let var_type = self.variables.borrow().get(name).cloned().unwrap_or(Type::Unknown);
-                    match var_type {
-                        Type::I32 => Ok(name.clone()),
-                        Type::Bool => Ok(name.clone()),
-                        Type::String => Ok(name.clone()),
-                        _ => Err(CompileError::CodegenError {
-                            message: format!("Cannot print type {:?}", var_type),
-                            span: Some(expr.span()),
-                            file_id: self.file_id,
-                        }),
-                    }
+                    return Ok(name.clone());
+                }
+                
+                let var_type = self.variables.borrow().get(name).cloned().unwrap_or(Type::Unknown);
+                
+                match var_type {
+                    Type::I32 => Ok(name.clone()),
+                    Type::Bool => {
+                        self.includes.borrow_mut().insert("<stdbool.h>");
+                        Ok(name.clone())
+                    },
+                    Type::String => Ok(name.clone()),
+                    Type::Pointer(_) | Type::RawPtr => Ok(name.clone()),
+                    Type::Struct(_) => Ok(name.clone()),
+                    Type::Array(_) => Ok(name.clone()),
+                    Type::SizedArray(_, _) => Ok(name.clone()),
+                    Type::Unknown => Ok(name.clone()),
+                    _ => Err(CompileError::CodegenError {
+                        message: format!("Cannot print type (in var) {:?}", var_type),
+                        span: Some(info.span),
+                        file_id: self.file_id,
+                    }),
                 }
             },
             ast::Expr::Print(expr, _) => {
                 let value = self.emit_expr(expr)?;
-                let expr_ty = match &**expr {
-                    ast::Expr::Var(name, _) => {
-                        self.variables.borrow()
-                            .get(name)
-                            .cloned()
-                            .unwrap_or(Type::Unknown)
-                    }
-                    _ => expr.get_type(),
-                };
+                let expr_ty = expr.get_type();
 
-                let (format_spec, arg) = match expr_ty {
-                    Type::I32 => ("%d", value),
-                    Type::Bool => ("%s", format!("({} ? \"true\" : \"false\")", value)),
-                    Type::String => ("%s", value),
-                    Type::Pointer(_) | Type::RawPtr => {
-                        ("%p", format!("(void*){}", value))
-                    },
-                    _ => return Err(CompileError::CodegenError {
-                        message: format!("Cannot print type {:?}", expr_ty),
-                        span: Some(expr.span()),
-                        file_id: self.file_id,
-                    }),
-                };
-                Ok(format!("printf(\"{}\\n\", {});", format_spec, arg))
+                let c_str = self.convert_to_c_str(&value, &expr_ty);
+                Ok(format!("printf(\"%s\\n\", {});", c_str))
             },
-            ast::Expr::Call(name, args, expr_info) => {
+            ast::Expr::Call(name, args, _expr_info) => {
                 let mut args_code = Vec::new();
-                for arg in args {
-                    args_code.push(self.emit_expr(arg)?);
+
+                let param_types = self.imported_functions
+                    .get(name)
+                    .map(|(params, _)| params.clone())
+                    .or_else(|| {
+                        if name == "print" {
+                            Some(vec![Type::String])
+                        } else {
+                            None
+                        }
+                    });
+
+                for (i, arg) in args.iter().enumerate() {
+                    let value = self.emit_expr(arg)?;
+                    let arg_type = arg.get_type();
+
+                    if name == "print" && i == 0 {
+                        if matches!(arg, ast::Expr::Bool(..)) || arg_type == Type::Bool {
+                            return Ok(format!("print_bool({})", value));
+                        }
+                        else if matches!(arg, ast::Expr::Str(..)) || arg_type == Type::String {
+                            return Ok(format!("print_str({})", value));
+                        }
+                        else if matches!(arg, ast::Expr::Int(..)) || arg_type == Type::I32 {
+                            return Ok(format!("print_int({})", value));
+                        }
+                        else if let Type::Array(elem_type) = &arg_type {
+                            if **elem_type == Type::I32 {
+                                return Ok(format!("print_array({}, {})", value, "0"));
+                            }
+                        }
+                        else if let Type::SizedArray(elem_type, size) = &arg_type {
+                            if **elem_type == Type::I32 {
+                                return Ok(format!("print_array({}, {})", value, size));
+                            }
+                        }
+                        else {
+                            let c_str = self.convert_to_c_str(&value, &arg_type);
+                            return Ok(format!("print_str({})", c_str));
+                        }
+                    }
+
+                    let expected_type = param_types
+                        .as_ref()
+                        .and_then(|types| types.get(i))
+                        .cloned();
+                    
+                    if let Some(expected) = expected_type {
+                        if expected == Type::String && arg_type != Type::String {
+                            args_code.push(self.convert_to_c_str(&value, &arg_type));
+                        } else {
+                            args_code.push(value);
+                        }
+                    } else {
+                        args_code.push(value);
+                    }
                 }
-                let call_str = format!("{}({})", name, args_code.join(", "));
-
-
-                Ok(call_str)
+                
+                Ok(format!("{}({})", name, args_code.join(", ")))
             },
             ast::Expr::IntrinsicCall(name, args, ast::ExprInfo { span, ty: _}) => match name.as_str() {
                 "__alloc" => {
@@ -421,20 +572,14 @@ impl CBackend {
                     }
                     let value = self.emit_expr(&args[0])?;
                     let value_ty = args[0].get_type();
-                    let (format_spec, arg) = match value_ty {
-                        Type::I32 => ("%d", value),
-                        Type::Bool => ("%s", format!("({} ? \"true\" : \"false\")", value)),
-                        Type::String => ("%s", value),
-                        Type::Pointer(_) | Type::RawPtr => {
-                            ("%p", format!("(void*){}", value))
-                        },
-                        _ => return Err(CompileError::CodegenError {
-                            message: format!("Cannot print type {:?}", value_ty),
-                            span: Some(args[0].span()),
-                            file_id: self.file_id,
-                        }),
+
+                    let str_value = if value_ty == Type::String {
+                        value
+                    } else {
+                        self.convert_to_c_str(&value, &value_ty)
                     };
-                    Ok(format!("printf(\"{}\\n\", {});", format_spec, arg))
+                    
+                    Ok(format!("printf(\"%s\\n\", {});", str_value))
                 },
                 _ => Err(CompileError::CodegenError {
                     message: format!("Unknown intrinsic function: {}", name),
@@ -487,6 +632,112 @@ impl CBackend {
                 let end_code = self.emit_expr(end)?;
                 Ok(format!("{} .. {}", start_code, end_code))
             },
+            ast::Expr::StructInit(name, fields, _) => {
+                let mut field_inits = Vec::new();
+                for (field_name, field_expr) in fields {
+                    let field_code = self.emit_expr(field_expr)?;
+                    field_inits.push(format!(".{} = {}", field_name, field_code));
+                }
+                
+                Ok(format!("({}){{ {} }}", name, field_inits.join(", ")))
+            },
+            ast::Expr::FieldAccess(obj, field_name, _info) => {
+                let obj_code = self.emit_expr(obj)?;
+                Ok(format!("{}.{}", obj_code, field_name))
+            },
+            ast::Expr::ArrayInit(elements, info) => {
+                
+                let element_type = match &info.ty {
+                    Type::Array(inner) => inner.clone(),
+                    _ => return Err(CompileError::CodegenError {
+                        message: "Array initialization with non-array type".to_string(),
+                        span: Some(info.span),
+                        file_id: self.file_id,
+                    }),
+                };
+                
+                let element_type_str = self.type_to_c(&element_type);
+                let mut element_exprs = Vec::new();
+                
+                for elem in elements {
+                    element_exprs.push(self.emit_expr(elem)?);
+                }
+                
+                let elements_str = element_exprs.join(", ");
+
+                self.includes.borrow_mut().insert("<stdlib.h>");
+                
+                let temp_var = format!("_array_stack_{}", info.span.start());
+                let temp_var_ptr = format!("_array_ptr_{}", info.span.start());
+                let size = elements.len();
+                
+                Ok(format!("({{ \
+                    {} {}[] = {{ {} }}; \
+                    {}* {} = malloc({} * sizeof({})); \
+                    if ({}) {{ \
+                        for (int _i = 0; _i < {}; _i++) {{{}[_i] = {}[_i];}} \
+                    }} \
+                    {}; \
+                }})",
+                    element_type_str, temp_var, elements_str,
+                    element_type_str, temp_var_ptr, size, element_type_str,
+                    temp_var_ptr, size, temp_var_ptr, temp_var,
+                    temp_var_ptr
+                ))
+            },
+            ast::Expr::ArrayAccess(array, index, _info) => {
+                let array_expr = self.emit_expr(array)?;
+                let index_expr = self.emit_expr(index)?;
+                
+                Ok(format!("{}[{}]", array_expr, index_expr))
+            },
+            ast::Expr::TemplateStr(parts, info) => {
+                if parts.is_empty() {
+                    return Ok("\"\"".to_string());
+                }
+                
+                let mut result = String::new();
+                let mut is_first = true;
+                
+                for part in parts {
+                    let part_code = match part {
+                        ast::TemplateStrPart::Literal(text) => {
+                            format!("\"{}\"", text.replace("\n", "\\n").replace("\"", "\\\""))
+                        },
+                        ast::TemplateStrPart::Expression(expr) => {
+                            let expr_code = self.emit_expr(expr)?;
+                            let expr_type = expr.get_type();
+                            
+                            match &**expr {
+                                ast::Expr::ArrayAccess(array, _, _) => {
+                                    let array_type = array.get_type();
+                                    match array_type {
+                                        Type::Array(element_type) | Type::SizedArray(element_type, _) => {
+                                            match *element_type {
+                                                Type::I32 => format!("int_to_str({})", expr_code),
+                                                Type::Bool => format!("bool_to_str({})", expr_code),
+                                                Type::String => expr_code,
+                                                _ => format!("\"[unsupported array element type]\"")
+                                            }
+                                        },
+                                        _ => format!("\"[not an array]\"")
+                                    }
+                                },
+                                _ => self.convert_to_c_str(&expr_code, &expr_type)
+                            }
+                        }
+                    };
+                    
+                    if is_first {
+                        result = part_code;
+                        is_first = false;
+                    } else {
+                        result = format!("concat({}, {})", result, part_code);
+                    }
+                }
+                
+                Ok(result)
+            },
             _ => Err(CompileError::CodegenError {
                 message: "Unsupported expression".to_string(),
                 span: Some(expr.span()),
@@ -495,11 +746,13 @@ impl CBackend {
         }
     }
 
+    #[allow(dead_code)]
     fn unify_types(&self, t1: &Type, t2: &Type, span: Span) -> Result<Type, CompileError> {
         match (t1, t2) {
             (Type::I32, Type::I32) => Ok(Type::I32),
             (Type::Bool, Type::Bool) => Ok(Type::Bool),
             (Type::Unknown, t) | (t, Type::Unknown) => Ok(t.clone()),
+            (Type::Any, t) | (t, Type::Any) => Ok(t.clone()),
             _ => Err(CompileError::TypeError {
                 message: format!("Type mismatch: {:?} vs {:?}", t1, t2),
                 span: Some(span),
@@ -509,28 +762,34 @@ impl CBackend {
     }
     
     fn emit_stmt_to_string(&mut self, stmt: &ast::Stmt) -> Result<String, CompileError> {
-        let mut buffer = String::new();
         let original_body = std::mem::take(&mut self.body);
         self.emit_stmt(stmt)?;
-        buffer = std::mem::replace(&mut self.body, original_body);
-        Ok(buffer)
+        let result = std::mem::replace(&mut self.body, original_body);
+        Ok(result)
     }
 
     fn type_to_c(&self, ty: &Type) -> String {
         match ty {
             Type::I32 => "int".to_string(),
-            Type::Bool => {
-                self.includes.borrow_mut().insert("<stdbool.h>");
-                "bool".to_string()
-            },
-            Type::String => "const char*".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::String => "char*".to_string(),
             Type::Void => "void".to_string(),
-            Type::Pointer(inner) => {
-                let inner_type = self.type_to_c(inner);
-                format!("{}*", inner_type)
+            Type::Unknown => "int".to_string(),
+            Type::Function(args, ret) => {
+                let args_str = args.iter()
+                    .map(|t| self.type_to_c(t))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret_str = self.type_to_c(ret);
+                format!("{}(*)({})", ret_str, args_str)
             },
+            Type::Arena => "struct ArenaAllocator*".to_string(),
+            Type::Pointer(inner) => format!("{}*", self.type_to_c(inner)),
             Type::RawPtr => "void*".to_string(),
-            _ => "/* UNSUPPORTED TYPE */".to_string(),
+            Type::Struct(name) => name.to_string(),
+            Type::Array(inner) => format!("{}*", self.type_to_c(inner)),
+            Type::SizedArray(inner, _) => format!("{}*", self.type_to_c(inner)),
+            Type::Any => "void*".to_string(),
         }
     }
 
@@ -540,18 +799,60 @@ impl CBackend {
         Ok(())
     }
 
-    fn convert_to_c_str(&self, code: &str, ty: &Type) -> String {
+    fn convert_to_c_str(&mut self, code: &str, ty: &Type) -> String {
+        self.includes.borrow_mut().insert("<string.h>");
+        
         match ty {
             Type::I32 => format!("int_to_str({})", code),
             Type::Bool => format!("bool_to_str({})", code),
             Type::Pointer(_) | Type::RawPtr => format!("ptr_to_str({})", code),
             Type::String => code.to_string(),
+            Type::Struct(name) => format!("{}_to_str(&{})", name, code),
+            Type::Array(_) => "\"[array]\"".to_string(),
+            Type::SizedArray(_, _) => "\"[sized array]\"".to_string(),
+            Type::Any => "\"[any]\"".to_string(),
             Type::Unknown => {
-                panic!("Cannot convert unknown type to string. Check type inference.")
+                eprintln!("Warning: Unknown type in conversion to string. Check type inference.");
+                "\"[unknown]\"".to_string()
             },
             _ => {
-                panic!("Cannot convert type {:?} to string", ty)
+                eprintln!("Warning: Cannot convert type {:?} to string", ty);
+                "\"[unsupported type]\"".to_string()
             }
         }
     }
+
+    fn emit_struct(&mut self, struct_def: &ast::StructDef) -> Result<(), CompileError> {
+        let mut struct_code = format!("typedef struct {} {{\n", struct_def.name);
+        
+        for field in &struct_def.fields {
+            let field_type = self.type_to_c(&field.ty);
+            struct_code.push_str(&format!("    {} {};\n", field_type, field.name));
+        }
+        
+        struct_code.push_str(&format!("}} {};\n\n", struct_def.name));
+        self.header.push_str(&struct_code);
+        
+        Ok(())
+    }
 }
+
+pub const PRELUDE: &str = r#"#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <stdbool.h>
+
+char* concat(const char* str1, const char* str2) {
+    size_t len1 = strlen(str1);
+    size_t len2 = strlen(str2);
+    char* result = (char*)malloc(len1 + len2 + 1);
+    if (result == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+    strcpy(result, str1);
+    strcat(result, str2);
+    return result;
+}
+"#;

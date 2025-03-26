@@ -1,8 +1,8 @@
 use crate::ast::Type;
 use crate::{ast, lexer, parser};
 use anyhow::{anyhow, Context, Result};
-use codespan::{Files, Span};
-use std::collections::{HashMap, HashSet};
+use codespan::Files;
+use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -243,9 +243,6 @@ fn resolve_library_path(module_path: &str) -> Result<PathBuf> {
     }
 }
 
-
-
-
 fn get_lib_path() -> Result<PathBuf> {
     let exe_path = env::current_exe().context("Failed to get current executable path")?;
     let project_root = exe_path.parent()
@@ -261,4 +258,6 @@ fn get_lib_path() -> Result<PathBuf> {
 
     Ok(lib_dir)
 }
+
+#[allow(dead_code)]
 pub type ImportedFunctions = HashMap<String, (Vec<Type>, Type)>;

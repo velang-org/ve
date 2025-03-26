@@ -7,6 +7,7 @@ type Precedence = u8;
 pub struct Parser<'a> {
     tokens: Vec<(Token, Span)>,
     current: usize,
+    #[allow(dead_code)]
     files: &'a Files<String>,
     file_id: FileId,
 }
@@ -26,6 +27,7 @@ impl<'a> Parser<'a> {
             imports: Vec::new(),
             stmts: Vec::new(),
             functions: Vec::new(),
+            structs: Vec::new(),
         };
 
         while !self.is_at_end() {
@@ -39,6 +41,8 @@ impl<'a> Parser<'a> {
                 program.functions.push(func);
             } else if self.check(Token::KwFn) {
                 program.functions.push(self.parse_function()?);
+            } else if self.check(Token::KwStruct) {
+                program.structs.push(self.parse_struct()?);
             } else {
                 program.stmts.push(self.parse_stmt()?);
             }
@@ -46,8 +50,7 @@ impl<'a> Parser<'a> {
 
         Ok(program)
     }
-
-
+    
     fn parse_import(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
         self.consume(Token::KwImport, "Expected 'import'")?;
         let import_decl = match self.peek_token() {
@@ -134,12 +137,9 @@ impl<'a> Parser<'a> {
         Ok((name, alias))
     }
 
-
-    fn parse_expr(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+    fn parse_expr(&mut self) -> Result<ast::Expr,   Diagnostic<FileId>> {
         self.parse_expr_bp(0)
     }
-
-
 
     fn parse_expr_bp(&mut self, min_bp: Precedence) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut lhs = self.parse_prefix()?;
@@ -147,7 +147,6 @@ impl<'a> Parser<'a> {
         while let Some((op, _)) = self.peek() {
             let op = op.clone();
             self.peek_span();
-
             let Some((lbp, rbp)) = self.get_infix_bp(&op) else {
                 break;
             };
@@ -155,7 +154,6 @@ impl<'a> Parser<'a> {
             if lbp < min_bp {
                 break;
             }
-
             self.advance();
             lhs = self.parse_infix(&op, lhs, lbp, rbp)?;
         }
@@ -169,7 +167,6 @@ impl<'a> Parser<'a> {
     fn peek_span(&self) -> Span {
         self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0))
     }
-
 
     fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let token = self.peek_token();
@@ -203,16 +200,17 @@ impl<'a> Parser<'a> {
                     }
                 ))
             }
-            _ => self.parse_atom(),
+            _ => {
+                self.parse_atom()
+            }
         }
     }
-
 
     fn parse_infix(
         &mut self,
         op: &Token,
         lhs: ast::Expr,
-        lbp: Precedence,
+        _lbp: Precedence,
         rbp: Precedence,
     ) -> Result<ast::Expr, Diagnostic<FileId>> {
         match op {
@@ -224,16 +222,23 @@ impl<'a> Parser<'a> {
                     ty: ast::Type::Unknown
                 }))
             }
-            Token::Plus | Token::Minus | Token::Star | Token::Slash
-            | Token::EqEq | Token::Gt | Token::Lt | Token::AndAnd | Token::OrOr => {
+            Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::DoubleStar | Token::Caret | Token::Percent
+            | Token::EqEq | Token::NotEq | Token::Gt | Token::Lt | Token::GtEq | Token::LtEq 
+            | Token::AndAnd | Token::OrOr => {
                 let bin_op = match op {
                     Token::Plus => ast::BinOp::Add,
                     Token::Minus => ast::BinOp::Sub,
                     Token::Star => ast::BinOp::Mul,
                     Token::Slash => ast::BinOp::Div,
+                    Token::DoubleStar => ast::BinOp::Pow,
+                    Token::Caret => ast::BinOp::Pow2,
+                    Token::Percent => ast::BinOp::Mod,
                     Token::EqEq => ast::BinOp::Eq,
+                    Token::NotEq => ast::BinOp::NotEq,
                     Token::Gt => ast::BinOp::Gt,
                     Token::Lt => ast::BinOp::Lt,
+                    Token::GtEq => ast::BinOp::GtEq,
+                    Token::LtEq => ast::BinOp::LtEq,
                     Token::AndAnd => ast::BinOp::And,
                     Token::OrOr => ast::BinOp::Or,
                     _ => unreachable!(),
@@ -250,34 +255,60 @@ impl<'a> Parser<'a> {
                     }
                 ))
             }
-            Token::KwAs => {
-                let target_type = self.parse_type()?;
-                let span = Span::new(lhs.span().start(), self.previous().unwrap().1.end());
-                Ok(ast::Expr::Cast(
+            Token::LBracket => {
+                let index = self.parse_expr()?;
+                let end_span = self.expect(Token::RBracket)?;
+                let span = Span::new(lhs.span().start(), end_span.end());
+                
+                Ok(ast::Expr::ArrayAccess(Box::new(lhs), Box::new(index), ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                }))
+            }
+            Token::Dot => {
+                let (field, field_span) = self.consume_ident()?;
+                let span = Span::new(lhs.span().start(), field_span.end());
+                Ok(ast::Expr::FieldAccess(
                     Box::new(lhs),
-                    target_type.clone(),
+                    field,
                     ast::ExprInfo {
                         span,
-                        ty: target_type
-                    }
+                        ty: ast::Type::Unknown,
+                    },
                 ))
             }
             Token::DotDot => {
-                let end = self.parse_expr_bp(rbp)?;
-                let span = Span::new(lhs.span().start(), end.span().end());
-                Ok(ast::Expr::Range(Box::new(lhs), Box::new(end),
+                let rhs = self.parse_expr_bp(rbp)?;
+                let span = Span::new(lhs.span().start(), rhs.span().end());
+                Ok(ast::Expr::Range(
+                    Box::new(lhs),
+                    Box::new(rhs),
                     ast::ExprInfo {
                         span,
-                        ty: ast::Type::Unknown
-                    }
+                        ty: ast::Type::Unknown,
+                    },
                 ))
-            },
-            
-            
+            }
+            Token::KwAs => {
+                let cast_type = self.parse_type()?;
+                let end_span = self.previous().map(|(_, s)| *s).unwrap();
+                let span = Span::new(lhs.span().start(), end_span.end());
+                
+                Ok(ast::Expr::Cast(
+                    Box::new(lhs),
+                    cast_type,
+                    ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown,
+                    },
+                ))
+            }
             _ => {
                 let token = self.peek().unwrap();
-                println!("{:?}", token);
-                self.error("Unexpected infix operator", self.peek().unwrap().1)
+                self.error(
+                    &format!("Unexpected token in infix position: {:?}", token.0),
+                    token.1,
+                )
             }
         }
     }
@@ -293,18 +324,19 @@ impl<'a> Parser<'a> {
         match token {
             Token::OrOr => Some((1, 2)),
             Token::AndAnd => Some((3, 4)),
-            Token::EqEq => Some((5, 6)),
-            Token::Gt | Token::Lt => Some((7, 8)),
+            Token::EqEq | Token::NotEq => Some((5, 6)),
+            Token::Gt | Token::Lt | Token::GtEq | Token::LtEq => Some((7, 8)),
             Token::Plus | Token::Minus => Some((9, 10)),
-            Token::Star | Token::Slash => Some((11, 12)),
-            Token::DotDot => Some((13, 14)),
-            Token::KwAs => Some((15, 16)),
-            Token::Eq => Some((0, 0)),
+            Token::Star | Token::Slash | Token::Percent => Some((11, 12)),
+            Token::DoubleStar | Token::Caret => Some((13, 14)),
+            Token::DotDot => Some((15, 16)),
+            Token::KwAs => Some((17, 18)),
+            Token::Dot => Some((19, 20)),
+            Token::LBracket => Some((21, 22)),
+            Token::Eq => Some((1, 2)),
             _ => None,
         }
     }
-    
-    
     
     fn parse_block(&mut self) -> Result<Vec<ast::Stmt>, Diagnostic<FileId>> {
         self.expect(Token::LBrace)?;
@@ -344,11 +376,37 @@ impl<'a> Parser<'a> {
             Some((Token::TyBool, _)) => Ok(ast::Type::Bool),
             Some((Token::TyString, _)) => Ok(ast::Type::String),
             Some((Token::TyVoid, _)) => Ok(ast::Type::Void),
+            Some((Token::TyAny, _)) => Ok(ast::Type::Any),
             Some((Token::KwRawPtr, _)) => Ok(ast::Type::RawPtr),
             Some((Token::Star, _)) => {
                 let target_type = self.parse_type()?;
                 Ok(ast::Type::Pointer(Box::new(target_type)))
             },
+            Some((Token::EmptyArray, _)) => {
+                let element_type = self.parse_type()?;
+                Ok(ast::Type::Array(Box::new(element_type)))
+            },
+            Some((Token::LBracket, _)) => {
+                let element_type = self.parse_type()?;
+                
+                if self.check(Token::Semi) {
+                    self.advance();
+
+                    let size_token = self.advance().cloned();
+                    
+                    match size_token {
+                        Some((Token::Int(size), _)) => {
+                            self.expect(Token::RBracket)?;
+                            Ok(ast::Type::SizedArray(Box::new(element_type), size as usize))
+                        },
+                        _ => self.error("Expected array size (integer)", self.peek_span())
+                    }
+                } else {
+                    self.expect(Token::RBracket)?;
+                    Ok(ast::Type::Array(Box::new(element_type)))
+                }
+            },
+            Some((Token::Ident(name), _)) => Ok(ast::Type::Struct(name)),
             Some((_, span)) => self.error("Expected type annotation", span),
             None => self.error("Expected type annotation", Span::new(0, 0)),
         }
@@ -378,8 +436,11 @@ impl<'a> Parser<'a> {
         };
 
         let body = self.parse_block()?;
+        let end_span = match body.last() {
+            Some(last_stmt) => last_stmt.span(),
+            None => start_span,
+        };
 
-        let end_span = self.previous().map(|(_, s)| *s).unwrap();
         Ok(ast::Function {
             name,
             params,
@@ -419,13 +480,17 @@ impl<'a> Parser<'a> {
         } else if self.check(Token::KwReturn) {
             self.parse_return()
         } else if self.check(Token::KwWhile) {
-          self.parse_while()
+            self.parse_while()
         } else if self.check(Token::KwFor) {
             self.parse_for()
         } else {
             let expr = self.parse_expr()?;
             let span = expr.span();
-            if self.check(Token::Semi) { self.advance(); }
+            
+            if self.check(Token::Semi) { 
+                self.advance(); 
+            }
+            
             Ok(ast::Stmt::Expr(expr, span))
         }
     }
@@ -477,7 +542,6 @@ impl<'a> Parser<'a> {
         self.consume(Token::KwIf, "Expected 'if'")?;
         let if_span = self.previous().map(|(_, s)| *s).unwrap();
         let condition = self.parse_expr()?;
-
         let then_branch = self.parse_block()?;
         let mut else_branch = None;
 
@@ -583,38 +647,110 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let current = self.advance().cloned();
         match current {
-            Some((Token::Int(n), span)) => Ok(ast::Expr::Int(n, ast::ExprInfo {
-                span,
-                ty: ast::Type::I32
-            })),
-            Some((Token::KwIntrinsic, span)) => {
-                self.parse_intrinsic_call(span)
+            Some((Token::Int(n), span)) => {
+                Ok(ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                }))
             }
-            Some((Token::Str(value), span)) => Ok(ast::Expr::Str(value, ast::ExprInfo {
-                span,
-                ty: ast::Type::String
-            })),
+            Some((Token::Str(s), span)) => {
+                Ok(ast::Expr::Str(s, ast::ExprInfo {
+                    span,
+                    ty: ast::Type::String,
+                }))
+            }
+            Some((Token::TemplateStr(s), span)) => {
+                self.parse_template_string(s, span)
+            }
+            Some((Token::KwTrue, span)) => {
+                Ok(ast::Expr::Bool(true, ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Bool,
+                }))
+            }
+            Some((Token::KwFalse, span)) => {
+                Ok(ast::Expr::Bool(false, ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Bool,
+                }))
+            }
+            Some((Token::LParen, span_start)) => {
+                let expr = self.parse_expr()?;
+                let span_end = self.expect(Token::RParen)?;
+                let _span = Span::new(span_start.start(), span_end.end());
+                
+                Ok(expr)
+            }
             Some((Token::Ident(name), span)) => {
-                let has_paren = self.check(Token::LParen);
-                if has_paren {
+                if self.check(Token::LBrace) && !self.is_in_comparison_context() {
+                    self.advance();
+
+                    let mut fields = Vec::new();
+                    let struct_name = name.clone();
+                    
+                    while !self.check(Token::RBrace) {
+                        let (field_name, _) = self.consume_ident()?;
+                        self.expect(Token::Colon)?;
+                        let expr = self.parse_expr()?;
+                        
+                        fields.push((field_name, expr));
+                        
+                        if !self.check(Token::RBrace) {
+                            self.expect(Token::Comma)?;
+                        }
+                    }
+                    
+                    let end_span = self.expect(Token::RBrace)?;
+                    
+                    Ok(ast::Expr::StructInit(
+                        struct_name.clone(),
+                        fields,
+                        ast::ExprInfo {
+                            span: Span::new(span.start(), end_span.end()),
+                            ty: ast::Type::Struct(struct_name),
+                        },
+                    ))
+                } else if self.check(Token::LParen) {
                     self.parse_function_call(name, span)
                 } else {
                     Ok(ast::Expr::Var(name, ast::ExprInfo {
                         span,
-                        ty: ast::Type::Unknown
+                        ty: ast::Type::Unknown,
                     }))
                 }
-            },
-            Some((Token::LParen, _)) => {
-                let expr = self.parse_expr()?;
-                self.expect(Token::RParen)?;
-                Ok(expr)
-            },
+            }
+            Some((Token::LBracket, span)) => {
+                let mut elements = Vec::new();
+                
+                if !self.check(Token::RBracket) {
+                    loop {
+                        elements.push(self.parse_expr()?);
+                        
+                        if !self.check(Token::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                
+                let end_span = self.expect(Token::RBracket)?;
+                
+                Ok(ast::Expr::ArrayInit(elements, ast::ExprInfo {
+                    span: Span::new(span.start(), end_span.end()),
+                    ty: ast::Type::Unknown,
+                }))
+            }
+            Some((Token::KwIntrinsic, span)) => {
+                self.parse_intrinsic_call(span)
+            }
             Some((Token::KwSafe, span)) => {
                 self.parse_safe_block(span)
             },
-            Some((t, span)) => self.error(&format!("Unexpected token: {:?}", t), span),
-            None => self.error("Unexpected end of input", Span::new(0, 0)),
+            _ => {
+                let token = self.previous().map(|(t, _)| t.clone()).unwrap();
+                let span = self.previous().map(|(_, s)| *s).unwrap();
+                self.error(&format!("Unexpected token in expression: {:?}", token), span)
+            }
         }
     }
 
@@ -628,9 +764,10 @@ impl<'a> Parser<'a> {
             }
             self.advance();
         }
-        self.expect(Token::RParen)?;
+        let rparen_span = self.expect(Token::RParen)?;
+        
         Ok(ast::Expr::Call(name, args, ast::ExprInfo {
-            span,
+            span: Span::new(span.start(), rparen_span.end()),
             ty: ast::Type::Unknown
         }))
     }
@@ -669,6 +806,38 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    fn parse_struct(&mut self) -> Result<ast::StructDef, Diagnostic<FileId>> {
+        let start_span = self.consume(Token::KwStruct, "Expected 'struct'")?;
+        let (name, _) = self.consume_ident()?;
+        
+        self.expect(Token::LBrace)?;
+        
+        let mut fields = Vec::new();
+        while !self.check(Token::RBrace) {
+            let (field_name, field_span) = self.consume_ident()?;
+            self.expect(Token::Colon)?;
+            let field_type = self.parse_type()?;
+            
+            fields.push(ast::StructField {
+                name: field_name,
+                ty: field_type,
+                span: field_span,
+            });
+            
+            if !self.check(Token::RBrace) {
+                self.expect(Token::Comma)?;
+            }
+        }
+        
+        let end_span = self.expect(Token::RBrace)?;
+        
+        Ok(ast::StructDef {
+            name,
+            fields,
+            span: Span::new(start_span.start(), end_span.end()),
+        })
+    }
+
     fn check(&self, expected: Token) -> bool {
         self.peek().map(|(t, _)| t == &expected).unwrap_or(false)
     }
@@ -684,10 +853,11 @@ impl<'a> Parser<'a> {
         self.tokens.get(self.current.saturating_sub(1))
     }
 
-    fn expect(&mut self, expected: Token) -> Result<(), Diagnostic<FileId>> {
+    fn expect(&mut self, expected: Token) -> Result<Span, Diagnostic<FileId>> {
         if self.check(expected.clone()) {
+            let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
             self.advance();
-            Ok(())
+            Ok(span)
         } else {
             let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
             self.error(&format!("Expected '{:?}'", expected), span)
@@ -710,4 +880,502 @@ impl<'a> Parser<'a> {
     fn peek(&self) -> Option<&(Token, Span)> {
         self.tokens.get(self.current)
     }
+
+    fn is_in_comparison_context(&self) -> bool {
+        if let Some((token, _)) = self.previous() {
+            match token {
+                Token::Gt | Token::Lt | Token::EqEq | Token::AndAnd | Token::OrOr => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        
+        let mut i = self.current.saturating_sub(2);
+        while i > 0 && i < self.tokens.len() {
+            if let Some((token, _)) = self.tokens.get(i) {
+                match token {
+                    Token::KwIf | Token::KwWhile => {
+                        return true;
+                    }
+                    Token::Semi | Token::LBrace | Token::RBrace => break,
+                    _ => {}
+                }
+            }
+            i = i.saturating_sub(1);
+        }
+        
+        false
+    }
+
+    fn parse_template_string(&mut self, content: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut i = 0;
+        let chars: Vec<char> = content.chars().collect();
+        
+        while i < chars.len() {
+            let c = chars[i];
+            i += 1;
+            
+            if c == '$' && i < chars.len() && chars[i] == '{' {
+                i += 1;
+
+                if !current.is_empty() {
+                    parts.push(ast::TemplateStrPart::Literal(std::mem::take(&mut current)));
+                }
+
+                let expr_start = i;
+                let mut brace_count = 1;
+                
+                while i < chars.len() {
+                    let c = chars[i];
+                    i += 1;
+                    
+                    if c == '{' {
+                        brace_count += 1;
+                    } else if c == '}' {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            break;
+                        }
+                    }
+                }
+
+                let expr_end = i - 1;
+                let expr_text: String = chars[expr_start..expr_end].iter().collect();
+
+                if expr_text.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    parts.push(ast::TemplateStrPart::Expression(Box::new(
+                        ast::Expr::Var(expr_text.trim().to_string(), ast::ExprInfo {
+                            span,
+                            ty: ast::Type::Unknown,
+                        })
+                    )));
+                } else if let Some(index_pos) = expr_text.find('[') {
+                    if expr_text.ends_with(']') {
+                        let array_name = expr_text[..index_pos].trim().to_string();
+                        let index_str = expr_text[index_pos+1..expr_text.len()-1].trim();
+
+                        if let Ok(index) = index_str.parse::<i32>() {
+                            parts.push(ast::TemplateStrPart::Expression(Box::new(
+                                ast::Expr::ArrayAccess(
+                                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
+                                        span,
+                                        ty: ast::Type::Unknown,
+                                    })),
+                                    Box::new(ast::Expr::Int(index, ast::ExprInfo {
+                                        span,
+                                        ty: ast::Type::I32,
+                                    })),
+                                    ast::ExprInfo {
+                                        span,
+                                        ty: ast::Type::Unknown,
+                                    }
+                                )
+                            )));
+                        } else {
+                            parts.push(ast::TemplateStrPart::Expression(Box::new(
+                                ast::Expr::ArrayAccess(
+                                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
+                                        span,
+                                        ty: ast::Type::Unknown,
+                                    })),
+                                    Box::new(ast::Expr::Var(index_str.to_string(), ast::ExprInfo {
+                                        span,
+                                        ty: ast::Type::Unknown,
+                                    })),
+                                    ast::ExprInfo {
+                                        span,
+                                        ty: ast::Type::Unknown,
+                                    }
+                                )
+                            )));
+                        }
+                    } else {
+                        parts.push(ast::TemplateStrPart::Expression(Box::new(
+                            ast::Expr::Var(expr_text.trim().to_string(), ast::ExprInfo {
+                                span,
+                                ty: ast::Type::Unknown,
+                            })
+                        )));
+                    }
+                } else {
+                    if let Some(op_pos) = find_operator(&expr_text) {
+                        let (left, right) = split_at_operator(&expr_text, op_pos);
+                        let op = determine_operator(&expr_text, op_pos);
+                        
+                        let left_expr = if left.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
+                            ast::Expr::Var(left.trim().to_string(), ast::ExprInfo {
+                                span,
+                                ty: ast::Type::Unknown,
+                            })
+                        } else {
+                            parse_nested_expr(left.trim(), span, self.file_id)?
+                        };
+                        
+                        let right_expr = if right.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
+                            ast::Expr::Var(right.trim().to_string(), ast::ExprInfo {
+                                span,
+                                ty: ast::Type::Unknown,
+                            })
+                        } else {
+                            parse_nested_expr(right.trim(), span, self.file_id)?
+                        };
+                        
+                        parts.push(ast::TemplateStrPart::Expression(Box::new(
+                            ast::Expr::BinOp(
+                                Box::new(left_expr),
+                                op,
+                                Box::new(right_expr),
+                                ast::ExprInfo {
+                                    span,
+                                    ty: ast::Type::Unknown,
+                                }
+                            )
+                        )));
+                    } else {
+                        parts.push(ast::TemplateStrPart::Expression(Box::new(
+                            ast::Expr::Var(expr_text.trim().to_string(), ast::ExprInfo {
+                                span,
+                                ty: ast::Type::Unknown,
+                            })
+                        )));
+                    }
+                }
+            } else {
+                current.push(c);
+            }
+        }
+
+        if !current.is_empty() {
+            parts.push(ast::TemplateStrPart::Literal(current));
+        }
+        
+        Ok(ast::Expr::TemplateStr(parts, ast::ExprInfo {
+            span,
+            ty: ast::Type::String,
+        }))
+    }
+}
+
+fn find_operator(expr: &str) -> Option<usize> {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut paren_level = 0;
+    let mut bracket_level = 0;
+    
+    for i in 0..chars.len() {
+        match chars[i] {
+            '(' => paren_level += 1,
+            ')' => paren_level -= 1,
+            '[' => bracket_level += 1,
+            ']' => bracket_level -= 1,
+            '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' | '&' | '|' | '^' => {
+                if paren_level == 0 && bracket_level == 0 {
+                    if i+1 < chars.len() {
+                        let next = chars[i+1];
+                        if (chars[i] == '*' && next == '*') || // **
+                           (chars[i] == '=' && next == '=') || // ==
+                           (chars[i] == '!' && next == '=') || // !=
+                           (chars[i] == '>' && next == '=') || // >=
+                           (chars[i] == '<' && next == '=') || // <=
+                           (chars[i] == '&' && next == '&') || // &&
+                           (chars[i] == '|' && next == '|') {  // ||
+                            return Some(i);
+                        }
+                    }
+
+                    return Some(i);
+                }
+            },
+            _ => {}
+        }
+    }
+    
+    None
+}
+
+fn split_at_operator(expr: &str, pos: usize) -> (String, String) {
+    let mut end_pos = pos + 1;
+    let chars: Vec<char> = expr.chars().collect();
+
+    if pos+1 < chars.len() {
+        let curr = chars[pos];
+        let next = chars[pos+1];
+        if (curr == '*' && next == '*') || // **
+           (curr == '=' && next == '=') || // ==
+           (curr == '!' && next == '=') || // !=
+           (curr == '>' && next == '=') || // >=
+           (curr == '<' && next == '=') || // <=
+           (curr == '&' && next == '&') || // &&
+           (curr == '|' && next == '|') {  // ||
+            end_pos = pos + 2;
+        }
+    }
+    
+    let left = expr[..pos].to_string();
+    let right = expr[end_pos..].to_string();
+    
+    (left, right)
+}
+
+fn determine_operator(expr: &str, pos: usize) -> ast::BinOp {
+    let chars: Vec<char> = expr.chars().collect();
+    let c = chars[pos];
+    
+    if pos+1 < chars.len() {
+        let next = chars[pos+1];
+        match (c, next) {
+            ('*', '*') => return ast::BinOp::Pow,
+            ('=', '=') => return ast::BinOp::Eq,
+            ('!', '=') => return ast::BinOp::NotEq,
+            ('>', '=') => return ast::BinOp::GtEq,
+            ('<', '=') => return ast::BinOp::LtEq,
+            ('&', '&') => return ast::BinOp::And,
+            ('|', '|') => return ast::BinOp::Or,
+            _ => {}
+        }
+    }
+    
+    match c {
+        '+' => ast::BinOp::Add,
+        '-' => ast::BinOp::Sub,
+        '*' => ast::BinOp::Mul,
+        '/' => ast::BinOp::Div,
+        '%' => ast::BinOp::Mod,
+        '^' => ast::BinOp::Pow2,
+        '>' => ast::BinOp::Gt,
+        '<' => ast::BinOp::Lt,
+        _ => ast::BinOp::Add
+    }
+}
+
+fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId) -> Result<ast::Expr, codespan_reporting::diagnostic::Diagnostic<codespan::FileId>> {
+    let expr = expr.trim();
+
+    if expr.starts_with('(') && expr.ends_with(')') {
+        let inner = &expr[1..expr.len()-1];
+        return parse_nested_expr(inner, span, file_id);
+    } 
+
+    if let Ok(num) = expr.parse::<i32>() {
+        return Ok(ast::Expr::Int(num, ast::ExprInfo {
+            span,
+            ty: ast::Type::I32,
+        }));
+    } 
+
+    if expr == "true" || expr == "false" {
+        return Ok(ast::Expr::Bool(expr == "true", ast::ExprInfo {
+            span,
+            ty: ast::Type::Bool,
+        }));
+    }
+
+    if let Some(pos) = find_lowest_priority_operator(expr) {
+        let (left, right) = split_at_operator(expr, pos);
+        let op = determine_operator(expr, pos);
+        
+        let left_expr = parse_nested_expr(left.trim(), span, file_id)?;
+        let right_expr = parse_nested_expr(right.trim(), span, file_id)?;
+        
+        return Ok(ast::Expr::BinOp(
+            Box::new(left_expr),
+            op,
+            Box::new(right_expr),
+            ast::ExprInfo {
+                span,
+                ty: ast::Type::Unknown,
+            }
+        ));
+    }
+
+    if let Some(index_pos) = expr.find('[') {
+        if expr.ends_with(']') {
+            let array_name = expr[..index_pos].trim().to_string();
+            let index_str = expr[index_pos+1..expr.len()-1].trim();
+            
+
+            if let Ok(index) = index_str.parse::<i32>() {
+                return Ok(ast::Expr::ArrayAccess(
+                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown,
+                    })),
+                    Box::new(ast::Expr::Int(index, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::I32,
+                    })),
+                    ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown,
+                    }
+                ));
+            } else {
+                return Ok(ast::Expr::ArrayAccess(
+                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown,
+                    })),
+                    Box::new(ast::Expr::Var(index_str.to_string(), ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown,
+                    })),
+                    ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown,
+                    }
+                ));
+            }
+        }
+    }
+
+    Ok(ast::Expr::Var(expr.to_string(), ast::ExprInfo {
+        span,
+        ty: ast::Type::Unknown,
+    }))
+}
+
+fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut paren_level = 0;
+    let mut bracket_level = 0;
+
+    let mut in_array_access = false;
+    let mut array_access_positions = Vec::new();
+    
+    for i in 0..chars.len() {
+        match chars[i] {
+            '[' => {
+                bracket_level += 1;
+                if bracket_level == 1 && paren_level == 0 {
+                    in_array_access = true;
+                    array_access_positions.push(i);
+                }
+            },
+            ']' => {
+                if bracket_level > 0 {
+                    bracket_level -= 1;
+                    if bracket_level == 0 && paren_level == 0 {
+                        in_array_access = false;
+                        array_access_positions.push(i);
+                    }
+                }
+            },
+            '(' => paren_level += 1,
+            ')' => if paren_level > 0 { paren_level -= 1 },
+            _ => {}
+        }
+    }
+
+    let mut add_sub_pos = None;
+    for i in 0..chars.len() {
+        if is_inside_array_access(i, &array_access_positions) {
+            continue;
+        }
+        
+        match chars[i] {
+            '+' | '-' => {
+                if i > 0 && !is_operator_char(chars[i-1]) && paren_level == 0 && bracket_level == 0 {
+                    add_sub_pos = Some(i);
+                    return add_sub_pos;
+                }
+            },
+            _ => {}
+        }
+    }
+
+    let mut mul_div_pos = None;
+    for i in 0..chars.len() {
+        if is_inside_array_access(i, &array_access_positions) {
+            continue;
+        }
+        
+        match chars[i] {
+            '*' | '/' | '%' => {
+                if chars[i] == '*' && i+1 < chars.len() && chars[i+1] == '*' {
+                    continue;
+                }
+                
+                if paren_level == 0 && bracket_level == 0 {
+                    mul_div_pos = Some(i);
+                    return mul_div_pos;
+                }
+            },
+            _ => {}
+        }
+    }
+
+    let mut pow_pos = None;
+    for i in 0..chars.len() {
+        if is_inside_array_access(i, &array_access_positions) {
+            continue;
+        }
+        
+        match chars[i] {
+            '*' => {
+                if i+1 < chars.len() && chars[i+1] == '*' && paren_level == 0 && bracket_level == 0 {
+                    pow_pos = Some(i);
+                    return pow_pos;
+                }
+            },
+            '^' => {
+                if paren_level == 0 && bracket_level == 0 {
+                    pow_pos = Some(i);
+                    return pow_pos;
+                }
+            },
+            _ => {}
+        }
+    }
+
+    for i in 0..chars.len() {
+        if is_inside_array_access(i, &array_access_positions) {
+            continue;
+        }
+        
+        match chars[i] {
+            '>' | '<' | '=' | '!' => {
+                if paren_level == 0 && bracket_level == 0 {
+                    if i+1 < chars.len() {
+                        let next = chars[i+1];
+                        if (chars[i] == '=' && next == '=') || // ==
+                           (chars[i] == '!' && next == '=') || // !=
+                           (chars[i] == '>' && next == '=') || // >=
+                           (chars[i] == '<' && next == '=') {  // <=
+                            return Some(i);
+                        }
+                    }
+
+                    if chars[i] == '>' || chars[i] == '<' {
+                        return Some(i);
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn is_inside_array_access(pos: usize, array_access_positions: &[usize]) -> bool {
+    if array_access_positions.len() < 2 {
+        return false;
+    }
+    
+    for i in 0..array_access_positions.len() / 2 {
+        let start = array_access_positions[i * 2];
+        let end = array_access_positions[i * 2 + 1];
+        
+        if pos > start && pos < end {
+            return true;
+        }
+    }
+    
+    false
+}
+
+fn is_operator_char(c: char) -> bool {
+    matches!(c, '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' | '(' | '[' | ' ' | '!')
 }

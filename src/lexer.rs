@@ -33,9 +33,24 @@ pub enum Token {
     KwExport,
     #[token("intrinsic")]
     KwIntrinsic,
+    #[token("struct")]
+    KwStruct,
+    #[token("true")]
+    KwTrue,
+    #[token("false")]
+    KwFalse,
+    #[token(".")]
+    Dot,
     
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Str(String),
+    
+    #[regex(r#"`([^`\\]|\\.)*`"#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
+    TemplateStr(String),
+    
+    #[token("${")]
+    StrInterpolStart,
+    
     #[token("i32")]
     TyI32,
     #[token("bool")]
@@ -44,12 +59,20 @@ pub enum Token {
     TyString,
     #[token("void")]
     TyVoid,
+    #[token("any")]
+    TyAny,
     #[token("->")]
     Arrow,
     #[token(":")]
     Colon,
     #[token("==")]
     EqEq,
+    #[token("!=")]
+    NotEq,
+    #[token(">=")]
+    GtEq,
+    #[token("<=")]
+    LtEq,
     #[token("(")]
     LParen,
     #[token(")")]
@@ -58,6 +81,12 @@ pub enum Token {
     LBrace,
     #[token("}")]
     RBrace,
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
+    #[token("[]")]
+    EmptyArray,
     #[token(",")]
     Comma,
     #[token("=")]
@@ -72,6 +101,12 @@ pub enum Token {
     Star,
     #[token("/")]
     Slash,
+    #[token("**")]
+    DoubleStar,
+    #[token("^")]
+    Caret,
+    #[token("%")]
+    Percent,
     #[token(">")]
     Gt,
     #[token("<")]
@@ -94,6 +129,12 @@ pub enum Token {
 
     #[regex(r"[ \t\n]+", logos::skip)]
     Whitespace,
+
+    #[regex(r"//[^\n]*", logos::skip)]
+    SingleLineComment,
+
+    #[regex(r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/", logos::skip)]
+    MultiLineComment,
 
     Error,
 }
