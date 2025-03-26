@@ -1,6 +1,6 @@
-# Basic Examples of the Verve Language
+# Basic Examples of the Velang Language
 
-This directory contains examples demonstrating the basic features of the Verve language.
+This directory contains examples demonstrating the basic features of the Velang language.
 
 ## Examples Structure
 
@@ -9,7 +9,7 @@ This directory contains examples demonstrating the basic features of the Verve l
 
 Displays "Hello, World!" in the console.
 ```bash
-cargo run --bin Ve examples/basics/01_hello_world.ve
+ve examples/basics/01_hello_world.ve
 ```
 
 ### 2. Variables
@@ -17,7 +17,7 @@ cargo run --bin Ve examples/basics/01_hello_world.ve
 
 Demonstrates variable declaration and assignment.
 ```bash
-cargo run --bin Ve examples/basics/02_variables.ve
+ve examples/basics/02_variables.ve
 ```
 
 ### 3. Functions
@@ -25,7 +25,7 @@ cargo run --bin Ve examples/basics/02_variables.ve
 
 Demonstrates function definitions and calls.
 ```bash
-cargo run --bin Ve examples/basics/03_functions.ve
+ve examples/basics/03_functions.ve
 ```
 
 ### 4. Data Types
@@ -33,7 +33,7 @@ cargo run --bin Ve examples/basics/03_functions.ve
 
 Demonstrates basic data types in Verve language.
 ```bash
-cargo run --bin Ve examples/basics/04_types.ve
+ve examples/basics/04_types.ve
 ```
 
 ### 5. Control Flow
@@ -41,7 +41,7 @@ cargo run --bin Ve examples/basics/04_types.ve
 
 Demonstrates control flow using `if` statements and `for` and `while` loops.
 ```bash
-cargo run --bin Ve examples/basics/05_control_flow.ve
+ve examples/basics/05_control_flow.ve
 ```
 
 ### 6. Structures
@@ -49,5 +49,5 @@ cargo run --bin Ve examples/basics/05_control_flow.ve
 
 Demonstrates defining and using structures.
 ```bash
-cargo run --bin Ve examples/basics/06_struct.ve
+ve examples/basics/06_struct.ve
 ```

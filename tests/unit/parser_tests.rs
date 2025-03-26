@@ -1,5 +1,5 @@
 use codespan::Files;
-use Ve::lexer::Lexer;
+use ve::lexer::Lexer;
 
 #[test]
 fn test_function_parsing() {
@@ -9,7 +9,7 @@ fn test_function_parsing() {
     let file_id = files.add("test", source);
 
     let lexer = Lexer::new(&files, file_id);
-    let mut parser = Ve::parser::Parser::new(lexer);
+    let mut parser = ve::parser::Parser::new(lexer);
     let program = parser.parse().unwrap();
 
     assert_eq!(program.functions.len(), 1);
@@ -25,9 +25,9 @@ fn test_void_return_type() {
 
 
     let lexer = Lexer::new(&files, file_id);
-    let mut parser = Ve::parser::Parser::new(lexer);
+    let mut parser = ve::parser::Parser::new(lexer);
     let program = parser.parse().unwrap();
 
     assert_eq!(program.functions.len(), 1);
-    assert_eq!(program.functions[0].return_type, Ve::ast::Type::Void);
+    assert_eq!(program.functions[0].return_type, ve::ast::Type::Void);
 }

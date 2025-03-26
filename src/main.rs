@@ -25,6 +25,9 @@ fn main() -> anyhow::Result<()> {
         },
         CliCommand::Run { verbose } => {
             cli::run::run_project(verbose)
+        },
+        CliCommand::Benchmark { input, iterations, verbose } => {
+            cli::benchmark::run_benchmark(input, iterations, verbose)
         }
     }?;
 

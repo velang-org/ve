@@ -22,6 +22,8 @@ Velang is in **EARLY DEVELOPMENT** – syntax and features will change radically
 - Modularity:
   - Import other Verve files
   - Export functions for use in other files
+- Development Tools:
+  - Benchmarking capabilities
 
 ## Discord 
 Join our [Discord](https://dsc.gg/velang) server to chat with the community and get help with the language.
@@ -35,11 +37,30 @@ Requirements:
 Install:
 ```bash
 git clone https://github.com/velang-org/ve
-cd verve
+cd velang
 cargo install --path .
 ```
+
+## Usage
+```bash
+# Compile and run a file
+ve example.ve
+
+# Initialize a new project
+ve init my_project
+
+# Run a project (from the current directory)
+ve run
+
+# Run benchmarks - two approaches
+ve benchmark example.ve --iterations 5 --verbose
+# or
+ve example.ve --iterations 10 --verbose
+```
+
 ## Examples
 - [Basics](./examples/basics/README.md)
 - [Modularity](./examples/modularity/README.md)
+
 ## Contributing
 Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTING.md) first.

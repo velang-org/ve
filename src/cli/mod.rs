@@ -1,5 +1,6 @@
 pub mod init;
 pub(crate) mod run;
+pub mod benchmark;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -36,6 +37,11 @@ pub enum CliCommand {
     },
     Run {
         verbose: bool,
+    },
+    Benchmark {
+        input: PathBuf,
+        iterations: usize,
+        verbose: bool,
     }
 }
 
@@ -65,6 +71,9 @@ pub struct Args {
 
     #[arg(short, long)]
     verbose: bool,
+
+    #[arg(long)]
+    iterations: Option<usize>,
 }
 
 #[derive(Subcommand)]
@@ -93,6 +102,16 @@ enum Command {
     Run {
         #[arg(short, long)]
         verbose: bool,
+    },
+    Benchmark {
+        #[arg(value_parser = validate_ve_file)]
+        input: PathBuf,
+        
+        #[arg(short, long, default_value_t = 10)]
+        iterations: usize,
+        
+        #[arg(short, long)]
+        verbose: bool,
     }
 }
 
@@ -114,9 +133,21 @@ pub fn parse() -> anyhow::Result<CliCommand> {
         },
         Some(Command::Run { verbose}) => {
             Ok(CliCommand::Run { verbose })
+        },
+        Some(Command::Benchmark { input, iterations, verbose }) => {
+            Ok(CliCommand::Benchmark { input, iterations, verbose })
         }
         None => {
             let input = args.input.ok_or_else(|| anyhow!("Input file is required"))?;
+            
+            if let Some(iterations) = args.iterations {
+                return Ok(CliCommand::Benchmark {
+                    input,
+                    iterations,
+                    verbose: args.verbose,
+                });
+            }
+            
             Ok(CliCommand::Build {
                 input,
                 output: args.output,

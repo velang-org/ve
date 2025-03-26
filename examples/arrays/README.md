@@ -1,6 +1,6 @@
-# Arrays in the Verve Language
+# Arrays in the Velang Language
 
-This directory contains examples demonstrating the use of arrays in the Verve language.
+This directory contains examples demonstrating the use of arrays in the Velang language.
 
 ## Examples Structure
 
@@ -13,7 +13,7 @@ Demonstrates basic operations on arrays:
 - Assignment to array elements
 
 ```bash
-cargo run --bin Ve examples/arrays/01_array_basics.ve
+ve examples/arrays/01_array_basics.ve
 ```
 
 ### 2. Array Operations
@@ -26,7 +26,7 @@ Demonstrates operations performed on arrays:
 - Finding minimum and maximum values
 
 ```bash
-cargo run --bin Ve examples/arrays/02_array_operations.ve
+ve examples/arrays/02_array_operations.ve
 ```
 
 ### 3. Array Functions
@@ -38,7 +38,7 @@ Demonstrates advanced operations:
 - Manipulating array data with functions
 
 ```bash
-cargo run --bin Ve examples/arrays/03_array_functions.ve
+ve examples/arrays/03_array_functions.ve
 ```
 
 ## Key Features
@@ -63,9 +63,8 @@ numbers[2] = 99;
 
 ## Limitations
 
-The current implementation of arrays in Verve has the following limitations:
+The current implementation of arrays in Velang has the following limitations:
 - No built-in length property
 - No dynamic resizing (arrays have a fixed size)
 - Limited array methods (no built-in functions like push, pop, etc.)
 - Arrays must have elements of the same type 
-Te funkcje mogą zostać dodane w przyszłych wersjach języka Verve. 

@@ -15,7 +15,7 @@ Files:
 
 To run this example:
 ```bash
-cargo run --bin Ve examples/modularity/01_math/main.ve
+ve examples/modularity/01_math/main.ve
 ```
 
 ## Key Features

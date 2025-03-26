@@ -1,4 +1,4 @@
-use Ve::lexer::{Lexer, Token};
+use ve::lexer::{Lexer, Token};
 use codespan::Files;
 
 #[test]
