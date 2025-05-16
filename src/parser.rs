@@ -53,6 +53,22 @@ impl<'a> Parser<'a> {
     
     fn parse_import(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
         self.consume(Token::KwImport, "Expected 'import'")?;
+        if self.check(Token::Str(String::new())) {
+            let module_path = match self.advance().cloned() {
+                Some((Token::Str(path), _)) => path.clone(),
+                _ => return self.error("Expected module path", self.peek_span()),
+            };
+            let alias = if self.check(Token::KwAs) {
+                self.advance();
+                match self.consume_ident()? {
+                    (name, _) => Some(name),
+                }
+            } else {
+                None
+            };
+            self.expect(Token::Semi)?;
+            return Ok(ast::ImportDeclaration::ImportAll { module_path, alias });
+        }
         let import_decl = match self.peek_token() {
             Token::Str(_) => self.parse_import_all()?,
             Token::LBrace => self.parse_import_specifiers()?,
