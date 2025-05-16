@@ -1,8 +1,10 @@
 import "std/io";
 
 fn main() {
-    let x, y, name =
-    10, 20, "Verve";
+    let x, y, name, pi =
+    10, 20, "Verve", 3.14;
 
     print(`Sum: ${x + y}`);
-} 
+    print(`Pi: ${pi}`);
+}
+

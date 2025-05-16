@@ -85,6 +85,7 @@ impl CBackend {
 
         self.header.push_str("void print_str(char* s) { printf(\"%s\\n\", s); }\n");
         self.header.push_str("void print_int(int n) { printf(\"%d\\n\", n); }\n");
+        self.header.push_str("void print_float(float f) { printf(\"%g\\n\", f); }\n");
         self.header.push_str("void print_bool(int b) { printf(\"%s\\n\", b ? \"true\" : \"false\"); }\n");
         self.header.push_str("void print_array(int* arr, int size) {\n");
         self.header.push_str("    printf(\"[\");\n");
@@ -98,6 +99,7 @@ impl CBackend {
         self.header.push_str("    if (type == 1) print_str((char*)x);\n");
         self.header.push_str("    else if (type == 2) print_int(*(int*)&x);\n");
         self.header.push_str("    else if (type == 3) printf(\"%s\\n\", (*(int*)&x) ? \"true\" : \"false\");\n");
+        self.header.push_str("    else if (type == 4) print_float(*(float*)&x);\n");
         self.header.push_str("}\n\n");
 
         for struct_def in &program.structs {
@@ -146,6 +148,12 @@ impl CBackend {
         self.header.push_str("static char* int_to_str(int num) {\n");
         self.header.push_str("    char* buffer = malloc(12);\n");
         self.header.push_str("    sprintf(buffer, \"%d\", num);\n");
+        self.header.push_str("    return buffer;\n");
+        self.header.push_str("}\n\n");
+
+        self.header.push_str("static char* float_to_str(float num) {\n");
+        self.header.push_str("    char* buffer = malloc(32);\n");
+        self.header.push_str("    sprintf(buffer, \"%g\", num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
 
@@ -206,7 +214,8 @@ impl CBackend {
         matches!(expr,
             ast::Expr::Int(..) |
             ast::Expr::Str(..) |
-            ast::Expr::Bool(..)
+            ast::Expr::Bool(..) |
+            ast::Expr::F32(..)
         )
     }
 
@@ -394,6 +403,7 @@ impl CBackend {
     fn emit_expr(&mut self, expr: &ast::Expr) -> Result<String, CompileError> {
         match expr {
             ast::Expr::Int(n, _) => Ok(n.to_string()),
+            ast::Expr::F32(f, _) => Ok(f.to_string()),
             ast::Expr::Bool(b, _) => {
                 self.includes.borrow_mut().insert("<stdbool.h>");
                 Ok(if *b { "true" } else { "false" }.to_string())
@@ -462,6 +472,7 @@ impl CBackend {
                     Type::Struct(_) => Ok(name.clone()),
                     Type::Array(_) => Ok(name.clone()),
                     Type::SizedArray(_, _) => Ok(name.clone()),
+                    Type::F32 => Ok(name.clone()),
                     Type::Unknown => Ok(name.clone()),
                     _ => Err(CompileError::CodegenError {
                         message: format!("Cannot print type (in var) {:?}", var_type),
@@ -790,6 +801,7 @@ impl CBackend {
             Type::Array(inner) => format!("{}*", self.type_to_c(inner)),
             Type::SizedArray(inner, _) => format!("{}*", self.type_to_c(inner)),
             Type::Any => "void*".to_string(),
+            Type::F32 => "float".to_string(),
         }
     }
 
@@ -801,23 +813,23 @@ impl CBackend {
 
     fn convert_to_c_str(&mut self, code: &str, ty: &Type) -> String {
         self.includes.borrow_mut().insert("<string.h>");
-        
         match ty {
             Type::I32 => format!("int_to_str({})", code),
             Type::Bool => format!("bool_to_str({})", code),
             Type::Pointer(_) | Type::RawPtr => format!("ptr_to_str({})", code),
             Type::String => code.to_string(),
             Type::Struct(name) => format!("{}_to_str(&{})", name, code),
-            Type::Array(_) => "\"[array]\"".to_string(),
-            Type::SizedArray(_, _) => "\"[sized array]\"".to_string(),
-            Type::Any => "\"[any]\"".to_string(),
+            Type::F32 => format!("float_to_str({})", code),
+            Type::Array(_) => "[array]".to_string(),
+            Type::SizedArray(_, _) => "[sized array]".to_string(),
+            Type::Any => "[any]".to_string(),
             Type::Unknown => {
                 eprintln!("Warning: Unknown type in conversion to string. Check type inference.");
-                "\"[unknown]\"".to_string()
+                "[unknown]".to_string()
             },
             _ => {
                 eprintln!("Warning: Cannot convert type {:?} to string", ty);
-                "\"[unsupported type]\"".to_string()
+                "[unsupported type]".to_string()
             }
         }
     }
@@ -856,3 +868,4 @@ char* concat(const char* str1, const char* str2) {
     return result;
 }
 "#;
+

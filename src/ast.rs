@@ -16,6 +16,7 @@ pub enum Type {
     Array(Box<Type>),
     SizedArray(Box<Type>, usize),
     Any,
+    F32,
 }
 
 impl Type {
@@ -104,6 +105,7 @@ pub enum Expr {
     ArrayInit(Vec<Expr>, ExprInfo),
     ArrayAccess(Box<Expr>, Box<Expr>, ExprInfo),
     TemplateStr(Vec<TemplateStrPart>, ExprInfo),
+    F32(f32, ExprInfo),
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +148,7 @@ impl Expr {
             Expr::ArrayInit(_, info) => info.span,
             Expr::ArrayAccess(_, _, info) => info.span,
             Expr::TemplateStr(_, info) => info.span,
+            Expr::F32(_, info) => info.span,
         }
     }
 
@@ -170,12 +173,13 @@ impl Expr {
             Expr::ArrayInit(_, info) => info.ty.clone(),
             Expr::ArrayAccess(_, _, info) => info.ty.clone(),
             Expr::TemplateStr(_, info) => info.ty.clone(),
+            Expr::F32(_, info) => info.ty.clone(),
         }
     }
 
     #[allow(dead_code)]
     pub fn is_constant(&self) -> bool {
-        matches!(self, Expr::Int(_, _) | Expr::Str(_, _) | Expr::Bool(_, _))
+        matches!(self, Expr::Int(_, _) | Expr::Str(_, _) | Expr::Bool(_, _) | Expr::F32(_, _))
     }
 
     #[allow(dead_code)]
@@ -264,6 +268,7 @@ impl fmt::Display for Type {
             Type::Array(ty) => write!(f, "[]{}", ty),
             Type::SizedArray(ty, size) => write!(f, "[{}; {}]", ty, size),
             Type::Any => write!(f, "any"),
+            Type::F32 => write!(f, "f32"),
         }
     }
 }
@@ -282,3 +287,4 @@ impl Stmt {
         }
     }
 }
+

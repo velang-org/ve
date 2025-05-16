@@ -168,6 +168,7 @@ impl TypeChecker {
             Expr::Int(_, _) => Ok(Type::I32),
             Expr::Bool(_, _) => Ok(Type::Bool),
             Expr::Str(_, _) => Ok(Type::String),
+            Expr::F32(_, _) => Ok(Type::F32),
             Expr::Var(name, ast::ExprInfo {span, ty: expr_type } ) => {
                 let ty = match name.as_str() {
                     "true" | "false" => Type::Bool,
@@ -188,9 +189,15 @@ impl TypeChecker {
                 let right_ty = self.check_expr(right)?;
 
                 let result_ty = match op {
-                    BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Pow2 | BinOp::Mod => {
-                        if left_ty == Type::I32 && right_ty == Type::I32 {
-                            Type::I32
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Pow2 | BinOp::Mod => {
+                        if (left_ty == Type::I32 && right_ty == Type::I32)
+                            || (left_ty == Type::F32 && right_ty == Type::F32)
+                        {
+                            if left_ty == Type::F32 || right_ty == Type::F32 {
+                                Type::F32
+                            } else {
+                                Type::I32
+                            }
                         } else {
                             self.report_error(
                                 &format!("Cannot apply {:?} to {} and {}", op, left_ty, right_ty),
@@ -198,46 +205,6 @@ impl TypeChecker {
                             );
                             Type::Unknown
                         }
-                    },
-                    BinOp::Add => {
-                        let left_ty = self.check_expr(left)?;
-                        let right_ty = self.check_expr(right)?;
-
-                        let result_ty = match (&left_ty, &right_ty) {
-                            (Type::String, _) => {
-                                if !Self::is_convertible(&right_ty, &Type::String) {
-                                    self.report_error(
-                                        &format!("Cannot convert {} to String", right_ty),
-                                        right.span(),
-                                    );
-                                    Type::Unknown
-                                } else {
-                                    Type::String
-                                }
-                            }
-                            (_, Type::String) => {
-                                if !Self::is_convertible(&left_ty, &Type::String) {
-                                    self.report_error(
-                                        &format!("Cannot convert {} to String", left_ty),
-                                        left.span(),
-                                    );
-                                    Type::Unknown
-                                } else {
-                                    Type::String
-                                }
-                            }
-                            (Type::I32, Type::I32) => Type::I32,
-                            _ => {
-                                self.report_error(
-                                    &format!("Cannot add {} and {}", left_ty, right_ty),
-                                    *span,
-                                );
-                                Type::Unknown
-                            }
-                        };
-
-                        *expr_type = result_ty.clone();
-                        result_ty
                     },
                     BinOp::Gt | BinOp::Eq | BinOp::Lt | BinOp::NotEq | BinOp::GtEq | BinOp::LtEq => {
                         if Self::is_convertible(&left_ty, &right_ty) {
@@ -287,8 +254,8 @@ impl TypeChecker {
                 let operand_ty = self.check_expr(operand)?;
                 let result_ty = match op {
                     ast::UnOp::Neg => {
-                        if operand_ty == Type::I32 {
-                            Type::I32
+                        if operand_ty == Type::I32 || operand_ty == Type::F32 {
+                            operand_ty
                         } else {
                             self.report_error(
                                 &format!("Cannot negate type {}", operand_ty),
@@ -391,6 +358,9 @@ impl TypeChecker {
                     (Type::I32, Type::Pointer(_)) => Ok(target_ty.clone()),
                     (Type::I32, Type::I32) => Ok(source_ty),
                     (Type::I32, Type::Bool) => Ok(target_ty.clone()),
+                    (Type::F32, Type::F32) => Ok(source_ty),
+                    (Type::F32, Type::I32) => Ok(target_ty.clone()),
+                    (Type::I32, Type::F32) => Ok(target_ty.clone()),
 
                     _ => {
                         if !Self::is_convertible(&source_ty, target_ty) {
@@ -424,7 +394,7 @@ impl TypeChecker {
 
                 if !matches!(
                 expr_ty,
-                Type::I32 | Type::Bool | Type::String | Type::RawPtr | Type::Pointer(_)
+                Type::I32 | Type::Bool | Type::String | Type::RawPtr | Type::Pointer(_) | Type::F32
             ) {
                     self.report_error(
                         &format!("Cannot print value of type {}", expr_ty),
@@ -636,7 +606,7 @@ impl TypeChecker {
                                         })?,
                                 };
                                 var_info.ty = ty.clone();
-                                if !matches!(ty, Type::String | Type::I32 | Type::Bool) {
+                                if !matches!(ty, Type::String | Type::I32 | Type::Bool | Type::F32) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
                                     self.errors.push(Diagnostic::error().with_message(msg).with_labels(vec![
@@ -645,7 +615,7 @@ impl TypeChecker {
                                 }
                             },
                             _ => {
-                                if !matches!(ty, Type::String | Type::I32 | Type::Bool) {
+                                if !matches!(ty, Type::String | Type::I32 | Type::Bool | Type::F32) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
                                     self.errors.push(Diagnostic::error().with_message(msg).with_labels(vec![
@@ -708,6 +678,9 @@ impl TypeChecker {
             (Type::SizedArray(from_elem, from_size), Type::SizedArray(to_elem, to_size)) => {
                 from_size == to_size && Self::is_convertible(from_elem, to_elem)
             },
+            (Type::F32, Type::F32) => true,
+            (Type::F32, Type::I32) => true,
+            (Type::I32, Type::F32) => true,
             _ => false,
         }
     }
@@ -733,3 +706,4 @@ impl TypeChecker {
         );
     }
 }
+

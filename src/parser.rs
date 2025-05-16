@@ -690,6 +690,12 @@ impl<'a> Parser<'a> {
                     ty: ast::Type::Bool,
                 }))
             }
+            Some((Token::F32(val), span)) => {
+                Ok(ast::Expr::F32(val, ast::ExprInfo {
+                    span,
+                    ty: ast::Type::F32,
+                }))
+            }
             Some((Token::LParen, span_start)) => {
                 let expr = self.parse_expr()?;
                 let span_end = self.expect(Token::RParen)?;

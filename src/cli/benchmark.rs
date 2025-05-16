@@ -18,7 +18,6 @@ pub fn run_benchmark(
         .ok_or_else(|| anyhow!("Invalid input file path"))?
         .join("build");
 
-    // Create build directory if it doesn't exist
     if !build_dir.exists() {
         std::fs::create_dir_all(&build_dir)?;
     }
@@ -26,7 +25,6 @@ pub fn run_benchmark(
     let output = build_dir.join("benchmark.exe");
     let c_file = build_dir.join("benchmark.c");
 
-    // File parsing
     let mut files = Files::<String>::new();
     let file_id = files.add(
         input.to_str().unwrap().to_string(),
@@ -64,12 +62,10 @@ pub fn run_benchmark(
         stdout.reset()?;
     }
 
-    // Parser preparation
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)).set_bold(true))?;
     writeln!(&mut stdout, "\n🔄 Running compilation stages...")?;
     stdout.reset()?;
-    
-    // Parsing stage
+
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
     write!(&mut stdout, "  [1/4] Parsing... ")?;
     stdout.flush()?;
@@ -96,7 +92,6 @@ pub fn run_benchmark(
     writeln!(&mut stdout, "DONE ✓ ({:.2?})", parse_time)?;
     stdout.reset()?;
 
-    // Processing imports
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
     write!(&mut stdout, "  [2/4] Type checking... ")?;
     stdout.flush()?;
@@ -104,7 +99,6 @@ pub fn run_benchmark(
     let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &*input)?;
     program.functions.extend(imported_asts);
 
-    // Type checking
     let typeck_start = Instant::now();
     let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone());
     match type_checker.check(&mut program) {
@@ -128,7 +122,6 @@ pub fn run_benchmark(
     writeln!(&mut stdout, "DONE ✓ ({:.2?})", typeck_time)?;
     stdout.reset()?;
 
-    // Code generation
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
     write!(&mut stdout, "  [3/4] Generating code... ")?;
     stdout.flush()?;
@@ -143,7 +136,6 @@ pub fn run_benchmark(
     writeln!(&mut stdout, "DONE ✓ ({:.2?})", codegen_time)?;
     stdout.reset()?;
 
-    // C compilation
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
     write!(&mut stdout, "  [4/4] Compiling C... ")?;
     stdout.flush()?;
@@ -167,7 +159,6 @@ pub fn run_benchmark(
     writeln!(&mut stdout, "DONE ✓ ({:.2?})", compile_time)?;
     stdout.reset()?;
 
-    // Running benchmarks
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)).set_bold(true))?;
     writeln!(&mut stdout, "\n🚀 Running benchmarks ({} iterations)...", iterations)?;
     stdout.reset()?;
@@ -196,8 +187,7 @@ pub fn run_benchmark(
             stdout.reset()?;
         }
     }
-    
-    // Calculating statistics
+
     if !execution_times.is_empty() {
         let total: Duration = execution_times.iter().sum();
         let avg = total / execution_times.len() as u32;
@@ -239,8 +229,7 @@ pub fn run_benchmark(
         writeln!(&mut stdout, "{:.2?}", total)?;
         
         stdout.reset()?;
-        
-        // Summary bar
+
         let total_time = parse_time + typeck_time + codegen_time + compile_time;
         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)).set_bold(true))?;
         writeln!(&mut stdout, "\n⏱️  Compilation Summary")?;
@@ -280,8 +269,6 @@ pub fn run_benchmark(
         
         stdout.reset()?;
         writeln!(&mut stdout, "] {:.2?}", total_time)?;
-        
-        // Legend
         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)))?;
         write!(&mut stdout, "  █ Parse ")?;
         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
@@ -290,6 +277,9 @@ pub fn run_benchmark(
         write!(&mut stdout, "█ CodeGen ")?;
         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?;
         writeln!(&mut stdout, "█ Compile")?;
+        stdout.reset()?;
+        stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)).set_bold(true))?;
+        writeln!(&mut stdout, "  Total compilation time: {:.2?}", total_time)?;
         stdout.reset()?;
     }
     
@@ -325,24 +315,18 @@ mod tests {
         
         let test_file = create_test_file(test_content);
         let build_dir = test_file.parent().unwrap().join("build");
-        
-        // Clear build directory if it exists
+
         if build_dir.exists() {
             fs::remove_dir_all(&build_dir).unwrap();
         }
-        
-        // We're only testing benchmark setup functionality, not running the full benchmark
+
         let result = run_benchmark(test_file, 1, true);
-        
-        // We expect an error because we likely don't have the C compiler or standard library files available during tests
+
         assert!(result.is_err());
-        
-        // Check if build directory was created
         assert!(build_dir.exists());
-        
-        // Cleanup
         if build_dir.exists() {
             let _ = fs::remove_dir_all(&build_dir);
         }
     }
-} 
+}
+

@@ -1,10 +1,12 @@
 import "std/io";
 
 fn main() {
-    let num, boolean, text = 
-    10, true, "Types in Verve";
+    let num, boolean, text, pi =
+    10, true, "Types in Verve", 3.1415;
 
     print(`Number: ${num}`);
     print(`Boolean: ${boolean}`);
     print(`Text: ${text}`);
-} 
+    print(`Float: ${pi}`);
+}
+

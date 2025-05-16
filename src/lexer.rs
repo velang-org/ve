@@ -120,7 +120,9 @@ pub enum Token {
     #[token("||")]
     OrOr,
     
-    
+    #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse().ok())]
+    F32(f32),
+
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
 
@@ -160,3 +162,4 @@ impl<'a> Lexer<'a> {
             .collect()
     }
 }
+
