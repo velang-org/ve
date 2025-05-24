@@ -200,22 +200,71 @@ pub fn process_build(
     let mut program = match parser.parse() {
         Ok(program) => program,
         Err(error) => {
+            let file_id = error.labels.get(0).map(|l| l.file_id);
+            let file_path = file_id.and_then(|fid| Some(files.name(fid))).map(|n| n.to_string_lossy().to_string());
+            let module_info = file_path.as_ref().and_then(|path: &String| {
+                if let Some(idx) = path.find("lib/std") {
+                    Some("standard library".to_string())
+                } else if let Some(lib_start) = path.find("lib/") {
+                    let rest = &path[lib_start + 4..];
+                    if let Some(end) = rest.find('/') {
+                        let lib_name = &rest[..end];
+                        if lib_name != "std" {
+                            return Some(format!("external library '{}'", lib_name));
+                        }
+                    }
+                    None
+                } else if let Some(ex_start) = path.find("examples/") {
+                    let rest = &path[ex_start + 9..];
+                    if let Some(end) = rest.find('/') {
+                        let ex_name = &rest[..end];
+                        return Some(format!("example module '{}'", ex_name));
+                    }
+                    None
+                } else {
+                    None
+                }
+            });
+
             let writer = StandardStream::stderr(ColorChoice::Auto);
             let config = term::Config::default();
             term::emit(&mut writer.lock(), &config, &files, &error)?;
+
+            let location = if let Some(path) = file_path {
+                match module_info {
+                    Some(module) => format!("in file '{}' ({})", path, module),
+                    None => format!("in file '{}'", path),
+                }
+            } else {
+                "in unknown location".to_string()
+            };
+
+            eprintln!("\nParser error {}: {}", location, error.message);
+
+            if let Some(label) = error.labels.get(0) {
+                eprintln!("  --> at {}..{}", label.range.start, label.range.end);
+                eprintln!("  = detail: {}", label.message);
+            }
+
+            for note in &error.notes {
+                eprintln!("  note: {}", note);
+            }
+
             return Err(anyhow!("Parser failed"));
         }
     };
 
-
-    let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &*input)?;
+    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) = 
+        process_imports(&mut files, &program.imports, &*input)?;
     program.functions.extend(imported_asts);
+    program.ffi_functions.extend(imported_ffi_funcs);
+    program.ffi_variables.extend(imported_ffi_vars.clone());
 
     if verbose {
         println!("Parsed AST:\n{:#?}", program);
     }
 
-    let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone());
+    let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone(), imported_structs.clone(), imported_ffi_vars.clone());
     match type_checker.check(&mut program) {
         Ok(()) => (),
         Err(errors) => {
@@ -229,31 +278,54 @@ pub fn process_build(
     }
 
     let config = codegen::CodegenConfig { target_triple };
-    let mut target = codegen::Target::create(config, file_id, imported_functions);
+    let mut target = codegen::Target::create(config, file_id, imported_functions, imported_structs, program.ffi_variables.clone());
 
     target.compile(&program, &c_file)?;
 
-    let clang_args = prepare_windows_clang_args(&output, optimize, &c_file )?;
+    if verbose {
+        println!("Compiling generated C code: {}", c_file.display());
+    }
+
+    #[cfg(target_os = "windows")]
+    let clang_args = prepare_windows_clang_args(&output, optimize, &c_file)?;
+
+    #[cfg(not(target_os = "windows"))]
+    let clang_args = vec![
+        if optimize { "-O3" } else { "-O0" }.to_string(),
+        c_file.to_str().unwrap().into(),
+        "-o".to_string(),
+        output.to_str().unwrap().into(),
+    ];
 
     let status = std::process::Command::new("clang")
         .args(&clang_args)
         .status()
-        .context("Failed to execute C compiler")?;
+        .or_else(|_| {
+            std::process::Command::new("gcc")
+                .args(&clang_args)
+                .status()
+        })
+        .map_err(|e| anyhow!("Failed to compile C code: {}", e))?;
 
     if !status.success() {
-        return Err(anyhow!("C compilation failed"));
+        return Err(anyhow!("C compiler failed with status: {}", status));
     }
 
-    let status = std::process::Command::new(output.clone())
+    if verbose {
+        println!("Successfully compiled to: {}", output.display());
+    }
+
+    if verbose {
+        println!("Running the compiled program...");
+    }
+
+    let status = std::process::Command::new(output.to_str().unwrap())
         .status()
-        .context("Failed to execute program")?;
+        .map_err(|e| anyhow!("Failed to run program: {}", e))?;
 
-    if !status.success() {
-        return Err(anyhow!("Program failed with exit code: {}", status));
+    if verbose {
+        println!("Program exited with status: {}", status);
     }
 
-    if !verbose {
-        std::fs::remove_file(&c_file)?;
-    }
     Ok(())
 }

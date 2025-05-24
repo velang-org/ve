@@ -13,5 +13,5 @@ fn main() {
         active: true,
     };
 
-    print(user.name);
+    println(user.name);
 } 

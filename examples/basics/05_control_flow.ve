@@ -5,20 +5,20 @@ fn main() {
 
 
     if x > y {
-        print("x is greater than y");
+        println("x is greater than y");
     }
 
     if x == 10 || y == 20 {
-       print("Logical OR");
+       println("Logical OR");
     }
 
     for i in 0..5 {
-       print("This should print 5 times");
+       println("This should print 5 times");
     }
 
 
     while x > 0 {
-        print(`x: ${x}`);
+        println(`x: ${x}`);
         x = x - 1;
     }
 } 

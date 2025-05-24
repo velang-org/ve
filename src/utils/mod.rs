@@ -48,100 +48,150 @@ pub fn prepare_windows_clang_args(output: &Path, optimize: bool, c_file: &Path) 
     Ok(clang_args)
 }
 
+
 pub fn process_imports(
     files: &mut Files<String>,
     imports: &[ast::ImportDeclaration],
     base_path: &Path,
-) -> Result<(HashMap<String, (Vec<Type>, Type)>, Vec<ast::Function>)> {
-    imports.iter().try_fold((HashMap::new(), Vec::new()), |(mut map, mut ast), import_decl| {
+) -> Result<(HashMap<String, (Vec<Type>, Type)>, Vec<ast::Function>, Vec<ast::StructDef>, Vec<ast::FfiFunction>, Vec<ast::FfiVariable>)> {
+    imports.iter().try_fold((HashMap::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+        |(mut map, mut funcs, mut structs, mut ffi_funcs, mut ffi_vars), import_decl| {
         match import_decl {
-            ast::ImportDeclaration::ImportAll { module_path, alias } => {
-                let path_result: Result<PathBuf, anyhow::Error> = if !module_path.starts_with("./") && !module_path.starts_with("../") {
-                    resolve_library_path(module_path)
-                } else {
-                    let current_dir = base_path.parent()
-                        .ok_or_else(|| anyhow!("Base path has no parent"))?;
-                    Ok(current_dir.join(module_path))
-                };
-
-                let path = path_result
-                    .with_context(|| format!("Failed to resolve import: {}", module_path))?
-                    .canonicalize()
-                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
-
-                let content = std::fs::read_to_string(&path)
-                    .with_context(|| format!("Reading imported file {}", path.display()))?;
-
-                let file_id = files.add(path.to_str().unwrap().to_string(), content);
-                let lexer = lexer::Lexer::new(files, file_id);
-                let mut parser = parser::Parser::new(lexer);
-                let program = parser.parse().map_err(|error| {
-                    eprintln!("Parser error: {:?}", error);
-                    anyhow!("Parser failed")
-                })?;
-
-                let (nested_map, nested_ast) = process_imports(files, &program.imports, &path)?;
-
-                for f in program.functions.iter().filter(|f| f.exported) {
-                    let params: Vec<Type> = f.params.iter().map(|(_, t)| t.clone()).collect();
-                    let name = match alias {
-                        Some(inner_alias) => format!("{}::{}", inner_alias, f.name),
-                        None => f.name.clone(),
-                    };
-                    map.insert(name, (params, f.return_type.clone()));
-                }
-
-                ast.extend(program.functions.into_iter().filter(|f| f.exported));
-                map.extend(nested_map);
-                ast.extend(nested_ast);
-            }
-            ast::ImportDeclaration::ImportSpecifiers { module_path, specifiers } => {
-                let path_result: Result<PathBuf, anyhow::Error> = if !module_path.starts_with("./") && !module_path.starts_with("../") {
-                    resolve_library_path(module_path)
-                } else {
-                    let current_dir = base_path.parent()
-                        .ok_or_else(|| anyhow!("Base path has no parent"))?;
-                    Ok(current_dir.join(module_path))
-                };
-
-                let path = path_result
-                    .with_context(|| format!("Failed to resolve import: {}", module_path))?
-                    .canonicalize()
-                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
-                let content = std::fs::read_to_string(&path)
-                    .with_context(|| format!("Reading imported file {}", path.display()))?;
-
-                let file_id = files.add(path.to_str().unwrap().to_string(), content);
-                let lexer = lexer::Lexer::new(files, file_id);
-                let mut parser = parser::Parser::new(lexer);
-                let program = parser.parse().map_err(|error| {
-                    eprintln!("Parser error: {:?}", error);
-                    anyhow!("Parser failed")
-                })?;
-
-                let (nested_map, nested_ast) = process_imports(files, &program.imports, &path)?;
-
-                for specifier in specifiers {
-                    let imported_name = specifier.alias.clone().unwrap_or(specifier.name.clone());
-                    let original_name = &specifier.name;
-                    if let Some(func) = program.functions.iter().find(|f| f.name.as_str() == original_name) {
-                        let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
-                        map.insert(imported_name, (params, func.return_type.clone()));
-                    } else {
-                        return Err(anyhow!("Function {} not found in module {}", original_name, module_path));
+            ast::ImportDeclaration::ImportAll { module_path, module_type, alias } => {
+                let path_result: Result<PathBuf, anyhow::Error> = match module_type {
+                    ast::ModuleType::Standard => {
+                        resolve_standard_library_path(module_path)
+                    },
+                    ast::ModuleType::Local => {
+                        let current_dir = base_path.parent()
+                            .ok_or_else(|| anyhow!("Base path has no parent"))?;
+                        Ok(current_dir.join(module_path))
+                    },
+                    ast::ModuleType::External => {
+                        resolve_library_path(module_path)
                     }
+                };
+
+                let path = path_result
+                    .with_context(|| format!("Failed to resolve import: {}", module_path))?
+                    .canonicalize()
+                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
+
+                let content = std::fs::read_to_string(&path)
+                    .with_context(|| format!("Reading imported file {}", path.display()))?;
+
+                let file_id = files.add(path.to_str().unwrap().to_string(), content);
+                let lexer = lexer::Lexer::new(files, file_id);
+                let mut parser = parser::Parser::new(lexer);
+                let program = parser.parse().map_err(|error| {
+                    let file_path = error.labels.get(0)
+                        .map(|l| l.file_id)
+                        .and_then(|fid| Some(files.name(fid)))
+                        .map(|n| n.to_string_lossy().to_string());
+
+                    let writer = codespan_reporting::term::termcolor::StandardStream::stderr(
+                        codespan_reporting::term::termcolor::ColorChoice::Auto
+                    );
+                    let config = codespan_reporting::term::Config::default();
+                    let _ = codespan_reporting::term::emit(&mut writer.lock(), &config, files, &error);
+
+                    if let Some(path) = file_path {
+                        eprintln!("\nParser error in imported file '{}': {}", path, error.message);
+                    } else {
+                        eprintln!("\nParser error: {}", error.message);
+                    }
+
+                    anyhow!("Parser failed for import {}", module_path)
+                })?;
+
+                for function in program.functions.iter().filter(|f| f.exported) {
+                    let params: Vec<Type> = function.params.iter().map(|(_, t)| t.clone()).collect();
+
+                    let function_name = match alias {
+                        Some(a) => format!("{}::{}", a, function.name),
+                        None => {
+                            let mod_name = module_path
+                                .split('/')
+                                .last()
+                                .unwrap_or(module_path)
+                                .replace(".ve", "");
+                            format!("{}::{}", mod_name, function.name)
+                        }
+                    };
+
+                    map.insert(function_name, (params, function.return_type.clone()));
+                    funcs.push(function.clone());
                 }
 
-                ast.extend(specifiers.iter().filter_map(|specifier| {
-                    program.functions.iter().find(|f| f.name == specifier.name).cloned()
-                }));
+                for struct_def in program.structs.iter().filter(|s| s.exported) {
+                    structs.push(struct_def.clone());
+                }
 
-                map.extend(nested_map);
-                ast.extend(nested_ast);
+                for ffi_func in &program.ffi_functions {
+                    ffi_funcs.push(ffi_func.clone());
+                }
+
+                for ffi_var in &program.ffi_variables {
+                    ffi_vars.push(ffi_var.clone());
+                }
+
+                Ok((map, funcs, structs, ffi_funcs, ffi_vars))
+            },
+            ast::ImportDeclaration::ImportSpecifiers { .. } => {
+                Ok((map, funcs, structs, ffi_funcs, ffi_vars))
             }
         }
-        Ok((map, ast))
     })
+}
+
+fn resolve_standard_library_path(module_path: &str) -> Result<PathBuf> {
+    let lib_dir = get_lib_path()?;
+
+    if module_path.starts_with("std/") {
+        let path_without_prefix = &module_path[4..];
+        let mut path = lib_dir.join("std").join("src");
+
+        if !path_without_prefix.is_empty() {
+            path = path.join(path_without_prefix);
+        }
+
+        let ve_file = path.with_extension("ve");
+        if ve_file.exists() {
+            return Ok(ve_file);
+        }
+
+        let index_file = path.join("index.ve");
+        if index_file.exists() {
+            return Ok(index_file);
+        }
+    }
+
+    Err(anyhow!("Standard library module '{}' not found", module_path))
+}
+
+fn resolve_library_path(module_path: &str) -> Result<PathBuf> {
+    let lib_dir = get_lib_path()?;
+    let components: Vec<&str> = module_path.split('/').collect();
+    if components.is_empty() {
+        return Err(anyhow!("Invalid module path: {}", module_path));
+    }
+
+    let mut path = lib_dir.join(components[0]).join("src");
+    for component in &components[1..] {
+        path.push(component);
+    }
+
+    let ve_file = path.with_extension("ve");
+    if ve_file.exists() {
+        Ok(ve_file)
+    } else {
+        let index_file = path.join("index.ve");
+        if index_file.exists() {
+            Ok(index_file)
+        } else {
+            Err(anyhow!("Module '{}' not found in library", module_path))
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -216,31 +266,6 @@ fn suggest_similar_files(missing_path: &Path) -> Option<String> {
         .collect();
 
     (!matches.is_empty()).then(|| matches.join("\n"))
-}
-
-fn resolve_library_path(module_path: &str) -> Result<PathBuf> {
-    let lib_dir = get_lib_path()?;
-    let components: Vec<&str> = module_path.split('/').collect();
-    if components.is_empty() {
-        return Err(anyhow!("Invalid module path: {}", module_path));
-    }
-
-    let mut path = lib_dir.join(components[0]).join("src");
-    for component in &components[1..] {
-        path.push(component);
-    }
-
-    let ve_file = path.with_extension("ve");
-    if ve_file.exists() {
-        Ok(ve_file)
-    } else {
-        let index_file = path.join("index.ve");
-        if index_file.exists() {
-            Ok(index_file)
-        } else {
-            Err(anyhow!("Module '{}' not found in library", module_path))
-        }
-    }
 }
 
 fn get_lib_path() -> Result<PathBuf> {

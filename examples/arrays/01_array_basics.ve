@@ -3,8 +3,8 @@ import "std/io";
 fn main() {
     let animals = ["cat", "dog", "bird"];
 
-    print(animals[0]);
-    print(animals[1]);
-    print(animals[2]);
+    println(animals[0]);
+    println(animals[1]);
+    println(animals[2]);
 
 } 

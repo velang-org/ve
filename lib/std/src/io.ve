@@ -1,3 +1,42 @@
-﻿export fn print(value: any) -> void {
-    intrinsic __print(value as string);
+#[header="stdio.h"]
+foreign fn printf(fmt: string, ...) -> i32;
+
+#[header="stdio.h"]
+foreign fn getchar() -> i32;
+
+#[header="stdlib.h"]
+foreign fn malloc(size: size_t) -> rawptr;
+
+#[header="stdlib.h"]
+foreign var stdin: rawptr;
+
+export fn print(s: string) {
+    printf("%s", s);
+}
+
+export fn println(s: string) {
+    printf("%s\n", s);
+}
+
+
+export fn string_from_cstr(ptr: rawptr) -> string {
+    return ptr as string;
+}
+
+export fn read_line() -> string {
+    let buf_size: size_t = 1024;
+    let buffer: *u8 = malloc(buf_size) as *u8;
+
+    let i: size_t = 0;
+    let c = getchar();
+
+    while c != -1 && c != 10 && i < buf_size - 1 {
+        buffer[i] = c as u8;
+        i = i + 1;
+        c = getchar();
+    }
+
+    buffer[i] = 0;
+
+    return string_from_cstr(buffer);
 }

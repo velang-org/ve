@@ -4,9 +4,9 @@ fn main() {
     let num, boolean, text, pi =
     10, true, "Types in Verve", 3.1415;
 
-    print(`Number: ${num}`);
-    print(`Boolean: ${boolean}`);
-    print(`Text: ${text}`);
-    print(`Float: ${pi}`);
+    println(`Number: ${num}`);
+    println(`Boolean: ${boolean}`);
+    println(`Text: ${text}`);
+    println(`Float: ${pi}`);
 }
 

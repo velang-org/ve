@@ -1,0 +1,25 @@
+export fn abs(n: i32) -> i32 {
+    if n < 0 {
+        return -n;
+    }
+    return n;
+}
+
+
+export fn max(a: i32, b: i32) -> i32 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+export fn min(a: i32, b: i32) -> i32 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+export fn clamp(x: i32, min_val: i32, max_val: i32) -> i32 {
+    return max(min_val, min(x, max_val));
+}

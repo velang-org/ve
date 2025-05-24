@@ -7,6 +7,8 @@ pub enum Token {
     KwFn,
     #[token("let")]
     KwLet,
+    #[token("var")]
+    KwVar,
     #[token("if")]
     KwIf,
     #[token("else")]
@@ -31,8 +33,6 @@ pub enum Token {
     KwFrom,
     #[token("export")]
     KwExport,
-    #[token("intrinsic")]
-    KwIntrinsic,
     #[token("struct")]
     KwStruct,
     #[token("true")]
@@ -41,7 +41,11 @@ pub enum Token {
     KwFalse,
     #[token(".")]
     Dot,
-    
+    #[token("...")]
+    Ellipsis,
+    #[token("foreign")]
+    Foreign,
+
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Str(String),
     
@@ -119,6 +123,8 @@ pub enum Token {
     AndAnd,
     #[token("||")]
     OrOr,
+    #[token("#")]
+    Hash,
     
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse().ok())]
     F32(f32),

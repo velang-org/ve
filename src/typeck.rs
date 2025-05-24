@@ -31,16 +31,41 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new(file_id: FileId, imported_functions: HashMap<String, (Vec<Type>, Type)>) -> Self {
-        TypeChecker {
+    pub fn new(file_id: FileId, imported_functions: HashMap<String, (Vec<Type>, Type)>, imported_structs: Vec<ast::StructDef>, imported_ffi_vars: Vec<ast::FfiVariable>) -> Self {
+        let mut checker = TypeChecker {
             file_id,
             errors: Vec::new(),
             context: Context::new(),
             functions: imported_functions,
+        };
+
+        for struct_def in imported_structs {
+            let fields: Vec<(String, Type)> = struct_def.fields
+                .iter()
+                .map(|f| (f.name.clone(), f.ty.clone()))
+                .collect();
+            checker.context.struct_defs.insert(struct_def.name.clone(), fields);
         }
+
+        for ffi_var in imported_ffi_vars {
+            checker.context.variables.insert(ffi_var.name, ffi_var.ty);
+        }
+
+        checker
     }
 
     pub fn check(&mut self, program: &mut ast::Program) -> Result<(), Vec<Diagnostic<FileId>>> {
+        for ffi in &program.ffi_functions {
+            self.functions.insert(
+                ffi.name.clone(),
+                (ffi.params.clone(), ffi.return_type.clone())
+            );
+        }
+
+        for ffi_var in &program.ffi_variables {
+            self.context.variables.insert(ffi_var.name.clone(), ffi_var.ty.clone());
+        }
+
         for struct_def in &program.structs {
             let fields: Vec<(String, Type)> = struct_def.fields
                 .iter()
@@ -58,8 +83,10 @@ impl TypeChecker {
         }
 
         for func in &mut program.functions {
-            self.context.current_return_type = func.return_type.clone();
-            self.check_function(func)?;
+            if !func.exported {
+                self.context.current_return_type = func.return_type.clone();
+                self.check_function(func)?;
+            }
         }
 
         for stmt in &mut program.stmts {
@@ -72,7 +99,6 @@ impl TypeChecker {
             Err(std::mem::take(&mut self.errors))
         }
     }
-
 
     fn check_function(&mut self, func: &mut ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
         let mut local_ctx = Context::new();
@@ -98,7 +124,6 @@ impl TypeChecker {
         match stmt {
             Stmt::Let(name, decl_ty, expr, _) => {
                 let expr_ty = self.check_expr(expr).unwrap_or(Type::Unknown);
-
                 if let Some(decl_ty) = decl_ty {
                     if !Self::is_convertible(&expr_ty, decl_ty) {
                         return Err(self.report_error_vec(
@@ -110,7 +135,11 @@ impl TypeChecker {
 
                 let ty = decl_ty.clone().unwrap_or(expr_ty);
                 self.context.variables.insert(name.clone(), ty);
-            }
+            },
+            Stmt::Var(name, decl_ty, _) => {
+                let ty = decl_ty.clone().unwrap_or(Type::Unknown);
+                self.context.variables.insert(name.clone(), ty);
+            },
             Stmt::Expr(expr, _) => {
                 self.check_expr(expr)?;
             },
@@ -137,15 +166,6 @@ impl TypeChecker {
                         "Defer expects void-returning expression",
                         *span
                     );
-                }
-
-                if let Expr::IntrinsicCall(name, _, _) = expr {
-                    if !self.context.in_safe && (name == "__dealloc" || name == "__free") {
-                        self.report_error(
-                            "Memory operations require safe context",
-                            *span
-                        );
-                    }
                 }
             },
             Stmt::While(cond, body, _) => {
@@ -198,6 +218,8 @@ impl TypeChecker {
                             } else {
                                 Type::I32
                             }
+                        } else if left_ty == Type::String && right_ty == Type::String && matches!(op, BinOp::Add) {
+                            Type::String
                         } else {
                             self.report_error(
                                 &format!("Cannot apply {:?} to {} and {}", op, left_ty, right_ty),
@@ -283,19 +305,31 @@ impl TypeChecker {
                 Ok(Type::Void)
             },
             Expr::Call(name, args, ast::ExprInfo { span, ty: expr_type}) => {
-                let Some((param_types, return_type)) = self.functions.get(name).cloned() else {
+                let mut found = self.functions.get(name).cloned();
+                if found.is_none() {
+                    found = self.functions.iter().find(|(k, _)| k.as_str() == name).map(|(_, v)| v.clone());
+                }
+                let Some((param_types, return_type)) = found else {
                     self.report_error(&format!("Undefined function '{}'", name), *span);
                     return Ok(Type::Unknown);
                 };
 
-                if args.len() != param_types.len() {
+                let has_ellipsis = param_types.last() == Some(&Type::Ellipsis);
+                let min_args = if has_ellipsis { param_types.len() - 1 } else { param_types.len() };
+
+                if args.len() < min_args || (!has_ellipsis && args.len() > min_args) {
                     self.report_error(
-                        &format!("Expected {} arguments, got {}", param_types.len(), args.len()),
-                        *span
+                        &format!(
+                            "Expected {}{} arguments, got {}",
+                            min_args,
+                            if has_ellipsis { "+" } else { "" },
+                            args.len()
+                        ),
+                        *span,
                     );
                 }
 
-                for (_i, (arg, param_ty)) in args.iter_mut().zip(param_types.iter()).enumerate() {
+                for (arg, param_ty) in args.iter_mut().zip(param_types.iter()).take(min_args) {
                     let arg_ty = self.check_expr(arg).unwrap_or(Type::Unknown);
                     if !Self::is_convertible(&arg_ty, param_ty) {
                         self.report_error(
@@ -307,37 +341,6 @@ impl TypeChecker {
                 *expr_type = return_type.clone();
 
                 Ok(return_type.clone())
-            },
-            Expr::IntrinsicCall(name, args, ast::ExprInfo { span, ty: _expr_type }) => match name.as_str() {
-                "__alloc" => {
-                    if args.len() != 1 {
-                        self.report_error("__alloc expects 1 argument", *span);
-                    }
-                    Ok(Type::RawPtr)
-                }
-                "__dealloc" => {
-                    if args.len() != 1 {
-                        self.report_error("__dealloc expects 1 argument", *span);
-                    }
-                    Ok(Type::Void)
-                },
-                "__print" => {
-                 if args.len() != 1 {
-                     self.report_error("__print expects 1 argument", *span);
-                 }
-                    let arg_type = self.check_expr(&mut args[0])?;
-                    if !Self::is_convertible(&arg_type, &Type::String) {
-                        self.report_error(
-                            &format!("Cannot convert {} to String", arg_type),
-                            args[0].span()
-                        );
-                    }
-                    Ok(Type::Void)
-                }
-                _ => {
-                    self.report_error(&format!("Undefined intrinsic '{}'", name), *span);
-                    Ok(Type::Unknown)
-                }
             },
             Expr::SafeBlock(stmts, _) => {
                 let old_in_safe = self.context.in_safe;
@@ -361,7 +364,8 @@ impl TypeChecker {
                     (Type::F32, Type::F32) => Ok(source_ty),
                     (Type::F32, Type::I32) => Ok(target_ty.clone()),
                     (Type::I32, Type::F32) => Ok(target_ty.clone()),
-
+                    (Type::I32, Type::U32) => Ok(target_ty.clone()),
+                    (Type::U32, Type::I32) => Ok(target_ty.clone()),
                     _ => {
                         if !Self::is_convertible(&source_ty, target_ty) {
                             self.report_error(
@@ -388,21 +392,6 @@ impl TypeChecker {
                 }
 
                 Ok(Type::Unknown)
-            },
-            Expr::Print(expr, ast::ExprInfo { span, ty: _expr_type }) => {
-                let expr_ty = self.check_expr(expr)?;
-
-                if !matches!(
-                expr_ty,
-                Type::I32 | Type::Bool | Type::String | Type::RawPtr | Type::Pointer(_) | Type::F32
-            ) {
-                    self.report_error(
-                        &format!("Cannot print value of type {}", expr_ty),
-                        *span,
-                    );
-                }
-
-                Ok(Type::Void)
             },
             Expr::StructInit(name, fields, ast::ExprInfo { span, ty: expr_type }) => {
                 let struct_name = name.clone();
@@ -629,6 +618,10 @@ impl TypeChecker {
                 
                 info.ty = Type::String;
                 Ok(Type::String)
+            }
+            Expr::FfiCall(_name, _args, _info) => {
+                // TODO: Implement FFI call type checking
+                Ok(Type::Unknown)
             }
         }
     }

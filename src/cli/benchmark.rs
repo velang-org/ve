@@ -96,11 +96,24 @@ pub fn run_benchmark(
     write!(&mut stdout, "  [2/4] Type checking... ")?;
     stdout.flush()?;
     
-    let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &*input)?;
+    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) = 
+        process_imports(&mut files, &program.imports, &*input)?;
+    
     program.functions.extend(imported_asts);
+    program.ffi_functions.extend(imported_ffi_funcs);
+    program.ffi_variables.extend(imported_ffi_vars.clone());
+
+    if verbose {
+        println!("✓ AST parsed successfully");
+    }
 
     let typeck_start = Instant::now();
-    let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone());
+    let mut type_checker = typeck::TypeChecker::new(
+        file_id, 
+        imported_functions.clone(), 
+        imported_structs.clone(),
+        imported_ffi_vars.clone()
+    );
     match type_checker.check(&mut program) {
         Ok(()) => (),
         Err(errors) => {
@@ -128,7 +141,13 @@ pub fn run_benchmark(
     
     let codegen_start = Instant::now();
     let config = codegen::CodegenConfig { target_triple: "x86_64-pc-windows-msvc".to_string() };
-    let mut target = codegen::Target::create(config, file_id, imported_functions);
+    let mut target = codegen::Target::create(
+        config, 
+        file_id, 
+        imported_functions, 
+        imported_structs,
+        imported_ffi_vars
+    );
     target.compile(&program, &c_file)?;
     let codegen_time = codegen_start.elapsed();
     
@@ -329,4 +348,3 @@ mod tests {
         }
     }
 }
-

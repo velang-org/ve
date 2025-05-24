@@ -28,12 +28,12 @@ fn manual_max(a: i32, b: i32, c: i32, d: i32, e: i32) -> i32 {
 fn main() {
     let values = [15, 7, 42, 23, 8];
     
-    print("Functions processing arrays:");
-    print(`Array contents: ${values[0]}, ${values[1]}, ${values[2]}, ${values[3]}, ${values[4]}`);
+    println("Functions processing arrays:");
+    println(`Array contents: ${values[0]}, ${values[1]}, ${values[2]}, ${values[3]}, ${values[4]}`);
 
     let total = sum_array(values, 5);
-    print(`Sum of array elements: ${total}`);
+    println(`Sum of array elements: ${total}`);
 
     let max_value = manual_max(values[0], values[1], values[2], values[3], values[4]);
-    print(`Maximum value in the array: ${max_value}`);
+    println(`Maximum value in the array: ${max_value}`);
 }
