@@ -272,7 +272,7 @@ impl CBackend {
         Ok(())
     }
 
-    fn emit_functions(&mut self, program: &ast::Program, _skip_functions: &[&str]) -> Result<(), CompileError> {
+    fn emit_functions(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         // Generuj forward declarations dla funkcji
         for func in &program.functions {
             let return_type = if func.name == "main" {
