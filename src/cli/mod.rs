@@ -203,7 +203,7 @@ pub fn process_build(
             let file_id = error.labels.get(0).map(|l| l.file_id);
             let file_path = file_id.and_then(|fid| Some(files.name(fid))).map(|n| n.to_string_lossy().to_string());
             let module_info = file_path.as_ref().and_then(|path: &String| {
-                if let Some(idx) = path.find("lib/std") {
+                if let Some(_idx) = path.find("lib/std") {
                     Some("standard library".to_string())
                 } else if let Some(lib_start) = path.find("lib/") {
                     let rest = &path[lib_start + 4..];

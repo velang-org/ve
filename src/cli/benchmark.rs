@@ -1,13 +1,13 @@
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use crate::utils::{prepare_windows_clang_args, process_imports};
+use crate::{codegen, lexer, parser, typeck};
 use anyhow::{anyhow, Context};
 use codespan::Files;
 use codespan_reporting::term;
-use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, ColorSpec, Color};
 use codespan_reporting::term::termcolor::WriteColor;
+use codespan_reporting::term::termcolor::{Color, ColorChoice, ColorSpec, StandardStream};
 use std::io::Write;
-use crate::{codegen, lexer, parser, typeck};
-use crate::utils::{process_imports, prepare_windows_clang_args, validate_ve_file};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 pub fn run_benchmark(
     input: PathBuf,
@@ -258,7 +258,6 @@ pub fn run_benchmark(
         let parse_percent = parse_time.as_nanos() as f64 / total_time.as_nanos() as f64;
         let typeck_percent = typeck_time.as_nanos() as f64 / total_time.as_nanos() as f64;
         let codegen_percent = codegen_time.as_nanos() as f64 / total_time.as_nanos() as f64;
-        let compile_percent = compile_time.as_nanos() as f64 / total_time.as_nanos() as f64;
         
         let parse_width = (parse_percent * bar_width as f64).round() as usize;
         let typeck_width = (typeck_percent * bar_width as f64).round() as usize;
@@ -310,8 +309,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
-    use std::path::Path;
-    
+
     fn create_test_file(content: &str) -> PathBuf {
         let test_dir = env::temp_dir().join("verve_benchmark_tests");
         fs::create_dir_all(&test_dir).unwrap();
