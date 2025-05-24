@@ -11,16 +11,17 @@ pub struct CBackend {
     header: String,
     body: String,
     file_id: FileId,
-    includes: RefCell<BTreeSet<&'static str>>,
+    includes: RefCell<BTreeSet<String>>,
     variables: RefCell<HashMap<String, Type>>,
     functions_map: HashMap<String, Type>,
     imported_functions: HashMap<String, (Vec<Type>, Type)>,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
+    imported_structs: Vec<ast::StructDef>,
 }
 
 impl CBackend {
-    pub fn new(config: CodegenConfig, file_id: FileId, imported_functions: HashMap<String, (Vec<Type>, Type)>) -> Self {
-        Self {
+    pub fn new(config: CodegenConfig, file_id: FileId, imported_functions: HashMap<String, (Vec<Type>, Type)>, imported_structs: Vec<ast::StructDef>, imported_ffi_vars: Vec<ast::FfiVariable>) -> Self {
+        let backend = Self {
             config,
             header: String::new(),
             body: String::new(),
@@ -30,22 +31,28 @@ impl CBackend {
             functions_map: HashMap::new(),
             imported_functions,
             struct_defs: HashMap::new(),
+            imported_structs,
+        };
+
+        for ffi_var in imported_ffi_vars {
+            backend.variables.borrow_mut().insert(ffi_var.name, ffi_var.ty);
         }
+
+        backend
     }
 
-    fn generate_struct_to_str_functions(&mut self, program: &ast::Program) {
-        for struct_def in &program.structs {
+    fn generate_struct_to_str_functions<'a, I>(&mut self, structs: I)
+    where
+        I: IntoIterator<Item = &'a ast::StructDef>,
+    {
+        for struct_def in structs {
             let struct_name = &struct_def.name;
-
             self.header.push_str(&format!("static char* {}_to_str(const {} *obj) {{\n", struct_name, struct_name));
             self.header.push_str("    char *buffer = malloc(256);\n");
             self.header.push_str(&format!("    if (!buffer) return \"<failed to allocate memory for {}>\";\n", struct_name));
-
             let mut format_parts = Vec::new();
             let mut args = Vec::new();
-
             format_parts.push(format!("{}{{", struct_name));
-
             for (i, field) in struct_def.fields.iter().enumerate() {
                 let (fmt, arg) = match field.ty {
                     Type::I32 => ("%d", format!("obj->{}", field.name)),
@@ -53,27 +60,21 @@ impl CBackend {
                     Type::String => ("%s", format!("(obj->{} ? obj->{} : \"null\")", field.name, field.name)),
                     Type::Pointer(_) | Type::RawPtr => ("%p", format!("(void*)obj->{}", field.name)),
                     Type::Struct(ref s) => ("%s", format!("{}_to_str(&obj->{})", s, field.name)),
-                    _ => ("?", "\"<unknown type>\"".to_string())
+                    _ => ("?", "\"<unknown type>\"".to_string()),
                 };
-
                 if i > 0 {
                     format_parts.push(format!(" {}:{}", field.name, fmt));
                 } else {
                     format_parts.push(format!("{}:{}", field.name, fmt));
                 }
-                
                 args.push(arg);
             }
-
             format_parts.push("}".to_string());
             let format_str = format_parts.join("");
-
             self.header.push_str(&format!("    sprintf(buffer, \"{}\"", format_str));
-            
             for arg in args {
                 self.header.push_str(&format!(", {}", arg));
             }
-            
             self.header.push_str(");\n");
             self.header.push_str("    return buffer;\n");
             self.header.push_str("}\n\n");
@@ -83,24 +84,12 @@ impl CBackend {
     pub fn compile(&mut self, program: &ast::Program, output_path: &Path) -> Result<(), CompileError> {
         self.emit_header();
 
-        self.header.push_str("void print_str(char* s) { printf(\"%s\\n\", s); }\n");
-        self.header.push_str("void print_int(int n) { printf(\"%d\\n\", n); }\n");
-        self.header.push_str("void print_float(float f) { printf(\"%g\\n\", f); }\n");
-        self.header.push_str("void print_bool(int b) { printf(\"%s\\n\", b ? \"true\" : \"false\"); }\n");
-        self.header.push_str("void print_array(int* arr, int size) {\n");
-        self.header.push_str("    printf(\"[\");\n");
-        self.header.push_str("    for(int i = 0; i < size; i++) {\n");
-        self.header.push_str("        if (i > 0) printf(\", \");\n");
-        self.header.push_str("        printf(\"%d\", arr[i]);\n");
-        self.header.push_str("    }\n");
-        self.header.push_str("    printf(\"]\\n\");\n");
-        self.header.push_str("}\n");
-        self.header.push_str("void print_generic(void* x, int type) {\n");
-        self.header.push_str("    if (type == 1) print_str((char*)x);\n");
-        self.header.push_str("    else if (type == 2) print_int(*(int*)&x);\n");
-        self.header.push_str("    else if (type == 3) printf(\"%s\\n\", (*(int*)&x) ? \"true\" : \"false\");\n");
-        self.header.push_str("    else if (type == 4) print_float(*(float*)&x);\n");
-        self.header.push_str("}\n\n");
+        self.generate_ffi_declarations(program)?;
+
+        let imported_structs = self.imported_structs.clone();
+        for struct_def in &imported_structs {
+            self.emit_struct(struct_def)?;
+        }
 
         for struct_def in &program.structs {
             let fields: Vec<(String, Type)> = struct_def.fields
@@ -114,19 +103,59 @@ impl CBackend {
             self.emit_struct(struct_def)?;
         }
 
-        let std_functions = vec!["print"];
-        
         self.functions_map = program.functions.iter()
-            .filter(|f| !std_functions.contains(&f.name.as_str()))
             .map(|f| (f.name.clone(), f.return_type.clone()))
             .chain(self.imported_functions.iter().map(|(k, v)| (k.clone(), v.1.clone())))
             .collect();
 
+        for ffi in &program.ffi_functions {
+            self.functions_map.insert(
+                ffi.name.clone(),
+                ffi.return_type.clone(),
+            );
+        }
+
         self.emit_globals(program)?;
-        self.emit_functions(program, &std_functions)?;
+        self.emit_functions(program, &[])?;
+
+        let imported_structs = self.imported_structs.clone();
+        let all_structs: Vec<&ast::StructDef> = program.structs.iter().chain(imported_structs.iter()).collect();
+        self.generate_struct_to_str_functions(all_structs);
+
         self.emit_main_if_missing(program)?;
-        self.generate_struct_to_str_functions(&program);
         self.write_output(output_path)?;
+        Ok(())
+    }
+
+    fn generate_ffi_declarations(&mut self, program: &ast::Program) -> Result<(), CompileError> {
+        let mut ffi_decls = String::new();
+
+        for ffi in &program.ffi_functions {
+            let ret = self.type_to_c(&ffi.return_type);
+            let params = ffi.params.iter()
+                .map(|ty| self.type_to_c(ty))
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            let param_str = if params.is_empty() { "void" } else { &params };
+
+            if let Some(header) = ffi.metadata.as_ref().and_then(|m| m.get("header")) {
+                self.includes.borrow_mut().insert(format!("<{}>", header));
+            }
+
+            if let Some(link) = ffi.metadata.as_ref().and_then(|m| m.get("link")) {
+                self.header.push_str(&format!("#pragma comment(lib, \"{}\")\n", link));
+            }
+
+            ffi_decls.push_str(&format!("extern {} {}({});\n", ret, ffi.name, param_str));
+        }
+
+        if !ffi_decls.is_empty() {
+            self.header.push_str("// FFI function declarations\n");
+            self.header.push_str(&ffi_decls);
+            self.header.push_str("\n");
+        }
+
         Ok(())
     }
 
@@ -139,12 +168,21 @@ impl CBackend {
         self.header.push_str("#include <stdbool.h>\n");
         self.header.push_str("#include <math.h>\n");
 
+        self.header.push_str("typedef unsigned char u8;\n");
+        self.header.push_str("typedef unsigned short u16;\n");
+        self.header.push_str("typedef unsigned int u32;\n");
+        self.header.push_str("typedef unsigned long long u64;\n");
+        self.header.push_str("typedef signed char i8;\n");
+        self.header.push_str("typedef signed short i16;\n");
+        self.header.push_str("typedef signed int i32;\n");
+        self.header.push_str("typedef signed long long i64;\n\n");
+
         for include in self.includes.borrow().iter() {
             self.header.push_str(&format!("#include {}\n", include));
         }
 
         self.header.push('\n');
-        
+
         self.header.push_str("static char* int_to_str(int num) {\n");
         self.header.push_str("    char* buffer = malloc(12);\n");
         self.header.push_str("    sprintf(buffer, \"%d\", num);\n");
@@ -233,13 +271,10 @@ impl CBackend {
         }
         Ok(())
     }
-    
-    fn emit_functions(&mut self, program: &ast::Program, skip_functions: &[&str]) -> Result<(), CompileError> {
+
+    fn emit_functions(&mut self, program: &ast::Program) -> Result<(), CompileError> {
+        // Generuj forward declarations dla funkcji
         for func in &program.functions {
-            if skip_functions.contains(&func.name.as_str()) {
-                continue;
-            }
-            
             let return_type = if func.name == "main" {
                 "int".to_string()
             } else {
@@ -252,31 +287,12 @@ impl CBackend {
             self.body.push_str(&format!("{} {}({});\n", return_type, func.name, params));
         }
 
-        for (name, (param_types, return_type)) in &self.imported_functions {
-            if skip_functions.contains(&name.as_str()) {
-                continue;
-            }
-            
-            let return_type_c = self.type_to_c(return_type);
-            let params_c = param_types.iter()
-                .map(|ty| self.type_to_c(ty))
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            self.body.push_str(&format!("{} {}({});\n", return_type_c, name, params_c));
-        }
-
         for func in &program.functions {
-            if skip_functions.contains(&func.name.as_str()) {
-                continue;
-            }
-            
             self.emit_function(func)?;
         }
 
         Ok(())
     }
-
 
     fn emit_function(&mut self, func: &ast::Function) -> Result<(), CompileError> {
         let return_type = if func.name == "main" {
@@ -314,12 +330,15 @@ impl CBackend {
     }
 
     fn emit_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
-        match stmt {
-            ast::Stmt::Let(name, ty, expr, _) => {
+        match stmt {            ast::Stmt::Let(name, ty, expr, _) => {
                 let var_type = if let Some(ty) = ty {
                     ty.clone()
                 } else {
                     match expr {
+                        ast::Expr::Int(_, _) => Type::I32,
+                        ast::Expr::F32(_, _) => Type::F32,
+                        ast::Expr::Bool(_, _) => Type::Bool,
+                        ast::Expr::Str(_, _) => Type::String,
                         ast::Expr::Call(func_name, _, _) => {
                             self.functions_map.get(func_name)
                                 .cloned()
@@ -405,7 +424,7 @@ impl CBackend {
             ast::Expr::Int(n, _) => Ok(n.to_string()),
             ast::Expr::F32(f, _) => Ok(f.to_string()),
             ast::Expr::Bool(b, _) => {
-                self.includes.borrow_mut().insert("<stdbool.h>");
+                self.includes.borrow_mut().insert("<stdbool.h>".to_string());
                 Ok(if *b { "true" } else { "false" }.to_string())
             },
             ast::Expr::BinOp(left, op, right, _) => {
@@ -437,12 +456,12 @@ impl CBackend {
                             ast::BinOp::Or => "||",
                             ast::BinOp::Pow | ast::BinOp::Pow2 => "",
                         };
-                        
+
                         if matches!(op, ast::BinOp::Pow | ast::BinOp::Pow2) {
-                            self.includes.borrow_mut().insert("<math.h>");
+                            self.includes.borrow_mut().insert("<math.h>".to_string());
                             return Ok(format!("pow({}, {})", left_code, right_code));
                         }
-                        
+
                         Ok(format!("({} {} {})", left_code, c_op, right_code))
                     }
                 }
@@ -450,21 +469,21 @@ impl CBackend {
             ast::Expr::Assign(target, value, _) => {
                 let target_code = self.emit_expr(target)?;
                 let value_code = self.emit_expr(value)?;
-                Ok(format!("({} = {})", target_code, value_code)) 
+                Ok(format!("({} = {})", target_code, value_code))
             },
             ast::Expr::Str(s, _) => Ok(format!("\"{}\"", s.replace("\n", "\\n").replace("\"", "\\\""))),
             ast::Expr::Var(name, info) => {
                 if name == "true" || name == "false" {
-                    self.includes.borrow_mut().insert("<stdbool.h>");
+                    self.includes.borrow_mut().insert("<stdbool.h>".to_string());
                     return Ok(name.clone());
                 }
-                
+
                 let var_type = self.variables.borrow().get(name).cloned().unwrap_or(Type::Unknown);
-                
+
                 match var_type {
                     Type::I32 => Ok(name.clone()),
                     Type::Bool => {
-                        self.includes.borrow_mut().insert("<stdbool.h>");
+                        self.includes.borrow_mut().insert("<stdbool.h>".to_string());
                         Ok(name.clone())
                     },
                     Type::String => Ok(name.clone()),
@@ -481,62 +500,22 @@ impl CBackend {
                     }),
                 }
             },
-            ast::Expr::Print(expr, _) => {
-                let value = self.emit_expr(expr)?;
-                let expr_ty = expr.get_type();
-
-                let c_str = self.convert_to_c_str(&value, &expr_ty);
-                Ok(format!("printf(\"%s\\n\", {});", c_str))
-            },
             ast::Expr::Call(name, args, _expr_info) => {
                 let mut args_code = Vec::new();
 
                 let param_types = self.imported_functions
                     .get(name)
-                    .map(|(params, _)| params.clone())
-                    .or_else(|| {
-                        if name == "print" {
-                            Some(vec![Type::String])
-                        } else {
-                            None
-                        }
-                    });
+                    .map(|(params, _)| params.clone());
 
                 for (i, arg) in args.iter().enumerate() {
                     let value = self.emit_expr(arg)?;
                     let arg_type = arg.get_type();
 
-                    if name == "print" && i == 0 {
-                        if matches!(arg, ast::Expr::Bool(..)) || arg_type == Type::Bool {
-                            return Ok(format!("print_bool({})", value));
-                        }
-                        else if matches!(arg, ast::Expr::Str(..)) || arg_type == Type::String {
-                            return Ok(format!("print_str({})", value));
-                        }
-                        else if matches!(arg, ast::Expr::Int(..)) || arg_type == Type::I32 {
-                            return Ok(format!("print_int({})", value));
-                        }
-                        else if let Type::Array(elem_type) = &arg_type {
-                            if **elem_type == Type::I32 {
-                                return Ok(format!("print_array({}, {})", value, "0"));
-                            }
-                        }
-                        else if let Type::SizedArray(elem_type, size) = &arg_type {
-                            if **elem_type == Type::I32 {
-                                return Ok(format!("print_array({}, {})", value, size));
-                            }
-                        }
-                        else {
-                            let c_str = self.convert_to_c_str(&value, &arg_type);
-                            return Ok(format!("print_str({})", c_str));
-                        }
-                    }
-
                     let expected_type = param_types
                         .as_ref()
                         .and_then(|types| types.get(i))
                         .cloned();
-                    
+
                     if let Some(expected) = expected_type {
                         if expected == Type::String && arg_type != Type::String {
                             args_code.push(self.convert_to_c_str(&value, &arg_type));
@@ -547,56 +526,8 @@ impl CBackend {
                         args_code.push(value);
                     }
                 }
-                
-                Ok(format!("{}({})", name, args_code.join(", ")))
-            },
-            ast::Expr::IntrinsicCall(name, args, ast::ExprInfo { span, ty: _}) => match name.as_str() {
-                "__alloc" => {
-                    if args.len() != 1 {
-                        return Err(CompileError::CodegenError {
-                            message: "__alloc expects 1 argument".to_string(),
-                            span: Some(*span),
-                            file_id: self.file_id,
-                        });
-                    }
-                    let size = self.emit_expr(&args[0])?;
-                    Ok(format!("malloc({})", size))
-                },
-                "__dealloc" => {
-                    if args.len() != 1 {
-                        return Err(CompileError::CodegenError {
-                            message: "__dealloc expects 1 argument".to_string(),
-                            span: Some(*span),
-                            file_id: self.file_id,
-                        });
-                    }
-                    let ptr = self.emit_expr(&args[0])?;
-                    Ok(format!("free({})", ptr))
-                },
-                "__print" => {
-                    if args.len() != 1 {
-                        return Err(CompileError::CodegenError {
-                            message: "__print expects 1 argument".to_string(),
-                            span: Some(*span),
-                            file_id: self.file_id,
-                        });
-                    }
-                    let value = self.emit_expr(&args[0])?;
-                    let value_ty = args[0].get_type();
 
-                    let str_value = if value_ty == Type::String {
-                        value
-                    } else {
-                        self.convert_to_c_str(&value, &value_ty)
-                    };
-                    
-                    Ok(format!("printf(\"%s\\n\", {});", str_value))
-                },
-                _ => Err(CompileError::CodegenError {
-                    message: format!("Unknown intrinsic function: {}", name),
-                    span: Some(*span),
-                    file_id: self.file_id,
-                }),
+                Ok(format!("{}({})", name, args_code.join(", ")))
             },
             ast::Expr::SafeBlock(stmts, _) => {
                 let mut code = String::new();
@@ -635,6 +566,16 @@ impl CBackend {
                     (Type::I32, Type::String) => Ok(format!("int_to_str({})", expr_code)),
                     (Type::Bool, Type::String) => Ok(format!("bool_to_str({})", expr_code)),
                     (Type::Pointer(_), Type::String) | (Type::RawPtr, Type::String) => Ok(format!("ptr_to_str({})", expr_code)),
+                    (Type::RawPtr, Type::Pointer(inner_ty)) => {
+                        Ok(format!("({}*)({})", self.type_to_c(inner_ty), expr_code))
+                    },
+                    (_, Type::Pointer(inner_ty)) => {
+                        Ok(format!("({}*)({})", self.type_to_c(inner_ty), expr_code))
+                    },
+                    (_, Type::RawPtr) => {
+                        // Rzutowanie na void*
+                        Ok(format!("(void*)({})", expr_code))
+                    },
                     _ => Ok(format!("({})({})", self.type_to_c(target_ty), expr_code)),
                 }
             },
@@ -649,7 +590,7 @@ impl CBackend {
                     let field_code = self.emit_expr(field_expr)?;
                     field_inits.push(format!(".{} = {}", field_name, field_code));
                 }
-                
+
                 Ok(format!("({}){{ {} }}", name, field_inits.join(", ")))
             },
             ast::Expr::FieldAccess(obj, field_name, _info) => {
@@ -657,7 +598,7 @@ impl CBackend {
                 Ok(format!("{}.{}", obj_code, field_name))
             },
             ast::Expr::ArrayInit(elements, info) => {
-                
+
                 let element_type = match &info.ty {
                     Type::Array(inner) => inner.clone(),
                     _ => return Err(CompileError::CodegenError {
@@ -666,22 +607,22 @@ impl CBackend {
                         file_id: self.file_id,
                     }),
                 };
-                
+
                 let element_type_str = self.type_to_c(&element_type);
                 let mut element_exprs = Vec::new();
-                
+
                 for elem in elements {
                     element_exprs.push(self.emit_expr(elem)?);
                 }
-                
+
                 let elements_str = element_exprs.join(", ");
 
-                self.includes.borrow_mut().insert("<stdlib.h>");
-                
+                self.includes.borrow_mut().insert("<stdlib.h>".to_string());
+
                 let temp_var = format!("_array_stack_{}", info.span.start());
                 let temp_var_ptr = format!("_array_ptr_{}", info.span.start());
                 let size = elements.len();
-                
+
                 Ok(format!("({{ \
                     {} {}[] = {{ {} }}; \
                     {}* {} = malloc({} * sizeof({})); \
@@ -699,17 +640,29 @@ impl CBackend {
             ast::Expr::ArrayAccess(array, index, _info) => {
                 let array_expr = self.emit_expr(array)?;
                 let index_expr = self.emit_expr(index)?;
-                
-                Ok(format!("{}[{}]", array_expr, index_expr))
+                let array_type = array.get_type();
+
+                match array_type {
+                    Type::Pointer(inner_ty) => {
+                        Ok(format!("(({}*){})[{}]", self.type_to_c(&inner_ty), array_expr, index_expr))
+                    }
+                    Type::RawPtr => {
+                        // Rzutuj rawptr na unsigned char* (u8*) przy indeksowaniu
+                        Ok(format!("((unsigned char*){})[{}]", array_expr, index_expr))
+                    }
+                    _ => {
+                        Ok(format!("{}[{}]", array_expr, index_expr))
+                    }
+                }
             },
-            ast::Expr::TemplateStr(parts, info) => {
+            ast::Expr::TemplateStr(parts, _info) => {
                 if parts.is_empty() {
                     return Ok("\"\"".to_string());
                 }
-                
+
                 let mut result = String::new();
                 let mut is_first = true;
-                
+
                 for part in parts {
                     let part_code = match part {
                         ast::TemplateStrPart::Literal(text) => {
@@ -718,7 +671,7 @@ impl CBackend {
                         ast::TemplateStrPart::Expression(expr) => {
                             let expr_code = self.emit_expr(expr)?;
                             let expr_type = expr.get_type();
-                            
+
                             match &**expr {
                                 ast::Expr::ArrayAccess(array, _, _) => {
                                     let array_type = array.get_type();
@@ -738,7 +691,7 @@ impl CBackend {
                             }
                         }
                     };
-                    
+
                     if is_first {
                         result = part_code;
                         is_first = false;
@@ -746,14 +699,34 @@ impl CBackend {
                         result = format!("concat({}, {})", result, part_code);
                     }
                 }
-                
+
                 Ok(result)
             },
-            _ => Err(CompileError::CodegenError {
-                message: "Unsupported expression".to_string(),
-                span: Some(expr.span()),
-                file_id: self.file_id,
-            }),
+            ast::Expr::FfiCall(name, args, _) => {
+                let mut args_code = Vec::new();
+                for arg in args {
+                    let arg_code = self.emit_expr(arg)?;
+                    args_code.push(arg_code);
+                }
+                Ok(format!("{}({})", name, args_code.join(", ")))
+            },
+            ast::Expr::UnaryOp(op, expr, _) => {
+                let inner_code = self.emit_expr(expr)?;
+                match op {
+                    ast::UnOp::Neg => Ok(format!("-{}", inner_code)),
+                    ast::UnOp::Plus => Ok(format!("{}", inner_code)),
+                }
+            }
+
+
+            _ => {
+                Err(CompileError::CodegenError {
+                    message: format!("Unsupported expression type: {:?}", expr),
+                    span: Some(expr.span()),
+                    file_id: self.file_id,
+                })
+            }
+
         }
     }
 
@@ -783,9 +756,10 @@ impl CBackend {
         match ty {
             Type::I32 => "int".to_string(),
             Type::Bool => "bool".to_string(),
-            Type::String => "char*".to_string(),
+            Type::String => "const char*".to_string(),
             Type::Void => "void".to_string(),
-            Type::Unknown => "int".to_string(),
+            Type::Ellipsis => "...".to_string(),
+            Type::Unknown => "void*".to_string(), // Bezpieczniejsze niż int
             Type::Function(args, ret) => {
                 let args_str = args.iter()
                     .map(|t| self.type_to_c(t))
@@ -802,6 +776,17 @@ impl CBackend {
             Type::SizedArray(inner, _) => format!("{}*", self.type_to_c(inner)),
             Type::Any => "void*".to_string(),
             Type::F32 => "float".to_string(),
+            Type::I8 => "int8_t".to_string(),
+            Type::I16 => "int16_t".to_string(),
+            Type::I64 => "int64_t".to_string(),
+            Type::U8 => "unsigned char".to_string(),
+            Type::U16 => "uint16_t".to_string(),
+            Type::U32 => "uint32_t".to_string(),
+            Type::U64 => "uint64_t".to_string(),
+            Type::F64 => "double".to_string(),
+            Type::CChar => "char".to_string(),
+            Type::CInt => "int".to_string(),
+            Type::CSize => "size_t".to_string(),
         }
     }
 
@@ -812,7 +797,7 @@ impl CBackend {
     }
 
     fn convert_to_c_str(&mut self, code: &str, ty: &Type) -> String {
-        self.includes.borrow_mut().insert("<string.h>");
+        self.includes.borrow_mut().insert("<string.h>".to_string());
         match ty {
             Type::I32 => format!("int_to_str({})", code),
             Type::Bool => format!("bool_to_str({})", code),
@@ -849,6 +834,7 @@ impl CBackend {
     }
 }
 
+#[allow(dead_code)]
 pub const PRELUDE: &str = r#"#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -868,4 +854,3 @@ char* concat(const char* str1, const char* str2) {
     return result;
 }
 "#;
-

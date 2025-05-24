@@ -1,13 +1,13 @@
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use crate::utils::{prepare_windows_clang_args, process_imports};
+use crate::{codegen, lexer, parser, typeck};
 use anyhow::{anyhow, Context};
 use codespan::Files;
 use codespan_reporting::term;
-use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, ColorSpec, Color};
 use codespan_reporting::term::termcolor::WriteColor;
+use codespan_reporting::term::termcolor::{Color, ColorChoice, ColorSpec, StandardStream};
 use std::io::Write;
-use crate::{codegen, lexer, parser, typeck};
-use crate::utils::{process_imports, prepare_windows_clang_args, validate_ve_file};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 pub fn run_benchmark(
     input: PathBuf,
@@ -96,11 +96,24 @@ pub fn run_benchmark(
     write!(&mut stdout, "  [2/4] Type checking... ")?;
     stdout.flush()?;
     
-    let (imported_functions, imported_asts) = process_imports(&mut files, &program.imports, &*input)?;
+    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) = 
+        process_imports(&mut files, &program.imports, &*input)?;
+    
     program.functions.extend(imported_asts);
+    program.ffi_functions.extend(imported_ffi_funcs);
+    program.ffi_variables.extend(imported_ffi_vars.clone());
+
+    if verbose {
+        println!("✓ AST parsed successfully");
+    }
 
     let typeck_start = Instant::now();
-    let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone());
+    let mut type_checker = typeck::TypeChecker::new(
+        file_id, 
+        imported_functions.clone(), 
+        imported_structs.clone(),
+        imported_ffi_vars.clone()
+    );
     match type_checker.check(&mut program) {
         Ok(()) => (),
         Err(errors) => {
@@ -128,7 +141,13 @@ pub fn run_benchmark(
     
     let codegen_start = Instant::now();
     let config = codegen::CodegenConfig { target_triple: "x86_64-pc-windows-msvc".to_string() };
-    let mut target = codegen::Target::create(config, file_id, imported_functions);
+    let mut target = codegen::Target::create(
+        config, 
+        file_id, 
+        imported_functions, 
+        imported_structs,
+        imported_ffi_vars
+    );
     target.compile(&program, &c_file)?;
     let codegen_time = codegen_start.elapsed();
     
@@ -239,7 +258,6 @@ pub fn run_benchmark(
         let parse_percent = parse_time.as_nanos() as f64 / total_time.as_nanos() as f64;
         let typeck_percent = typeck_time.as_nanos() as f64 / total_time.as_nanos() as f64;
         let codegen_percent = codegen_time.as_nanos() as f64 / total_time.as_nanos() as f64;
-        let compile_percent = compile_time.as_nanos() as f64 / total_time.as_nanos() as f64;
         
         let parse_width = (parse_percent * bar_width as f64).round() as usize;
         let typeck_width = (typeck_percent * bar_width as f64).round() as usize;
@@ -291,8 +309,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
-    use std::path::Path;
-    
+
     fn create_test_file(content: &str) -> PathBuf {
         let test_dir = env::temp_dir().join("verve_benchmark_tests");
         fs::create_dir_all(&test_dir).unwrap();
@@ -329,4 +346,3 @@ mod tests {
         }
     }
 }
-

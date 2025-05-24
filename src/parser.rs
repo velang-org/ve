@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use super::{ast, lexer::{Lexer, Token}};
 use codespan::{FileId, Files, Span};
-use codespan_reporting::diagnostic::{Diagnostic, Label};
+use codespan_reporting::diagnostic::Diagnostic;
 
 type Precedence = u8;
 
@@ -10,6 +11,11 @@ pub struct Parser<'a> {
     #[allow(dead_code)]
     files: &'a Files<String>,
     file_id: FileId,
+}
+
+enum ForeignItem {
+    Function(ast::FfiFunction),
+    Variable(ast::FfiVariable),
 }
 
 impl<'a> Parser<'a> {
@@ -28,6 +34,8 @@ impl<'a> Parser<'a> {
             stmts: Vec::new(),
             functions: Vec::new(),
             structs: Vec::new(),
+            ffi_functions: Vec::new(),
+            ffi_variables: Vec::new(),
         };
 
         while !self.is_at_end() {
@@ -35,14 +43,38 @@ impl<'a> Parser<'a> {
                 let import = self.parse_import()?;
                 program.imports.push(import);
             } else if self.check(Token::KwExport) {
-                self.advance(); 
-                let mut func = self.parse_function()?;
-                func.exported = true;
-                program.functions.push(func);
+                self.advance();
+                if self.check(Token::KwStruct) {
+                    let mut struct_def = self.parse_struct()?;
+                    struct_def.exported = true;
+                    program.structs.push(struct_def);
+                } else if self.check(Token::KwFn) {
+                    let mut func = self.parse_function()?;
+                    func.exported = true;
+                    program.functions.push(func);
+                } else if self.check(Token::LBrace) {
+                    self.parse_export_block(&mut program)?;
+                } else {
+                    return self.error("Expected 'fn', 'struct', or '{' after 'export'", self.peek_span());
+                }
             } else if self.check(Token::KwFn) {
                 program.functions.push(self.parse_function()?);
             } else if self.check(Token::KwStruct) {
                 program.structs.push(self.parse_struct()?);
+            } else if self.check(Token::Hash)  {
+                self.advance();
+                let metadata = self.parse_metadata()?;
+                self.expect(Token::Foreign)?;
+                match self.parse_ffi(metadata)? {
+                    ForeignItem::Function(f) => program.ffi_functions.push(f),
+                    ForeignItem::Variable(v) => program.ffi_variables.push(v),
+                }
+            } else if self.check(Token::Foreign) {
+                self.advance();
+                match self.parse_ffi(None)? {
+                    ForeignItem::Function(f) => program.ffi_functions.push(f),
+                    ForeignItem::Variable(v) => program.ffi_variables.push(v),
+                }
             } else {
                 program.stmts.push(self.parse_stmt()?);
             }
@@ -50,7 +82,104 @@ impl<'a> Parser<'a> {
 
         Ok(program)
     }
-    
+
+    fn parse_metadata(&mut self) -> Result<Option<HashMap<String, String>>, Diagnostic<FileId>> {
+        self.expect(Token::LBracket)?;
+        let mut metadata = HashMap::new();
+
+        loop {
+            let (name, _) = self.consume_ident()?;
+            self.expect(Token::Eq)?;
+            let value = match self.advance().cloned() {
+                Some((Token::Str(s), _)) => s,
+                Some((_, span)) => return self.error("Expected string value", span),
+                None => return self.error("Expected string value", Span::new(0, 0)),
+            };
+
+            metadata.insert(name, value);
+
+            if self.check(Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        self.expect(Token::RBracket)?;
+
+        if metadata.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(metadata))
+        }
+    }
+
+    fn parse_ffi(&mut self, metadata: Option<HashMap<String, String>>) -> Result<ForeignItem, Diagnostic<FileId>> {
+        if self.check(Token::Hash) {
+            self.advance();
+        }
+
+        if self.check(Token::KwFn) {
+            self.consume(Token::KwFn, "Expected 'fn'")?;
+            let (name, _) = self.consume_ident()?;
+            let params = self.parse_parameters()?
+                .into_iter()
+                .map(|(_name, ty)| ty)
+                .collect();
+            let return_type = if self.check(Token::Arrow) {
+                self.advance();
+                self.parse_type()?
+            } else {
+                ast::Type::Void
+            };
+            self.expect(Token::Semi)?;
+            Ok(ForeignItem::Function(ast::FfiFunction {
+                name,
+                params,
+                return_type,
+                metadata
+            }))
+        } else if self.check(Token::KwVar) {
+            self.consume(Token::KwVar, "Expected 'var'")?;
+            let (name, _) = self.consume_ident()?;
+            self.expect(Token::Colon)?;
+            let ty = self.parse_type()?;
+            self.expect(Token::Semi)?;
+            Ok(ForeignItem::Variable(ast::FfiVariable {
+                name,
+                ty,
+                metadata
+            }))
+        } else {
+            return self.error("Expected 'fn' or 'var' in foreign block", self.peek_span());
+        }
+    }
+
+    fn parse_export_block(&mut self, program: &mut ast::Program) -> Result<(), Diagnostic<FileId>> {
+        self.expect(Token::LBrace)?;
+
+        while !self.check(Token::RBrace) {
+            if self.check(Token::KwFn) {
+                let mut func = self.parse_function()?;
+                func.exported = true;
+                program.functions.push(func);
+            } else if self.check(Token::KwStruct) {
+                let mut struct_def = self.parse_struct()?;
+                struct_def.exported = true;
+                program.structs.push(struct_def);
+            } else {
+                return self.error("Expected 'fn' or 'struct' in export block", self.peek_span());
+            }
+
+            if self.check(Token::Comma) {
+                self.advance();
+            }
+        }
+
+        self.expect(Token::RBrace)?;
+        Ok(())
+    }
+
     fn parse_import(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
         self.consume(Token::KwImport, "Expected 'import'")?;
         if self.check(Token::Str(String::new())) {
@@ -58,6 +187,15 @@ impl<'a> Parser<'a> {
                 Some((Token::Str(path), _)) => path.clone(),
                 _ => return self.error("Expected module path", self.peek_span()),
             };
+
+            let module_type = if module_path.starts_with("std/") {
+                ast::ModuleType::Standard
+            } else if module_path.starts_with("./") || module_path.starts_with("../") {
+                ast::ModuleType::Local
+            } else {
+                ast::ModuleType::External
+            };
+
             let alias = if self.check(Token::KwAs) {
                 self.advance();
                 match self.consume_ident()? {
@@ -67,8 +205,9 @@ impl<'a> Parser<'a> {
                 None
             };
             self.expect(Token::Semi)?;
-            return Ok(ast::ImportDeclaration::ImportAll { module_path, alias });
+            return Ok(ast::ImportDeclaration::ImportAll { module_path, module_type, alias });
         }
+
         let import_decl = match self.peek_token() {
             Token::Str(_) => self.parse_import_all()?,
             Token::LBrace => self.parse_import_specifiers()?,
@@ -86,6 +225,14 @@ impl<'a> Parser<'a> {
             _ => return self.error("Expected module path", self.peek_span()),
         };
 
+        let module_type = if module_path.starts_with("std/") {
+            ast::ModuleType::Standard
+        } else if module_path.starts_with("./") || module_path.starts_with("../") {
+            ast::ModuleType::Local
+        } else {
+            ast::ModuleType::External
+        };
+
         let alias = if self.check(Token::KwAs) {
             self.advance();
             match self.consume_ident()? {
@@ -95,7 +242,7 @@ impl<'a> Parser<'a> {
             None
         };
 
-        Ok(ast::ImportDeclaration::ImportAll { module_path, alias })
+        Ok(ast::ImportDeclaration::ImportAll { module_path, module_type, alias })
     }
 
     fn parse_import_specifiers(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
@@ -119,7 +266,15 @@ impl<'a> Parser<'a> {
             _ => return self.error("Expected module path", self.peek_span()),
         };
 
-        Ok(ast::ImportDeclaration::ImportSpecifiers { module_path, specifiers })
+        let module_type = if module_path.starts_with("std/") {
+            ast::ModuleType::Standard
+        } else if module_path.starts_with("./") || module_path.starts_with("../") {
+            ast::ModuleType::Local
+        } else {
+            ast::ModuleType::External
+        };
+
+        Ok(ast::ImportDeclaration::ImportSpecifiers { module_path, module_type, specifiers })
     }
 
     fn parse_import_specifier(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
@@ -130,8 +285,17 @@ impl<'a> Parser<'a> {
             _ => return self.error("Expected module path", self.peek_span()),
         };
 
+        let module_type = if module_path.starts_with("std/") {
+            ast::ModuleType::Standard
+        } else if module_path.starts_with("./") || module_path.starts_with("../") {
+            ast::ModuleType::Local
+        } else {
+            ast::ModuleType::External
+        };
+
         Ok(ast::ImportDeclaration::ImportSpecifiers {
             module_path,
+            module_type,
             specifiers: vec![ast::ImportSpecifier { name, alias }],
         })
     }
@@ -199,7 +363,7 @@ impl<'a> Parser<'a> {
             }
             Token::Minus | Token::Plus => {
                 let (op_token, _) = self.advance().unwrap();
-                let op_token = op_token.clone(); 
+                let op_token = op_token.clone();
                 let prefix_bp = self.get_prefix_bp(&op_token);
                 let expr = self.parse_expr_bp(prefix_bp)?;
                 let span = expr.span();
@@ -239,7 +403,7 @@ impl<'a> Parser<'a> {
                 }))
             }
             Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::DoubleStar | Token::Caret | Token::Percent
-            | Token::EqEq | Token::NotEq | Token::Gt | Token::Lt | Token::GtEq | Token::LtEq 
+            | Token::EqEq | Token::NotEq | Token::Gt | Token::Lt | Token::GtEq | Token::LtEq
             | Token::AndAnd | Token::OrOr => {
                 let bin_op = match op {
                     Token::Plus => ast::BinOp::Add,
@@ -275,7 +439,7 @@ impl<'a> Parser<'a> {
                 let index = self.parse_expr()?;
                 let end_span = self.expect(Token::RBracket)?;
                 let span = Span::new(lhs.span().start(), end_span.end());
-                
+
                 Ok(ast::Expr::ArrayAccess(Box::new(lhs), Box::new(index), ast::ExprInfo {
                     span,
                     ty: ast::Type::Unknown,
@@ -283,15 +447,33 @@ impl<'a> Parser<'a> {
             }
             Token::Dot => {
                 let (field, field_span) = self.consume_ident()?;
-                let span = Span::new(lhs.span().start(), field_span.end());
-                Ok(ast::Expr::FieldAccess(
-                    Box::new(lhs),
-                    field,
-                    ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    },
-                ))
+                if self.check(Token::LParen) {
+                    let method_span = Span::new(lhs.span().start(), field_span.end());
+                    let args = self.parse_call_args()?;
+                    let end_span = args.1;
+                    Ok(ast::Expr::Call(
+                        format!("{}.{}", "<method>", field),
+                        {
+                            let mut v = vec![lhs];
+                            v.extend(args.0);
+                            v
+                        },
+                        ast::ExprInfo {
+                            span: Span::new(method_span.start(), end_span.end()),
+                            ty: ast::Type::Unknown,
+                        },
+                    ))
+                } else {
+                    let span = Span::new(lhs.span().start(), field_span.end());
+                    Ok(ast::Expr::FieldAccess(
+                        Box::new(lhs),
+                        field,
+                        ast::ExprInfo {
+                            span,
+                            ty: ast::Type::Unknown,
+                        },
+                    ))
+                }
             }
             Token::DotDot => {
                 let rhs = self.parse_expr_bp(rbp)?;
@@ -309,7 +491,7 @@ impl<'a> Parser<'a> {
                 let cast_type = self.parse_type()?;
                 let end_span = self.previous().map(|(_, s)| *s).unwrap();
                 let span = Span::new(lhs.span().start(), end_span.end());
-                
+
                 Ok(ast::Expr::Cast(
                     Box::new(lhs),
                     cast_type,
@@ -327,6 +509,22 @@ impl<'a> Parser<'a> {
                 )
             }
         }
+    }
+
+    fn parse_call_args(&mut self) -> Result<(Vec<ast::Expr>, Span), Diagnostic<FileId>> {
+        self.expect(Token::LParen)?;
+        let mut args = Vec::new();
+        if !self.check(Token::RParen) {
+            while !self.check(Token::RParen) {
+                args.push(self.parse_expr()?);
+                if !self.check(Token::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+        let rparen_span = self.expect(Token::RParen)?;
+        Ok((args, rparen_span))
     }
 
     fn get_prefix_bp(&self, token: &Token) -> Precedence {
@@ -353,7 +551,7 @@ impl<'a> Parser<'a> {
             _ => None,
         }
     }
-    
+
     fn parse_block(&mut self) -> Result<Vec<ast::Stmt>, Diagnostic<FileId>> {
         self.expect(Token::LBrace)?;
         let mut stmts = Vec::new();
@@ -388,6 +586,7 @@ impl<'a> Parser<'a> {
         let next = self.advance().map(|(t, s)| (t.clone(), *s));
 
         match next {
+            Some((Token::Ellipsis, _)) => Ok(ast::Type::Ellipsis),
             Some((Token::TyI32, _)) => Ok(ast::Type::I32),
             Some((Token::TyBool, _)) => Ok(ast::Type::Bool),
             Some((Token::TyString, _)) => Ok(ast::Type::String),
@@ -404,12 +603,12 @@ impl<'a> Parser<'a> {
             },
             Some((Token::LBracket, _)) => {
                 let element_type = self.parse_type()?;
-                
+
                 if self.check(Token::Semi) {
                     self.advance();
 
                     let size_token = self.advance().cloned();
-                    
+
                     match size_token {
                         Some((Token::Int(size), _)) => {
                             self.expect(Token::RBracket)?;
@@ -427,7 +626,7 @@ impl<'a> Parser<'a> {
             None => self.error("Expected type annotation", Span::new(0, 0)),
         }
     }
-    
+
     fn parse_return(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwReturn)?;
         let ret_span = self.previous().map(|(_, s)| *s).unwrap();
@@ -470,19 +669,46 @@ impl<'a> Parser<'a> {
     fn parse_parameters(&mut self) -> Result<Vec<(String, ast::Type)>, Diagnostic<FileId>> {
         self.consume(Token::LParen, "Expected '(' after function name")?;
         let mut params = Vec::new();
-
         while !self.check(Token::RParen) {
-            let (name, _) = self.consume_ident()?;
-            self.consume(Token::Colon, "Expected ':' after parameter name")?;
-            let param_type = self.parse_type()?;
-            params.push((name, param_type));
-
+            if self.check(Token::Ellipsis) {
+                self.advance();
+                if self.check(Token::Ident(String::new())) {
+                    let (name, _) = self.consume_ident()?;
+                    self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                    let param_type = self.parse_type()?;
+                    params.push((format!("...{}", name), param_type));
+                } else {
+                    params.push(("...".to_string(), ast::Type::Ellipsis));
+                }
+                break;
+            }
+            else if self.check(Token::Dot) &&
+                self.tokens.get(self.current + 1).map(|(t, _)| t) == Some(&Token::Dot) &&
+                self.tokens.get(self.current + 2).map(|(t, _)| t) == Some(&Token::Dot)
+            {
+                self.advance();
+                self.advance();
+                self.advance();
+                if self.check(Token::Ident(String::new())) {
+                    let (name, _) = self.consume_ident()?;
+                    self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                    let param_type = self.parse_type()?;
+                    params.push((format!("...{}", name), param_type));
+                } else {
+                    params.push(("...".to_string(), ast::Type::Any));
+                }
+                break;
+            } else {
+                let (name, _) = self.consume_ident()?;
+                self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                let param_type = self.parse_type()?;
+                params.push((name, param_type));
+            }
             if !self.check(Token::Comma) {
                 break;
             }
             self.advance();
         }
-
         self.consume(Token::RParen, "Expected ')' after parameters")?;
         Ok(params)
     }
@@ -502,11 +728,11 @@ impl<'a> Parser<'a> {
         } else {
             let expr = self.parse_expr()?;
             let span = expr.span();
-            
-            if self.check(Token::Semi) { 
-                self.advance(); 
+
+            if self.check(Token::Semi) {
+                self.advance();
             }
-            
+
             Ok(ast::Stmt::Expr(expr, span))
         }
     }
@@ -520,11 +746,10 @@ impl<'a> Parser<'a> {
         Ok(ast::Stmt::Defer(expr, Span::new(start_span.start(), end_span.end())))
     }
 
-
     fn parse_while(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwWhile)?;
         let while_span = self.previous().map(|(_, s)| *s).unwrap();
-        
+
         let condition = self.parse_expr()?;
 
         let body = self.parse_block()?;
@@ -584,7 +809,7 @@ impl<'a> Parser<'a> {
     }
     fn parse_let(&mut self, expect_semi: bool) -> Result<ast::Stmt, Diagnostic<FileId>> {
         let let_span = self.previous().map(|(_, s)| *s).unwrap();
-        
+
         let mut idents = vec![];
         loop {
             let token = self.advance().cloned();
@@ -659,14 +884,13 @@ impl<'a> Parser<'a> {
             Span::new(let_span.start(), end)
         ))
     }
-    
+
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let current = self.advance().cloned();
-        match current {
+        let current = self.advance().cloned();        match current {
             Some((Token::Int(n), span)) => {
                 Ok(ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
                     span,
-                    ty: ast::Type::Unknown,
+                    ty: ast::Type::I32,
                 }))
             }
             Some((Token::Str(s), span)) => {
@@ -700,7 +924,7 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expr()?;
                 let span_end = self.expect(Token::RParen)?;
                 let _span = Span::new(span_start.start(), span_end.end());
-                
+
                 Ok(expr)
             }
             Some((Token::Ident(name), span)) => {
@@ -709,21 +933,21 @@ impl<'a> Parser<'a> {
 
                     let mut fields = Vec::new();
                     let struct_name = name.clone();
-                    
+
                     while !self.check(Token::RBrace) {
                         let (field_name, _) = self.consume_ident()?;
                         self.expect(Token::Colon)?;
                         let expr = self.parse_expr()?;
-                        
+
                         fields.push((field_name, expr));
-                        
+
                         if !self.check(Token::RBrace) {
                             self.expect(Token::Comma)?;
                         }
                     }
-                    
+
                     let end_span = self.expect(Token::RBrace)?;
-                    
+
                     Ok(ast::Expr::StructInit(
                         struct_name.clone(),
                         fields,
@@ -743,27 +967,24 @@ impl<'a> Parser<'a> {
             }
             Some((Token::LBracket, span)) => {
                 let mut elements = Vec::new();
-                
+
                 if !self.check(Token::RBracket) {
                     loop {
                         elements.push(self.parse_expr()?);
-                        
+
                         if !self.check(Token::Comma) {
                             break;
                         }
                         self.advance();
                     }
                 }
-                
+
                 let end_span = self.expect(Token::RBracket)?;
-                
+
                 Ok(ast::Expr::ArrayInit(elements, ast::ExprInfo {
                     span: Span::new(span.start(), end_span.end()),
                     ty: ast::Type::Unknown,
                 }))
-            }
-            Some((Token::KwIntrinsic, span)) => {
-                self.parse_intrinsic_call(span)
             }
             Some((Token::KwSafe, span)) => {
                 self.parse_safe_block(span)
@@ -779,15 +1000,17 @@ impl<'a> Parser<'a> {
     fn parse_function_call(&mut self, name: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         self.expect(Token::LParen)?;
         let mut args = Vec::new();
-        while !self.check(Token::RParen) {
-            args.push(self.parse_expr()?);
-            if !self.check(Token::Comma) {
-                break;
+        if !self.check(Token::RParen) {
+            while !self.check(Token::RParen) {
+                args.push(self.parse_expr()?);
+                if !self.check(Token::Comma) {
+                    break;
+                }
+                self.advance();
             }
-            self.advance();
         }
         let rparen_span = self.expect(Token::RParen)?;
-        
+
         Ok(ast::Expr::Call(name, args, ast::ExprInfo {
             span: Span::new(span.start(), rparen_span.end()),
             ty: ast::Type::Unknown
@@ -796,72 +1019,22 @@ impl<'a> Parser<'a> {
 
     fn parse_safe_block(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         self.expect(Token::LBrace)?;
-        let mut stmts = Vec::new();
-        while !self.check(Token::RBrace) {
-            if self.check(Token::KwDefer) {
-                stmts.push(self.parse_defer()?);
-            } else {
-                stmts.push(self.parse_stmt()?);
-            }
-        }
-        self.expect(Token::RBrace)?;
-        let end_span = self.previous().map(|(_, s)| *s).unwrap();
+        let stmts = self.parse_block()?;
+        let end_span = self.previous().map(|(_, s)| *s).unwrap_or(start_span);
+        let span = Span::new(start_span.start(), end_span.end());
+
         Ok(ast::Expr::SafeBlock(stmts, ast::ExprInfo {
-            span: Span::new(start_span.start(), end_span.end()),
-            ty: ast::Type::Unknown
+            span,
+            ty: ast::Type::Unknown,
         }))
     }
 
-    fn parse_intrinsic_call(&mut self, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let (name, name_span) = self.consume_ident()?;
-        self.expect(Token::LParen)?;
-        let mut args = Vec::new();
-        while !self.check(Token::RParen) {
-            args.push(self.parse_expr()?);
-            if !self.check(Token::Comma) { break; }
-            self.advance();
-        }
-        self.expect(Token::RParen)?;
-        Ok(ast::Expr::IntrinsicCall(name, args, ast::ExprInfo {
-            span: Span::new(span.start(), name_span.end()),
-            ty: ast::Type::Unknown
-        }))
+    fn is_at_end(&self) -> bool {
+        self.current >= self.tokens.len()
     }
 
-    fn parse_struct(&mut self) -> Result<ast::StructDef, Diagnostic<FileId>> {
-        let start_span = self.consume(Token::KwStruct, "Expected 'struct'")?;
-        let (name, _) = self.consume_ident()?;
-        
-        self.expect(Token::LBrace)?;
-        
-        let mut fields = Vec::new();
-        while !self.check(Token::RBrace) {
-            let (field_name, field_span) = self.consume_ident()?;
-            self.expect(Token::Colon)?;
-            let field_type = self.parse_type()?;
-            
-            fields.push(ast::StructField {
-                name: field_name,
-                ty: field_type,
-                span: field_span,
-            });
-            
-            if !self.check(Token::RBrace) {
-                self.expect(Token::Comma)?;
-            }
-        }
-        
-        let end_span = self.expect(Token::RBrace)?;
-        
-        Ok(ast::StructDef {
-            name,
-            fields,
-            span: Span::new(start_span.start(), end_span.end()),
-        })
-    }
-
-    fn check(&self, expected: Token) -> bool {
-        self.peek().map(|(t, _)| t == &expected).unwrap_or(false)
+    fn check(&self, token: Token) -> bool {
+        matches!(self.peek(), Some((t, _)) if *t == token)
     }
 
     fn advance(&mut self) -> Option<&(Token, Span)> {
@@ -872,35 +1045,66 @@ impl<'a> Parser<'a> {
     }
 
     fn previous(&self) -> Option<&(Token, Span)> {
-        self.tokens.get(self.current.saturating_sub(1))
-    }
-
-    fn expect(&mut self, expected: Token) -> Result<Span, Diagnostic<FileId>> {
-        if self.check(expected.clone()) {
-            let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
-            self.advance();
-            Ok(span)
+        if self.current > 0 {
+            self.tokens.get(self.current - 1)
         } else {
-            let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
-            self.error(&format!("Expected '{:?}'", expected), span)
+            None
         }
-    }
-
-    fn error<T>(&self, msg: &str, span: Span) -> Result<T, Diagnostic<FileId>> {
-        Err(Diagnostic::error()
-            .with_message(msg)
-            .with_labels(vec![
-                Label::primary(self.file_id, span)
-                    .with_message("error occurred here")
-            ]))
-    }
-
-    fn is_at_end(&self) -> bool {
-        self.current >= self.tokens.len()
     }
 
     fn peek(&self) -> Option<&(Token, Span)> {
         self.tokens.get(self.current)
+    }
+
+    fn expect(&mut self, token: Token) -> Result<Span, Diagnostic<FileId>> {
+        if self.check(token.clone()) {
+            let span = self.peek().map(|(_, s)| *s).unwrap();
+            self.advance();
+            Ok(span)
+        } else {
+            let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
+            self.error(&format!("Expected {:?}", token), span)
+        }
+    }
+
+    fn error<T>(&self, message: &str, span: Span) -> Result<T, Diagnostic<FileId>> {
+        Err(Diagnostic::error()
+            .with_message(message)
+            .with_labels(vec![codespan_reporting::diagnostic::Label::primary(self.file_id, span)]))
+    }
+
+    fn parse_struct(&mut self) -> Result<ast::StructDef, Diagnostic<FileId>> {
+        let start_span = self.consume(Token::KwStruct, "Expected 'struct'")?;
+        let (name, _) = self.consume_ident()?;
+
+        self.expect(Token::LBrace)?;
+
+        let mut fields = Vec::new();
+        while !self.check(Token::RBrace) {
+            let (field_name, field_span) = self.consume_ident()?;
+            self.expect(Token::Colon)?;
+            let field_type = self.parse_type()?;
+
+            fields.push(ast::StructField {
+                name: field_name,
+                ty: field_type,
+                span: field_span,
+            });
+
+            if !self.check(Token::RBrace) {
+                self.expect(Token::Comma)?;
+            }
+        }
+
+        let end_span = self.expect(Token::RBrace)?;
+
+        Ok(ast::StructDef {
+            name,
+            fields,
+            span: Span::new(start_span.start(), end_span.end()),
+            exported: false,
+            repr: None,
+        })
     }
 
     fn is_in_comparison_context(&self) -> bool {
@@ -912,7 +1116,7 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
         }
-        
+
         let mut i = self.current.saturating_sub(2);
         while i > 0 && i < self.tokens.len() {
             if let Some((token, _)) = self.tokens.get(i) {
@@ -926,7 +1130,7 @@ impl<'a> Parser<'a> {
             }
             i = i.saturating_sub(1);
         }
-        
+
         false
     }
 
@@ -935,11 +1139,11 @@ impl<'a> Parser<'a> {
         let mut current = String::new();
         let mut i = 0;
         let chars: Vec<char> = content.chars().collect();
-        
+
         while i < chars.len() {
             let c = chars[i];
             i += 1;
-            
+
             if c == '$' && i < chars.len() && chars[i] == '{' {
                 i += 1;
 
@@ -949,11 +1153,11 @@ impl<'a> Parser<'a> {
 
                 let expr_start = i;
                 let mut brace_count = 1;
-                
+
                 while i < chars.len() {
                     let c = chars[i];
                     i += 1;
-                    
+
                     if c == '{' {
                         brace_count += 1;
                     } else if c == '}' {
@@ -1026,7 +1230,7 @@ impl<'a> Parser<'a> {
                     if let Some(op_pos) = find_operator(&expr_text) {
                         let (left, right) = split_at_operator(&expr_text, op_pos);
                         let op = determine_operator(&expr_text, op_pos);
-                        
+
                         let left_expr = if left.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
                             ast::Expr::Var(left.trim().to_string(), ast::ExprInfo {
                                 span,
@@ -1035,7 +1239,7 @@ impl<'a> Parser<'a> {
                         } else {
                             parse_nested_expr(left.trim(), span, self.file_id)?
                         };
-                        
+
                         let right_expr = if right.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
                             ast::Expr::Var(right.trim().to_string(), ast::ExprInfo {
                                 span,
@@ -1044,7 +1248,7 @@ impl<'a> Parser<'a> {
                         } else {
                             parse_nested_expr(right.trim(), span, self.file_id)?
                         };
-                        
+
                         parts.push(ast::TemplateStrPart::Expression(Box::new(
                             ast::Expr::BinOp(
                                 Box::new(left_expr),
@@ -1073,7 +1277,7 @@ impl<'a> Parser<'a> {
         if !current.is_empty() {
             parts.push(ast::TemplateStrPart::Literal(current));
         }
-        
+
         Ok(ast::Expr::TemplateStr(parts, ast::ExprInfo {
             span,
             ty: ast::Type::String,
@@ -1085,7 +1289,7 @@ fn find_operator(expr: &str) -> Option<usize> {
     let chars: Vec<char> = expr.chars().collect();
     let mut paren_level = 0;
     let mut bracket_level = 0;
-    
+
     for i in 0..chars.len() {
         match chars[i] {
             '(' => paren_level += 1,
@@ -1097,12 +1301,12 @@ fn find_operator(expr: &str) -> Option<usize> {
                     if i+1 < chars.len() {
                         let next = chars[i+1];
                         if (chars[i] == '*' && next == '*') || // **
-                           (chars[i] == '=' && next == '=') || // ==
-                           (chars[i] == '!' && next == '=') || // !=
-                           (chars[i] == '>' && next == '=') || // >=
-                           (chars[i] == '<' && next == '=') || // <=
-                           (chars[i] == '&' && next == '&') || // &&
-                           (chars[i] == '|' && next == '|') {  // ||
+                            (chars[i] == '=' && next == '=') || // ==
+                            (chars[i] == '!' && next == '=') || // !=
+                            (chars[i] == '>' && next == '=') || // >=
+                            (chars[i] == '<' && next == '=') || // <=
+                            (chars[i] == '&' && next == '&') || // &&
+                            (chars[i] == '|' && next == '|') {  // ||
                             return Some(i);
                         }
                     }
@@ -1113,7 +1317,7 @@ fn find_operator(expr: &str) -> Option<usize> {
             _ => {}
         }
     }
-    
+
     None
 }
 
@@ -1125,26 +1329,26 @@ fn split_at_operator(expr: &str, pos: usize) -> (String, String) {
         let curr = chars[pos];
         let next = chars[pos+1];
         if (curr == '*' && next == '*') || // **
-           (curr == '=' && next == '=') || // ==
-           (curr == '!' && next == '=') || // !=
-           (curr == '>' && next == '=') || // >=
-           (curr == '<' && next == '=') || // <=
-           (curr == '&' && next == '&') || // &&
-           (curr == '|' && next == '|') {  // ||
+            (curr == '=' && next == '=') || // ==
+            (curr == '!' && next == '=') || // !=
+            (curr == '>' && next == '=') || // >=
+            (curr == '<' && next == '=') || // <=
+            (curr == '&' && next == '&') || // &&
+            (curr == '|' && next == '|') {  // ||
             end_pos = pos + 2;
         }
     }
-    
+
     let left = expr[..pos].to_string();
     let right = expr[end_pos..].to_string();
-    
+
     (left, right)
 }
 
 fn determine_operator(expr: &str, pos: usize) -> ast::BinOp {
     let chars: Vec<char> = expr.chars().collect();
     let c = chars[pos];
-    
+
     if pos+1 < chars.len() {
         let next = chars[pos+1];
         match (c, next) {
@@ -1158,7 +1362,7 @@ fn determine_operator(expr: &str, pos: usize) -> ast::BinOp {
             _ => {}
         }
     }
-    
+
     match c {
         '+' => ast::BinOp::Add,
         '-' => ast::BinOp::Sub,
@@ -1172,20 +1376,21 @@ fn determine_operator(expr: &str, pos: usize) -> ast::BinOp {
     }
 }
 
+
 fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId) -> Result<ast::Expr, codespan_reporting::diagnostic::Diagnostic<codespan::FileId>> {
     let expr = expr.trim();
 
     if expr.starts_with('(') && expr.ends_with(')') {
         let inner = &expr[1..expr.len()-1];
         return parse_nested_expr(inner, span, file_id);
-    } 
+    }
 
     if let Ok(num) = expr.parse::<i32>() {
         return Ok(ast::Expr::Int(num, ast::ExprInfo {
             span,
             ty: ast::Type::I32,
         }));
-    } 
+    }
 
     if expr == "true" || expr == "false" {
         return Ok(ast::Expr::Bool(expr == "true", ast::ExprInfo {
@@ -1197,10 +1402,10 @@ fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId
     if let Some(pos) = find_lowest_priority_operator(expr) {
         let (left, right) = split_at_operator(expr, pos);
         let op = determine_operator(expr, pos);
-        
+
         let left_expr = parse_nested_expr(left.trim(), span, file_id)?;
         let right_expr = parse_nested_expr(right.trim(), span, file_id)?;
-        
+
         return Ok(ast::Expr::BinOp(
             Box::new(left_expr),
             op,
@@ -1216,7 +1421,7 @@ fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId
         if expr.ends_with(']') {
             let array_name = expr[..index_pos].trim().to_string();
             let index_str = expr[index_pos+1..expr.len()-1].trim();
-            
+
 
             if let Ok(index) = index_str.parse::<i32>() {
                 return Ok(ast::Expr::ArrayAccess(
@@ -1265,7 +1470,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
 
     let mut in_array_access = false;
     let mut array_access_positions = Vec::new();
-    
+
     for i in 0..chars.len() {
         match chars[i] {
             '[' => {
@@ -1295,7 +1500,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
         }
-        
+
         match chars[i] {
             '+' | '-' => {
                 if i > 0 && !is_operator_char(chars[i-1]) && paren_level == 0 && bracket_level == 0 {
@@ -1312,13 +1517,13 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
         }
-        
+
         match chars[i] {
             '*' | '/' | '%' => {
                 if chars[i] == '*' && i+1 < chars.len() && chars[i+1] == '*' {
                     continue;
                 }
-                
+
                 if paren_level == 0 && bracket_level == 0 {
                     mul_div_pos = Some(i);
                     return mul_div_pos;
@@ -1333,7 +1538,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
         }
-        
+
         match chars[i] {
             '*' => {
                 if i+1 < chars.len() && chars[i+1] == '*' && paren_level == 0 && bracket_level == 0 {
@@ -1355,16 +1560,16 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
         }
-        
+
         match chars[i] {
             '>' | '<' | '=' | '!' => {
                 if paren_level == 0 && bracket_level == 0 {
                     if i+1 < chars.len() {
                         let next = chars[i+1];
                         if (chars[i] == '=' && next == '=') || // ==
-                           (chars[i] == '!' && next == '=') || // !=
-                           (chars[i] == '>' && next == '=') || // >=
-                           (chars[i] == '<' && next == '=') {  // <=
+                            (chars[i] == '!' && next == '=') || // !=
+                            (chars[i] == '>' && next == '=') || // >=
+                            (chars[i] == '<' && next == '=') {  // <=
                             return Some(i);
                         }
                     }
@@ -1385,16 +1590,16 @@ fn is_inside_array_access(pos: usize, array_access_positions: &[usize]) -> bool 
     if array_access_positions.len() < 2 {
         return false;
     }
-    
+
     for i in 0..array_access_positions.len() / 2 {
         let start = array_access_positions[i * 2];
         let end = array_access_positions[i * 2 + 1];
-        
+
         if pos > start && pos < end {
             return true;
         }
     }
-    
+
     false
 }
 

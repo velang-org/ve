@@ -45,8 +45,8 @@ cargo build
 // Use 4-space indentation
 fn main() {
     let x = 10;
-    if (x < 5) {
-        print("Consistent style matters");
+    if x < 5 {
+        println("Consistent style matters");
     }
 }
 ```
