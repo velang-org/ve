@@ -116,7 +116,7 @@ impl CBackend {
         }
 
         self.emit_globals(program)?;
-        self.emit_functions(program, &[])?;
+        self.emit_functions(program)?;
 
         let imported_structs = self.imported_structs.clone();
         let all_structs: Vec<&ast::StructDef> = program.structs.iter().chain(imported_structs.iter()).collect();
