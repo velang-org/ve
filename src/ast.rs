@@ -138,6 +138,7 @@ pub enum Expr {
     TemplateStr(Vec<TemplateStrPart>, ExprInfo),
     F32(f32, ExprInfo),
     FfiCall(String, Vec<Expr>, ExprInfo),
+    Void(ExprInfo),
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +196,7 @@ impl Expr {
             Expr::TemplateStr(_, info) => info.span,
             Expr::F32(_, info) => info.span,
             Expr::FfiCall(_, _, info) => info.span,
+            Expr::Void(info) => info.span,
         }
     }
 
@@ -219,6 +221,7 @@ impl Expr {
             Expr::TemplateStr(_, info) => info.ty.clone(),
             Expr::F32(_, info) => info.ty.clone(),
             Expr::FfiCall(_, _, info) => info.ty.clone(),
+            Expr::Void(info) => info.ty.clone(),
         }
     }
 
