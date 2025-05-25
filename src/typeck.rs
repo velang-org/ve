@@ -76,7 +76,6 @@ impl TypeChecker {
             self.context.struct_defs.insert(struct_def.name.clone(), fields);
         }
 
-        // Populate enum definitions
         for enum_def in &program.enums {
             let variants: Vec<String> = enum_def.variants
                 .iter()
@@ -191,6 +190,37 @@ impl TypeChecker {
                 self.context.variables.insert(name.clone(), Type::I32);
                 self.check_block(body)?;
             }
+            Stmt::Match(pattern, arms, _) => {
+                let matched_expr_ty = match pattern.as_ref() {
+                    ast::Pattern::Variable(var_name, _) => {
+                        self.context.variables.get(var_name).cloned().unwrap_or(Type::Unknown)
+                    }
+                    _ => Type::Unknown
+                };
+
+                for arm in arms {
+                    match &arm.pattern {
+                        ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
+                            if let Some(variants) = self.context.enum_defs.get(enum_name) {
+                                if !variants.contains(variant_name) {
+                                    self.report_error(
+                                        &format!("Variant '{}' not found in enum '{}'", variant_name, enum_name),
+                                        arm.span,
+                                    );
+                                }
+                            } else {
+                                self.report_error(
+                                    &format!("Enum '{}' not found", enum_name),
+                                    arm.span,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    self.check_expr(&mut arm.body.clone())?;
+                }
+            }
             _ => {
                 self.report_error(
                     &format!("Unsupported statement: {:?}", stmt),
@@ -202,17 +232,14 @@ impl TypeChecker {
     }
 
     fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
-        // Handle special case of enum constructor disguised as field access
         if let Expr::FieldAccess(obj, field_name, span_info) = expr {
             if let Expr::Var(name, _) = obj.as_ref() {
                 if self.context.enum_defs.contains_key(name) {
-                    // This is actually an enum constructor: EnumName.Variant
-                    // Transform the AST node from FieldAccess to EnumConstruct
                     let enum_type = Type::Enum(name.clone());
                     *expr = Expr::EnumConstruct(
                         name.clone(),
                         field_name.clone(),
-                        vec![], // No arguments for simple enum variants
+                        vec![],
                         ast::ExprInfo { span: span_info.span, ty: enum_type.clone() }
                     );
                     return Ok(enum_type);
@@ -672,24 +699,46 @@ impl TypeChecker {
                 info.ty = enum_type.clone();
                 Ok(enum_type)
             }
-            Expr::MatchExpr(expr, arms, info) => {
-                let expr_ty = self.check_expr(expr)?;
-                let mut result_ty = Type::Void;
-
-                for (i, arm) in arms.iter_mut().enumerate() {
-                    self.check_pattern(&arm.pattern, &expr_ty)?;
-                    let arm_ty = self.check_expr(&mut arm.body)?;
-
-                    if i == 0 {
-                        result_ty = arm_ty;
-                    } else if result_ty != arm_ty {
-                        return Err(self.report_error_vec(
-                            "Match arms must have the same type",
-                            arm.body.span(),
-                        ));
+            Expr::MatchExpr(pattern, arms, info) => {
+                let matched_ty = match pattern.as_ref() {
+                    ast::Pattern::Variable(var_name, _) => {
+                        self.context.variables.get(var_name).cloned().unwrap_or(Type::Unknown)
                     }
-                }
+                    ast::Pattern::EnumVariant(enum_name, _, _, _) => {
+                        Type::Enum(enum_name.clone())
+                    }
+                    _ => Type::Unknown
+                };
 
+                let mut arm_types = Vec::new();
+                for arm in arms.iter_mut() {
+                    if let ast::Pattern::EnumVariant(enum_name, variant_name, subpatterns, span) = &arm.pattern {
+                        if let Some(variants) = self.context.enum_defs.get(enum_name) {
+                            if !variants.contains(variant_name) {
+                                self.report_error(
+                                    &format!("Variant '{}' not found in enum '{}'", variant_name, enum_name),
+                                    *span,
+                                );
+                            }
+                        } else {
+                            self.report_error(
+                                &format!("Enum '{}' not found", enum_name),
+                                *span,
+                            );
+                        }
+                        for subpat in subpatterns {
+                            self.check_pattern(subpat, &Type::Unknown)?;
+                        }
+                    } else {
+                        self.check_pattern(&arm.pattern, &matched_ty)?;
+                    }
+                    let arm_ty = self.check_expr(&mut arm.body.clone())?;
+                    arm_types.push(arm_ty);
+                }
+                let result_ty = arm_types.get(0).cloned().unwrap_or(Type::Unknown);
+                if !arm_types.iter().all(|t| Self::is_convertible(t, &result_ty)) {
+                    self.report_error("All match arms must return the same type", info.span);
+                }
                 info.ty = result_ty.clone();
                 Ok(result_ty)
             }
@@ -814,5 +863,4 @@ impl TypeChecker {
         );
     }
 }
-
 

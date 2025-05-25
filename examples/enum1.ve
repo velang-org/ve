@@ -1,3 +1,4 @@
+import "std/io";
 
 enum Color {
     Red,
@@ -7,11 +8,13 @@ enum Color {
 
 
 fn main() {
-  let test = Color.Red;
+    let test = Color.Red;
 
-    match test {
-        Color.Red => println("Red"),
-        Color.Green => println("Green"),
-        Color.Blue => println("Blue"),
-    }
-}
+    let value = match test {
+        Color.Red => "czerwony",
+        Color.Green => "zielony",
+        Color.Blue => "niebieski",
+    };
+
+    println(value);
+}v

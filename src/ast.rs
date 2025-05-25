@@ -174,7 +174,7 @@ pub enum Expr {
     F32(f32, ExprInfo),
     FfiCall(String, Vec<Expr>, ExprInfo),
     EnumConstruct(String, String, Vec<Expr>, ExprInfo), // EnumName::Variant(args)
-    MatchExpr(Box<Expr>, Vec<MatchArm>, ExprInfo),
+    MatchExpr(Box<Pattern>, Vec<MatchArm>, ExprInfo),
     Void(ExprInfo),
 }
 

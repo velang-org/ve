@@ -1032,7 +1032,6 @@ impl<'a> Parser<'a> {
                 Ok(expr)
             }
             Some((Token::Ident(name), span)) => {
-                println!("Parsing identifier: {}", name);
                 if self.check(Token::Dot) {
                     let next_pos = self.current + 1;
                     if let Some((Token::Ident(_), _)) = self.tokens.get(next_pos) {
@@ -1184,9 +1183,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_match_expr(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
-        print!("We are parsing match");
-        let expr = self.parse_expr()?;
-        print!("{:?}", expr);
+        let expr = self.parse_pattern()?;
         self.expect(Token::LBrace)?;
 
         let mut arms = Vec::new();
@@ -1299,7 +1296,7 @@ impl<'a> Parser<'a> {
             let (variant_name, variant_span) = self.consume_ident()?;
 
             let data = if self.check(Token::LParen) {
-                self.advance(); // consume '('
+                self.advance();
                 let mut types = Vec::new();
 
                 if !self.check(Token::RParen) {
@@ -1308,7 +1305,7 @@ impl<'a> Parser<'a> {
                         if !self.check(Token::Comma) {
                             break;
                         }
-                        self.advance(); // consume ','
+                        self.advance();
                     }
                 }
 
@@ -1519,9 +1516,7 @@ impl<'a> Parser<'a> {
 
     fn parse_match(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         let start_span = self.consume(Token::KwMatch, "Expected 'match'")?;
-        println!("Parsing match statement...");
         let expr = self.parse_pattern()?;
-        println!("Parsed match expression: {:?}", expr);
         self.expect(Token::LBrace)?;
 
         let mut arms = Vec::new();
@@ -1557,7 +1552,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pattern(&mut self) -> Result<ast::Pattern, Diagnostic<FileId>> {
-        print!("Parsing pattern...");
         let current = self.peek().cloned();
         match current {
             Some((Token::Ident(name), span)) if name == "_" => {

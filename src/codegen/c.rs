@@ -339,32 +339,53 @@ impl CBackend {
     }
 
     fn emit_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
-        match stmt {            ast::Stmt::Let(name, ty, expr, _) => {
-            let var_type = if let Some(ty) = ty {
-                ty.clone()
-            } else {
-                match expr {
-                    ast::Expr::Int(_, _) => Type::I32,
-                    ast::Expr::F32(_, _) => Type::F32,
-                    ast::Expr::Bool(_, _) => Type::Bool,
-                    ast::Expr::Str(_, _) => Type::String,
-                    ast::Expr::Call(func_name, _, _) => {
-                        self.functions_map.get(func_name)
-                            .cloned()
-                            .ok_or_else(|| CompileError::CodegenError {
-                                message: format!("Undefined function '{}'", func_name),
-                                span: Some(expr.span()),
-                                file_id: self.file_id,
-                            })?
-                    }
-                    _ => expr.get_type()
+        match stmt {
+            ast::Stmt::Let(name, ty, expr, _) => {
+                if let ast::Expr::MatchExpr(pattern, arms, info) = expr {
+                    let var_type = ty.clone().unwrap_or_else(|| info.ty.clone());
+                    let c_ty = self.type_to_c(&var_type);
+                    let temp_var = format!("_match_result_{}", info.span.start());
+                    self.body.push_str(&format!("{} {} = 0;\n", c_ty, temp_var));
+                    let mut match_code = String::new();
+                    self.emit_match_switch_with_result(
+                        &match pattern.as_ref() {
+                            ast::Pattern::Variable(var_name, _) => var_name.clone(),
+                            _ => "_match_input".to_string(),
+                        },
+                        &temp_var,
+                        arms,
+                        &mut match_code
+                    )?;
+                    self.body.push_str(&match_code);
+                    self.body.push_str(&format!("{} {} = {};\n", c_ty, name, temp_var));
+                    self.variables.borrow_mut().insert(name.clone(), var_type);
+                    return Ok(());
                 }
-            };
-            let c_ty = self.type_to_c(&var_type);
-            let expr_code = self.emit_expr(expr)?;
-            self.body.push_str(&format!("{} {} = {};\n", c_ty, name, expr_code));
-            self.variables.borrow_mut().insert(name.clone(), var_type);
-        }
+                let var_type = if let Some(ty) = ty {
+                    ty.clone()
+                } else {
+                    match expr {
+                        ast::Expr::Int(_, _) => Type::I32,
+                        ast::Expr::F32(_, _) => Type::F32,
+                        ast::Expr::Bool(_, _) => Type::Bool,
+                        ast::Expr::Str(_, _) => Type::String,
+                        ast::Expr::Call(func_name, _, _) => {
+                            self.functions_map.get(func_name)
+                                .cloned()
+                                .ok_or_else(|| CompileError::CodegenError {
+                                    message: format!("Undefined function '{}'", func_name),
+                                    span: Some(expr.span()),
+                                    file_id: self.file_id,
+                                })?
+                        }
+                        _ => expr.get_type()
+                    }
+                };
+                let c_ty = self.type_to_c(&var_type);
+                let expr_code = self.emit_expr(expr)?;
+                self.body.push_str(&format!("{} {} = {};\n", c_ty, name, expr_code));
+                self.variables.borrow_mut().insert(name.clone(), var_type);
+            }
             ast::Stmt::Return(expr, _) => {
                 if let ast::Expr::Void(_) = expr {
                     let current_func = self.body.rsplit_once("(").and_then(|(before, _)| before.rsplit_once(' ').map(|(_, name)| name.trim()));
@@ -437,6 +458,45 @@ impl CBackend {
                 }
 
                 self.body.push('\n');
+            }
+            ast::Stmt::Match(pattern, arms, _) => {
+                let matched_var = match pattern.as_ref() {
+                    ast::Pattern::Variable(var_name, _) => var_name.clone(),
+                    _ => return Err(CompileError::CodegenError {
+                        message: "Only variable patterns supported in match".to_string(),
+                        span: None,
+                        file_id: self.file_id,
+                    })
+                };
+
+                self.body.push_str(&format!("switch ({}.tag) {{\n", matched_var));
+
+                for arm in arms {
+                    match &arm.pattern {
+                        ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
+                            let case_value = format!("{}_{}", enum_name, variant_name);
+                            self.body.push_str(&format!("case {}: {{\n", case_value));
+
+                            let body_code = self.emit_expr(&arm.body)?;
+                            if !body_code.ends_with(';') {
+                                self.body.push_str(&format!("{};\n", body_code));
+                            } else {
+                                self.body.push_str(&format!("{}\n", body_code));
+                            }
+
+                            self.body.push_str("break;\n}\n");
+                        }
+                        _ => {
+                            return Err(CompileError::CodegenError {
+                                message: "Unsupported pattern in match".to_string(),
+                                span: Some(arm.span),
+                                file_id: self.file_id,
+                            });
+                        }
+                    }
+                }
+
+                self.body.push_str("}\n");
             }
             _ => unimplemented!(),
         }
@@ -801,32 +861,47 @@ impl CBackend {
                 }
             }
 
-            ast::Expr::MatchExpr(expr, arms, _) => {
-                let expr_code = self.emit_expr(expr)?;
-                let temp_var = format!("_match_temp_{}", expr.span().start());
-                let result_var = format!("_match_result_{}", expr.span().start());
-                let expr_type = expr.get_type();
-                let c_type = self.type_to_c(&expr_type);
-
-                // Get the result type from the first arm
-                let result_type = if let Some(first_arm) = arms.first() {
-                    first_arm.body.get_type()
-                } else {
-                    Type::Void
+            ast::Expr::MatchExpr(pattern, arms, _) => {
+                let matched_var = match pattern.as_ref() {
+                    ast::Pattern::Variable(var_name, _) => var_name.clone(),
+                    _ => return Err(CompileError::CodegenError {
+                        message: "Only variable patterns supported in match".to_string(),
+                        span: None,
+                        file_id: self.file_id,
+                    })
                 };
-                let result_c_type = self.type_to_c(&result_type);
 
                 let mut code = String::new();
-                code.push_str("({\n");
-                code.push_str(&format!("    {} {} = {};\n", c_type, temp_var, expr_code));
-                code.push_str(&format!("    {} {};\n", result_c_type, result_var));
-                code.push_str("    ");
+                code.push_str(&format!("switch ({}.tag) {{\n", matched_var));
 
-                // Generate switch statement
-                self.emit_match_switch_with_result(&temp_var, &result_var, arms, &mut code)?;
+                for arm in arms {
+                    match &arm.pattern {
+                        ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
+                            // Generate case for enum variant
+                            let case_value = format!("{}_{}", enum_name, variant_name);
+                            code.push_str(&format!("case {}: {{\n", case_value));
 
-                code.push_str(&format!("    {};\n", result_var));
-                code.push_str("})");
+                            // Generate body code
+                            let body_code = self.emit_expr(&arm.body)?;
+                            if !body_code.ends_with(';') {
+                                code.push_str(&format!("{};\n", body_code));
+                            } else {
+                                code.push_str(&format!("{}\n", body_code));
+                            }
+
+                            code.push_str("break;\n}\n");
+                        }
+                        _ => {
+                            return Err(CompileError::CodegenError {
+                                message: "Unsupported pattern in match".to_string(),
+                                span: Some(arm.span),
+                                file_id: self.file_id,
+                            });
+                        }
+                    }
+                }
+
+                code.push_str("}\n");
                 Ok(code)
             }
 
@@ -1024,7 +1099,6 @@ impl CBackend {
                 ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
                     code.push_str(&format!("    case {}_{}: {{\n", enum_name, variant_name));
 
-                    // Extract pattern variables
                     for (i, pattern) in patterns.iter().enumerate() {
                         if let ast::Pattern::Variable(var_name, _) = pattern {
                             code.push_str(&format!("        int {} = {}.data.{}.field{};\n",
@@ -1032,7 +1106,6 @@ impl CBackend {
                         }
                     }
 
-                    // Generate body
                     let body_code = self.emit_expr(&arm.body)?;
                     code.push_str(&format!("        {};\n", body_code));
                     code.push_str("        break;\n");
@@ -1046,9 +1119,8 @@ impl CBackend {
                     code.push_str("    }\n");
                 }
                 ast::Pattern::Variable(var_name, _) => {
-                    // This matches the entire enum value
                     code.push_str("    default: {\n");
-                    let expr_type = Type::Unknown; // We would need context to determine the actual type
+                    let expr_type = Type::Unknown;
                     let c_type = self.type_to_c(&expr_type);
                     code.push_str(&format!("        {} {} = {};\n", c_type, var_name, temp_var));
                     let body_code = self.emit_expr(&arm.body)?;
@@ -1057,8 +1129,6 @@ impl CBackend {
                     code.push_str("    }\n");
                 }
                 ast::Pattern::Literal(expr, _) => {
-                    // For now, skip literal patterns in enum match
-                    // This would require more complex logic to compare values
                     return Err(CompileError::CodegenError {
                         message: "Literal patterns in enum match not yet supported".to_string(),
                         span: Some(arm.span),
@@ -1102,9 +1172,8 @@ impl CBackend {
                     code.push_str("    }\n");
                 }
                 ast::Pattern::Variable(var_name, _) => {
-                    // This matches the entire enum value
                     code.push_str("    default: {\n");
-                    let expr_type = Type::Unknown; // We would need context to determine the actual type
+                    let expr_type = Type::Unknown;
                     let c_type = self.type_to_c(&expr_type);
                     code.push_str(&format!("        {} {} = {};\n", c_type, var_name, temp_var));
                     let body_code = self.emit_expr(&arm.body)?;
@@ -1113,8 +1182,6 @@ impl CBackend {
                     code.push_str("    }\n");
                 }
                 ast::Pattern::Literal(expr, _) => {
-                    // For now, skip literal patterns in enum match
-                    // This would require more complex logic to compare values
                     return Err(CompileError::CodegenError {
                         message: "Literal patterns in enum match not yet supported".to_string(),
                         span: Some(arm.span),
