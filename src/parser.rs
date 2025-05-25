@@ -622,6 +622,7 @@ impl<'a> Parser<'a> {
                 }
             },
             Some((Token::Ident(name), _)) => Ok(ast::Type::Struct(name)),
+            Some((Token::TyF64, _)) => Ok(ast::Type::F64),
             Some((_, span)) => self.error("Expected type annotation", span),
             None => self.error("Expected type annotation", Span::new(0, 0)),
         }
@@ -630,7 +631,14 @@ impl<'a> Parser<'a> {
     fn parse_return(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.expect(Token::KwReturn)?;
         let ret_span = self.previous().map(|(_, s)| *s).unwrap();
-        let expr = self.parse_expr()?;
+        let expr = if self.check(Token::Semi) {
+            ast::Expr::Void(ast::ExprInfo {
+                span: ret_span,
+                ty: ast::Type::Void,
+            })
+        } else {
+            self.parse_expr()?
+        };
         self.expect(Token::Semi)?;
         let end_span = self.previous().map(|(_, s)| *s).unwrap();
         Ok(ast::Stmt::Return(expr, Span::new(ret_span.start(), end_span.end())))

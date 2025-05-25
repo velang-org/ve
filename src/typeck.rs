@@ -189,6 +189,7 @@ impl TypeChecker {
             Expr::Bool(_, _) => Ok(Type::Bool),
             Expr::Str(_, _) => Ok(Type::String),
             Expr::F32(_, _) => Ok(Type::F32),
+            Expr::Void(_) => Ok(Type::Void),
             Expr::Var(name, ast::ExprInfo {span, ty: expr_type } ) => {
                 let ty = match name.as_str() {
                     "true" | "false" => Type::Bool,
@@ -212,9 +213,12 @@ impl TypeChecker {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Pow2 | BinOp::Mod => {
                         if (left_ty == Type::I32 && right_ty == Type::I32)
                             || (left_ty == Type::F32 && right_ty == Type::F32)
+                            || (left_ty == Type::F64 && right_ty == Type::F64)
                         {
                             if left_ty == Type::F32 || right_ty == Type::F32 {
                                 Type::F32
+                            } else if left_ty == Type::F64 || right_ty == Type::F64 {
+                                Type::F64
                             } else {
                                 Type::I32
                             }
@@ -366,6 +370,7 @@ impl TypeChecker {
                     (Type::I32, Type::F32) => Ok(target_ty.clone()),
                     (Type::I32, Type::U32) => Ok(target_ty.clone()),
                     (Type::U32, Type::I32) => Ok(target_ty.clone()),
+                    (Type::String, Type::I32) => Ok(target_ty.clone()),
                     _ => {
                         if !Self::is_convertible(&source_ty, target_ty) {
                             self.report_error(
@@ -644,7 +649,7 @@ impl TypeChecker {
         if from == to {
             return true;
         }
-        
+
         match (from, to) {
             (Type::Unknown, _) | (_, Type::Unknown) => true,
             (_, Type::Any) => true,
@@ -674,6 +679,11 @@ impl TypeChecker {
             (Type::F32, Type::F32) => true,
             (Type::F32, Type::I32) => true,
             (Type::I32, Type::F32) => true,
+            (Type::F32, Type::F64) => true,
+            (Type::F64, Type::F32) => true,
+            (Type::I32, Type::F64) => true,
+            (Type::F64, Type::I32) => true,
+            (Type::F64, Type::String) => true,
             _ => false,
         }
     }
@@ -699,4 +709,5 @@ impl TypeChecker {
         );
     }
 }
+
 
