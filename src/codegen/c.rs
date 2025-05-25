@@ -273,7 +273,6 @@ impl CBackend {
     }
 
     fn emit_functions(&mut self, program: &ast::Program) -> Result<(), CompileError> {
-        // Generuj forward declarations dla funkcji
         for func in &program.functions {
             let return_type = if func.name == "main" {
                 "int".to_string()
@@ -357,6 +356,21 @@ impl CBackend {
                 self.variables.borrow_mut().insert(name.clone(), var_type);
             }
             ast::Stmt::Return(expr, _) => {
+                if let ast::Expr::Void(_) = expr {
+                    let current_func = self.body.rsplit_once("(").and_then(|(before, _)| before.rsplit_once(' ').map(|(_, name)| name.trim()));
+                    let func_name = current_func.unwrap_or("");
+                    let ret_type = self.functions_map.get(func_name);
+                    if func_name == "main" || ret_type == Some(&Type::I32) {
+                        self.body.push_str("return 0;\n");
+                        return Ok(());
+                    } else if ret_type == Some(&Type::Void) {
+                        self.body.push_str("return;\n");
+                        return Ok(());
+                    } else {
+                        self.body.push_str("// ERROR: Return statement in function with non-void return type\n");
+                        return Ok(());
+                    }
+                }
                 let expr_code = self.emit_expr(expr)?;
                 self.body.push_str(&format!("return {};\n", expr_code));
             },
@@ -431,13 +445,54 @@ impl CBackend {
                 let left_code = self.emit_expr(left)?;
                 let right_code = self.emit_expr(right)?;
 
-                let result_type = expr.get_type();
+                let left_type = left.get_type();
+                let right_type = right.get_type();
+                let is_string_cmp = matches!(left_type, Type::String) || matches!(right_type, Type::String);
 
+                if is_string_cmp {
+                    match op {
+                        ast::BinOp::Eq => {
+                            self.includes.borrow_mut().insert("<string.h>".to_string());
+                            let left_conv = self.convert_to_c_str(&left_code, &left_type);
+                            let right_conv = self.convert_to_c_str(&right_code, &right_type);
+                            return Ok(format!("(strcmp({}, {}) == 0)", left_conv, right_conv));
+                        },
+                        ast::BinOp::NotEq => {
+                            self.includes.borrow_mut().insert("<string.h>".to_string());
+                            let left_conv = self.convert_to_c_str(&left_code, &left_type);
+                            let right_conv = self.convert_to_c_str(&right_code, &right_type);
+                            return Ok(format!("(strcmp({}, {}) != 0)", left_conv, right_conv));
+                        },
+                        _ => {
+                            let left_conv = self.convert_to_c_str(&left_code, &left_type);
+                            let right_conv = self.convert_to_c_str(&right_code, &right_type);
+                            return Ok(format!("concat({}, {})", left_conv, right_conv));
+                        }
+                    }
+                }
+
+                let result_type = expr.get_type();
                 match result_type {
                     Type::String => {
-                        let left_conv = self.convert_to_c_str(&left_code, &left.get_type());
-                        let right_conv = self.convert_to_c_str(&right_code, &right.get_type());
-                        Ok(format!("concat({}, {})", left_conv, right_conv))
+                        match op {
+                            ast::BinOp::Eq => {
+                                self.includes.borrow_mut().insert("<string.h>".to_string());
+                                let left_conv = self.convert_to_c_str(&left_code, &left.get_type());
+                                let right_conv = self.convert_to_c_str(&right_code, &right.get_type());
+                                Ok(format!("(strcmp({}, {}) == 0)", left_conv, right_conv))
+                            },
+                            ast::BinOp::NotEq => {
+                                self.includes.borrow_mut().insert("<string.h>".to_string());
+                                let left_conv = self.convert_to_c_str(&left_code, &left.get_type());
+                                let right_conv = self.convert_to_c_str(&right_code, &right.get_type());
+                                Ok(format!("(strcmp({}, {}) != 0)", left_conv, right_conv))
+                            },
+                            _ => {
+                                let left_conv = self.convert_to_c_str(&left_code, &left.get_type());
+                                let right_conv = self.convert_to_c_str(&right_code, &right.get_type());
+                                Ok(format!("concat({}, {})", left_conv, right_conv))
+                            }
+                        }
                     }
                     _ => {
                         let c_op = match op {
@@ -529,6 +584,7 @@ impl CBackend {
 
                 Ok(format!("{}({})", name, args_code.join(", ")))
             },
+            ast::Expr::Void(_) => Ok("".to_string()),
             ast::Expr::SafeBlock(stmts, _) => {
                 let mut code = String::new();
                 code.push_str("{\n");
@@ -566,6 +622,10 @@ impl CBackend {
                     (Type::I32, Type::String) => Ok(format!("int_to_str({})", expr_code)),
                     (Type::Bool, Type::String) => Ok(format!("bool_to_str({})", expr_code)),
                     (Type::Pointer(_), Type::String) | (Type::RawPtr, Type::String) => Ok(format!("ptr_to_str({})", expr_code)),
+                    (Type::String, Type::I32) => {
+                        self.includes.borrow_mut().insert("<stdlib.h>".to_string());
+                        Ok(format!("atoi({})", expr_code))
+                    },
                     (Type::RawPtr, Type::Pointer(inner_ty)) => {
                         Ok(format!("({}*)({})", self.type_to_c(inner_ty), expr_code))
                     },
@@ -573,7 +633,6 @@ impl CBackend {
                         Ok(format!("({}*)({})", self.type_to_c(inner_ty), expr_code))
                     },
                     (_, Type::RawPtr) => {
-                        // Rzutowanie na void*
                         Ok(format!("(void*)({})", expr_code))
                     },
                     _ => Ok(format!("({})({})", self.type_to_c(target_ty), expr_code)),
@@ -647,7 +706,6 @@ impl CBackend {
                         Ok(format!("(({}*){})[{}]", self.type_to_c(&inner_ty), array_expr, index_expr))
                     }
                     Type::RawPtr => {
-                        // Rzutuj rawptr na unsigned char* (u8*) przy indeksowaniu
                         Ok(format!("((unsigned char*){})[{}]", array_expr, index_expr))
                     }
                     _ => {
@@ -759,7 +817,7 @@ impl CBackend {
             Type::String => "const char*".to_string(),
             Type::Void => "void".to_string(),
             Type::Ellipsis => "...".to_string(),
-            Type::Unknown => "void*".to_string(), // Bezpieczniejsze niż int
+            Type::Unknown => "void*".to_string(),
             Type::Function(args, ret) => {
                 let args_str = args.iter()
                     .map(|t| self.type_to_c(t))
