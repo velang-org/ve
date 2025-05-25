@@ -10,6 +10,7 @@ use codespan_reporting::term;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use crate::{codegen, lexer, parser, typeck};
 use crate::utils::{process_imports, prepare_windows_clang_args, validate_ve_file};
+use std::process::Stdio;
 
 #[derive(Debug)]
 pub struct CliError(pub String);
@@ -255,7 +256,7 @@ pub fn process_build(
     };
 
     let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) = 
-        process_imports(&mut files, &program.imports, &*input)?;
+        process_imports(&mut files, &program.imports, &input)?;
     program.functions.extend(imported_asts);
     program.ffi_functions.extend(imported_ffi_funcs);
     program.ffi_variables.extend(imported_ffi_vars.clone());
@@ -299,10 +300,12 @@ pub fn process_build(
 
     let status = std::process::Command::new("clang")
         .args(&clang_args)
+        .stderr(Stdio::null())
         .status()
         .or_else(|_| {
             std::process::Command::new("gcc")
                 .args(&clang_args)
+                .stderr(Stdio::null())
                 .status()
         })
         .map_err(|e| anyhow!("Failed to compile C code: {}", e))?;
