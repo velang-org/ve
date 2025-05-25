@@ -65,6 +65,8 @@ pub enum Token {
     TyVoid,
     #[token("any")]
     TyAny,
+    #[token("f64")]
+    TyF64,
     #[token("->")]
     Arrow,
     #[token(":")]
