@@ -25,6 +25,7 @@ pub fn check_dependencies() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
 pub fn prepare_windows_clang_args(output: &Path, optimize: bool, c_file: &Path) -> Result<Vec<String>> {
     let msvc_lib_paths = get_msvc_lib_paths()?;
     let mut clang_args = vec![

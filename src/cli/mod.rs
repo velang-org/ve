@@ -9,7 +9,7 @@ use codespan::Files;
 use codespan_reporting::term;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use crate::{codegen, lexer, parser, typeck};
-use crate::utils::{process_imports, prepare_windows_clang_args, validate_ve_file};
+use crate::utils::{process_imports, validate_ve_file};
 use std::process::Stdio;
 
 #[derive(Debug)]

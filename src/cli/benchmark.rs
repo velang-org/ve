@@ -1,4 +1,7 @@
+#[cfg(target_os = "windows")]
 use crate::utils::{prepare_windows_clang_args, process_imports};
+#[cfg(not(target_os = "windows"))]
+use crate::utils::process_imports;
 use crate::{codegen, lexer, parser, typeck};
 use anyhow::{anyhow, Context};
 use codespan::Files;
@@ -160,7 +163,17 @@ pub fn run_benchmark(
     stdout.flush()?;
     
     let compile_start = Instant::now();
+    #[cfg(target_os = "windows")]
     let clang_args = prepare_windows_clang_args(&output, false, &c_file)?;
+
+    #[cfg(not(target_os = "windows"))]
+    let clang_args = vec![
+        "-O0".to_string(),
+        c_file.to_str().unwrap().into(),
+        "-o".to_string(),
+        output.to_str().unwrap().into(),
+    ];
+
     let status = std::process::Command::new("clang")
         .args(&clang_args)
         .status()
