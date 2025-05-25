@@ -35,6 +35,10 @@ pub enum Token {
     KwExport,
     #[token("struct")]
     KwStruct,
+    #[token("enum")]
+    KwEnum,
+    #[token("match")]
+    KwMatch,
     #[token("true")]
     KwTrue,
     #[token("false")]
@@ -48,13 +52,13 @@ pub enum Token {
 
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Str(String),
-    
+
     #[regex(r#"`([^`\\]|\\.)*`"#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     TemplateStr(String),
-    
+
     #[token("${")]
     StrInterpolStart,
-    
+
     #[token("i32")]
     TyI32,
     #[token("bool")]
@@ -125,9 +129,13 @@ pub enum Token {
     AndAnd,
     #[token("||")]
     OrOr,
+    #[token("|")]
+    Pipe,
+    #[token("=>")]
+    Arrow2,
     #[token("#")]
     Hash,
-    
+
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse().ok())]
     F32(f32),
 

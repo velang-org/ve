@@ -14,6 +14,7 @@ pub enum Type {
     Pointer(Box<Type>),
     RawPtr,
     Struct(String),
+    Enum(String),
     Array(Box<Type>),
     SizedArray(Box<Type>, usize),
     Any,
@@ -70,15 +71,48 @@ pub struct StructDef {
     #[allow(dead_code)]
     pub span: Span,
     pub exported: bool,
-    pub repr: Option<String>, // #[repr(C)], #[repr(packed)]
+    pub repr: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub data: Option<Vec<Type>>,
+    #[allow(dead_code)]
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    #[allow(dead_code)]
+    pub span: Span,
+    pub exported: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    Wildcard(Span),                              // _
+    Variable(String, Span),                      // x
+    EnumVariant(String, String, Vec<Pattern>, Span), // Color.Red, Color.Rgb(r, g, b)
+    Literal(Expr, Span),                         // 42, "hello"
+}
+
+#[derive(Debug, Clone)]
 pub struct Program {
     pub imports: Vec<ImportDeclaration>,
     pub stmts: Vec<Stmt>,
     pub functions: Vec<Function>,
     pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
     pub ffi_functions: Vec<FfiFunction>,
     pub ffi_variables: Vec<FfiVariable>,
 }
@@ -94,6 +128,7 @@ pub enum Stmt {
     While(Expr, Vec<Stmt>, Span),
     For(String, Expr, Vec<Stmt>, Span),
     Block(Vec<Stmt>, Span),
+    Match(Box<Pattern>, Vec<MatchArm>, Span),
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +173,8 @@ pub enum Expr {
     TemplateStr(Vec<TemplateStrPart>, ExprInfo),
     F32(f32, ExprInfo),
     FfiCall(String, Vec<Expr>, ExprInfo),
+    EnumConstruct(String, String, Vec<Expr>, ExprInfo), // EnumName::Variant(args)
+    MatchExpr(Box<Expr>, Vec<MatchArm>, ExprInfo),
     Void(ExprInfo),
 }
 
@@ -147,6 +184,7 @@ pub enum TemplateStrPart {
     Expression(Box<Expr>),
 }
 
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModuleType {
     Standard,
@@ -154,7 +192,7 @@ pub enum ModuleType {
     External,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ImportDeclaration {
     ImportAll {
         module_path: String,
@@ -168,7 +206,7 @@ pub enum ImportDeclaration {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImportSpecifier {
     pub name: String,
     pub alias: Option<String>
@@ -196,6 +234,8 @@ impl Expr {
             Expr::TemplateStr(_, info) => info.span,
             Expr::F32(_, info) => info.span,
             Expr::FfiCall(_, _, info) => info.span,
+            Expr::EnumConstruct(_, _, _, info) => info.span,
+            Expr::MatchExpr(_, _, info) => info.span,
             Expr::Void(info) => info.span,
         }
     }
@@ -221,6 +261,8 @@ impl Expr {
             Expr::TemplateStr(_, info) => info.ty.clone(),
             Expr::F32(_, info) => info.ty.clone(),
             Expr::FfiCall(_, _, info) => info.ty.clone(),
+            Expr::EnumConstruct(_, _, _, info) => info.ty.clone(),
+            Expr::MatchExpr(_, _, info) => info.ty.clone(),
             Expr::Void(info) => info.ty.clone(),
         }
     }
@@ -313,6 +355,7 @@ impl fmt::Display for Type {
             Type::Pointer(ty) => write!(f, "*{}", ty),
             Type::RawPtr => write!(f, "*void"),
             Type::Struct(name) => write!(f, "{}", name),
+            Type::Enum(name) => write!(f, "{}", name),
             Type::Array(ty) => write!(f, "[]{}", ty),
             Type::SizedArray(ty, size) => write!(f, "[{}; {}]", ty, size),
             Type::Any => write!(f, "any"),
@@ -333,6 +376,17 @@ impl fmt::Display for Type {
     }
 }
 
+impl Pattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Wildcard(span) => *span,
+            Pattern::Variable(_, span) => *span,
+            Pattern::EnumVariant(_, _, _, span) => *span,
+            Pattern::Literal(_, span) => *span,
+        }
+    }
+}
+
 impl Stmt {
     pub fn span(&self) -> Span {
         match self {
@@ -345,7 +399,7 @@ impl Stmt {
             Stmt::While(_, _, span) => *span,
             Stmt::For(_, _, _, span) => *span,
             Stmt::Block(_, span) => *span,
-
+            Stmt::Match(_, _, span) => *span,
         }
     }
 }

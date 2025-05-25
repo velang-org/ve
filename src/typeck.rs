@@ -9,6 +9,7 @@ struct Context {
     current_return_type: Type,
     in_safe: bool,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
+    enum_defs: HashMap<String, Vec<String>>,
 }
 
 impl Context {
@@ -18,6 +19,7 @@ impl Context {
             current_return_type: Type::Void,
             in_safe: false,
             struct_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
         }
     }
 }
@@ -26,7 +28,7 @@ impl Context {
 pub struct TypeChecker {
     errors: Vec<Diagnostic<FileId>>,
     context: Context,
-    functions: HashMap<String, (Vec<Type>, Type)>, 
+    functions: HashMap<String, (Vec<Type>, Type)>,
     file_id: FileId,
 }
 
@@ -74,6 +76,15 @@ impl TypeChecker {
             self.context.struct_defs.insert(struct_def.name.clone(), fields);
         }
 
+        // Populate enum definitions
+        for enum_def in &program.enums {
+            let variants: Vec<String> = enum_def.variants
+                .iter()
+                .map(|v| v.name.clone())
+                .collect();
+            self.context.enum_defs.insert(enum_def.name.clone(), variants);
+        }
+
         for func in &program.functions {
             let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
             self.functions.insert(
@@ -104,6 +115,7 @@ impl TypeChecker {
         let mut local_ctx = Context::new();
         local_ctx.current_return_type = func.return_type.clone();
         local_ctx.struct_defs = self.context.struct_defs.clone();
+        local_ctx.enum_defs = self.context.enum_defs.clone(); // Copy enum definitions too!
 
         for (name, ty) in &func.params {
             local_ctx.variables.insert(name.clone(), ty.clone());
@@ -179,11 +191,35 @@ impl TypeChecker {
                 self.context.variables.insert(name.clone(), Type::I32);
                 self.check_block(body)?;
             }
+            _ => {
+                self.report_error(
+                    &format!("Unsupported statement: {:?}", stmt),
+                    stmt.span(),
+                );
+            }
         }
         Ok(())
     }
 
     fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
+        // Handle special case of enum constructor disguised as field access
+        if let Expr::FieldAccess(obj, field_name, span_info) = expr {
+            if let Expr::Var(name, _) = obj.as_ref() {
+                if self.context.enum_defs.contains_key(name) {
+                    // This is actually an enum constructor: EnumName.Variant
+                    // Transform the AST node from FieldAccess to EnumConstruct
+                    let enum_type = Type::Enum(name.clone());
+                    *expr = Expr::EnumConstruct(
+                        name.clone(),
+                        field_name.clone(),
+                        vec![], // No arguments for simple enum variants
+                        ast::ExprInfo { span: span_info.span, ty: enum_type.clone() }
+                    );
+                    return Ok(enum_type);
+                }
+            }
+        }
+
         match expr {
             Expr::Int(_, _) => Ok(Type::I32),
             Expr::Bool(_, _) => Ok(Type::Bool),
@@ -257,7 +293,7 @@ impl TypeChecker {
                 };
 
                 *expr_type = result_ty.clone();
-                
+
                 Ok(result_ty)
             },
             Expr::Deref(inner_expr, info) => {
@@ -412,13 +448,13 @@ impl TypeChecker {
                 for (field_name, field_expr) in fields {
                     let field_ty = self.check_expr(field_expr)?;
                     let field_name = field_name.clone();
-                    
+
                     match struct_fields.iter().find(|(name, _)| name == &field_name) {
                         Some((_, expected_ty)) => {
                             if !Self::is_convertible(&field_ty, expected_ty) {
                                 self.report_error(
-                                    &format!("Type mismatch for field '{}': expected {}, got {}", 
-                                        field_name, expected_ty, field_ty),
+                                    &format!("Type mismatch for field '{}': expected {}, got {}",
+                                             field_name, expected_ty, field_ty),
                                     field_expr.span()
                                 );
                             }
@@ -430,7 +466,7 @@ impl TypeChecker {
                             );
                         }
                     }
-                    
+
                     seen_fields.insert(field_name, ());
                 }
 
@@ -442,14 +478,13 @@ impl TypeChecker {
                         );
                     }
                 }
-                
+
                 let ty = Type::Struct(name.clone());
                 *expr_type = ty.clone();
                 Ok(ty)
             },
             Expr::FieldAccess(obj, field_name, ast::ExprInfo { span, ty: expr_type }) => {
                 let obj_ty = self.check_expr(obj)?;
-                
                 match obj_ty {
                     Type::Struct(struct_name) => {
                         match self.context.struct_defs.get(&struct_name) {
@@ -493,7 +528,7 @@ impl TypeChecker {
                 }
 
                 let first_type = self.check_expr(&mut elements[0])?;
-                
+
                 for (i, element) in elements.iter_mut().enumerate().skip(1) {
                     let el_type = self.check_expr(element)?;
                     if !Self::is_convertible(&el_type, &first_type) {
@@ -503,7 +538,7 @@ impl TypeChecker {
                         );
                     }
                 }
-                
+
                 let array_type = Type::Array(Box::new(first_type));
                 *expr_type = array_type.clone();
                 Ok(array_type)
@@ -543,23 +578,23 @@ impl TypeChecker {
                 for part in parts {
                     if let ast::TemplateStrPart::Expression(expr) = part {
                         let ty = self.check_expr(expr)?;
-                        
+
                         match expr.as_mut() {
                             ast::Expr::ArrayAccess(array, index, array_info) => {
                                 let array_ty = self.check_expr(array)?;
                                 let index_ty = self.check_expr(index)?;
-                                
+
                                 if !Self::is_convertible(&index_ty, &Type::I32) {
                                     self.report_error(
                                         &format!("Array index must be i32, got {}", index_ty),
                                         index.span()
                                     );
                                 }
-                                
+
                                 match array_ty {
                                     Type::Array(element_type) => {
                                         array_info.ty = *element_type.clone();
-                                        if !Self::is_convertible(&element_type, &Type::String) 
+                                        if !Self::is_convertible(&element_type, &Type::String)
                                             && !Self::is_convertible(&element_type, &Type::I32)
                                             && !Self::is_convertible(&element_type, &Type::Bool) {
                                             self.report_error(
@@ -620,13 +655,83 @@ impl TypeChecker {
                         }
                     }
                 }
-                
+
                 info.ty = Type::String;
                 Ok(Type::String)
             }
             Expr::FfiCall(_name, _args, _info) => {
                 // TODO: Implement FFI call type checking
                 Ok(Type::Unknown)
+            }
+            Expr::EnumConstruct(enum_name, _variant_name, args, info) => {
+                // TODO: Validate enum and variant exist
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                let enum_type = Type::Enum(enum_name.clone());
+                info.ty = enum_type.clone();
+                Ok(enum_type)
+            }
+            Expr::MatchExpr(expr, arms, info) => {
+                let expr_ty = self.check_expr(expr)?;
+                let mut result_ty = Type::Void;
+
+                for (i, arm) in arms.iter_mut().enumerate() {
+                    self.check_pattern(&arm.pattern, &expr_ty)?;
+                    let arm_ty = self.check_expr(&mut arm.body)?;
+
+                    if i == 0 {
+                        result_ty = arm_ty;
+                    } else if result_ty != arm_ty {
+                        return Err(self.report_error_vec(
+                            "Match arms must have the same type",
+                            arm.body.span(),
+                        ));
+                    }
+                }
+
+                info.ty = result_ty.clone();
+                Ok(result_ty)
+            }
+        }
+    }
+
+    fn check_pattern(&mut self, pattern: &ast::Pattern, expected_ty: &Type) -> Result<(), Vec<Diagnostic<FileId>>> {
+        match pattern {
+            ast::Pattern::Wildcard(_) => {
+                Ok(())
+            }
+            ast::Pattern::Variable(name, _) => {
+                self.context.variables.insert(name.clone(), expected_ty.clone());
+                Ok(())
+            }
+            ast::Pattern::EnumVariant(enum_name, _variant_name, patterns, span) => {
+                match expected_ty {
+                    Type::Enum(expected_enum) if expected_enum == enum_name => {
+                        // TODO: Validate variant exists and check pattern arguments
+                        for pattern in patterns {
+                            self.check_pattern(pattern, &Type::Unknown)?;
+                        }
+                        Ok(())
+                    }
+                    _ => {
+                        Err(self.report_error_vec(
+                            &format!("Pattern expects enum {}, but got {}", enum_name, expected_ty),
+                            *span,
+                        ))
+                    }
+                }
+            }
+            ast::Pattern::Literal(expr, span) => {
+                let literal_ty = expr.get_type();
+                if Self::is_convertible(&literal_ty, expected_ty) {
+                    Ok(())
+                } else {
+                    Err(self.report_error_vec(
+                        &format!("Literal pattern type {} doesn't match expected type {}", literal_ty, expected_ty),
+                        *span,
+                    ))
+                }
             }
         }
     }
@@ -695,10 +800,10 @@ impl TypeChecker {
         Ok(())
     }
     fn report_error_vec(&mut self, message: &str, span: Span) -> Vec<Diagnostic<FileId>> {
-            let diag = Diagnostic::error()
-                .with_message(message)
-                .with_labels(vec![Label::primary(self.file_id, span)]);
-            vec![diag]
+        let diag = Diagnostic::error()
+            .with_message(message)
+            .with_labels(vec![Label::primary(self.file_id, span)]);
+        vec![diag]
     }
 
     fn report_error(&mut self, message: &str, span: Span) {

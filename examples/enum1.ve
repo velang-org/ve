@@ -1,0 +1,17 @@
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+
+fn main() {
+  let test = Color.Red;
+
+    match test {
+        Color.Red => println("Red"),
+        Color.Green => println("Green"),
+        Color.Blue => println("Blue"),
+    }
+}
