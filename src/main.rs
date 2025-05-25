@@ -19,8 +19,8 @@ fn main() -> Result<()> {
         Ok(cli::CliCommand::Init { directory, project_name }) => {
             cli::init::create_project(&*directory, &*project_name)
         }
-        Ok(cli::CliCommand::Run { verbose }) => {
-            cli::run::run_project(verbose)
+        Ok(cli::CliCommand::Run { input, verbose }) => {
+            cli::run::run_project(input, verbose)
         }
         Ok(cli::CliCommand::Benchmark { input, iterations, verbose }) => {
             cli::benchmark::run_benchmark(input, iterations, verbose)

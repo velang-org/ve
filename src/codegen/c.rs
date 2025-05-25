@@ -17,6 +17,7 @@ pub struct CBackend {
     imported_functions: HashMap<String, (Vec<Type>, Type)>,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
     imported_structs: Vec<ast::StructDef>,
+    enum_defs: HashMap<String, Vec<ast::EnumVariant>>,
 }
 
 impl CBackend {
@@ -32,6 +33,7 @@ impl CBackend {
             imported_functions,
             struct_defs: HashMap::new(),
             imported_structs,
+            enum_defs: HashMap::new(),
         };
 
         for ffi_var in imported_ffi_vars {
@@ -99,8 +101,16 @@ impl CBackend {
             self.struct_defs.insert(struct_def.name.clone(), fields);
         }
 
+        for enum_def in &program.enums {
+            self.enum_defs.insert(enum_def.name.clone(), enum_def.variants.clone());
+        }
+
         for struct_def in &program.structs {
             self.emit_struct(struct_def)?;
+        }
+
+        for enum_def in &program.enums {
+            self.emit_enum(enum_def)?;
         }
 
         self.functions_map = program.functions.iter()
@@ -329,7 +339,28 @@ impl CBackend {
     }
 
     fn emit_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
-        match stmt {            ast::Stmt::Let(name, ty, expr, _) => {
+        match stmt {
+            ast::Stmt::Let(name, ty, expr, _) => {
+                if let ast::Expr::MatchExpr(pattern, arms, info) = expr {
+                    let var_type = ty.clone().unwrap_or_else(|| info.ty.clone());
+                    let c_ty = self.type_to_c(&var_type);
+                    let temp_var = format!("_match_result_{}", info.span.start());
+                    self.body.push_str(&format!("{} {} = 0;\n", c_ty, temp_var));
+                    let mut match_code = String::new();
+                    self.emit_match_switch_with_result(
+                        &match pattern.as_ref() {
+                            ast::Pattern::Variable(var_name, _) => var_name.clone(),
+                            _ => "_match_input".to_string(),
+                        },
+                        &temp_var,
+                        arms,
+                        &mut match_code
+                    )?;
+                    self.body.push_str(&match_code);
+                    self.body.push_str(&format!("{} {} = {};\n", c_ty, name, temp_var));
+                    self.variables.borrow_mut().insert(name.clone(), var_type);
+                    return Ok(());
+                }
                 let var_type = if let Some(ty) = ty {
                     ty.clone()
                 } else {
@@ -391,7 +422,7 @@ impl CBackend {
             },
             ast::Stmt::While(cond, body, _) => {
                 let cond_code = self.emit_expr(cond)?;
-                self.body.push_str(&format!("while ({}) {{\n", cond_code)); 
+                self.body.push_str(&format!("while ({}) {{\n", cond_code));
                 for stmt in body {
                     self.emit_stmt(stmt)?;
                 }
@@ -427,6 +458,45 @@ impl CBackend {
                 }
 
                 self.body.push('\n');
+            }
+            ast::Stmt::Match(pattern, arms, _) => {
+                let matched_var = match pattern.as_ref() {
+                    ast::Pattern::Variable(var_name, _) => var_name.clone(),
+                    _ => return Err(CompileError::CodegenError {
+                        message: "Only variable patterns supported in match".to_string(),
+                        span: None,
+                        file_id: self.file_id,
+                    })
+                };
+
+                self.body.push_str(&format!("switch ({}.tag) {{\n", matched_var));
+
+                for arm in arms {
+                    match &arm.pattern {
+                        ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
+                            let case_value = format!("{}_{}", enum_name, variant_name);
+                            self.body.push_str(&format!("case {}: {{\n", case_value));
+
+                            let body_code = self.emit_expr(&arm.body)?;
+                            if !body_code.ends_with(';') {
+                                self.body.push_str(&format!("{};\n", body_code));
+                            } else {
+                                self.body.push_str(&format!("{}\n", body_code));
+                            }
+
+                            self.body.push_str("break;\n}\n");
+                        }
+                        _ => {
+                            return Err(CompileError::CodegenError {
+                                message: "Unsupported pattern in match".to_string(),
+                                span: Some(arm.span),
+                                file_id: self.file_id,
+                            });
+                        }
+                    }
+                }
+
+                self.body.push_str("}\n");
             }
             _ => unimplemented!(),
         }
@@ -690,10 +760,10 @@ impl CBackend {
                     }} \
                     {}; \
                 }})",
-                    element_type_str, temp_var, elements_str,
-                    element_type_str, temp_var_ptr, size, element_type_str,
-                    temp_var_ptr, size, temp_var_ptr, temp_var,
-                    temp_var_ptr
+                           element_type_str, temp_var, elements_str,
+                           element_type_str, temp_var_ptr, size, element_type_str,
+                           temp_var_ptr, size, temp_var_ptr, temp_var,
+                           temp_var_ptr
                 ))
             },
             ast::Expr::ArrayAccess(array, index, _info) => {
@@ -776,6 +846,65 @@ impl CBackend {
                 }
             }
 
+            ast::Expr::EnumConstruct(enum_name, variant_name, args, _) => {
+                let mut args_code = Vec::new();
+                for arg in args {
+                    args_code.push(self.emit_expr(arg)?);
+                }
+
+                if args_code.is_empty() {
+                    // Unit variant constructor
+                    Ok(format!("{}_{}_new()", enum_name, variant_name))
+                } else {
+                    // Tuple variant constructor
+                    Ok(format!("{}_{}_new({})", enum_name, variant_name, args_code.join(", ")))
+                }
+            }
+
+            ast::Expr::MatchExpr(pattern, arms, _) => {
+                let matched_var = match pattern.as_ref() {
+                    ast::Pattern::Variable(var_name, _) => var_name.clone(),
+                    _ => return Err(CompileError::CodegenError {
+                        message: "Only variable patterns supported in match".to_string(),
+                        span: None,
+                        file_id: self.file_id,
+                    })
+                };
+
+                let mut code = String::new();
+                code.push_str(&format!("switch ({}.tag) {{\n", matched_var));
+
+                for arm in arms {
+                    match &arm.pattern {
+                        ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
+                            // Generate case for enum variant
+                            let case_value = format!("{}_{}", enum_name, variant_name);
+                            code.push_str(&format!("case {}: {{\n", case_value));
+
+                            // Generate body code
+                            let body_code = self.emit_expr(&arm.body)?;
+                            if !body_code.ends_with(';') {
+                                code.push_str(&format!("{};\n", body_code));
+                            } else {
+                                code.push_str(&format!("{}\n", body_code));
+                            }
+
+                            code.push_str("break;\n}\n");
+                        }
+                        _ => {
+                            return Err(CompileError::CodegenError {
+                                message: "Unsupported pattern in match".to_string(),
+                                span: Some(arm.span),
+                                file_id: self.file_id,
+                            });
+                        }
+                    }
+                }
+
+                code.push_str("}\n");
+                Ok(code)
+            }
+
 
             _ => {
                 Err(CompileError::CodegenError {
@@ -802,7 +931,7 @@ impl CBackend {
             }),
         }
     }
-    
+
     fn emit_stmt_to_string(&mut self, stmt: &ast::Stmt) -> Result<String, CompileError> {
         let original_body = std::mem::take(&mut self.body);
         self.emit_stmt(stmt)?;
@@ -830,6 +959,7 @@ impl CBackend {
             Type::Pointer(inner) => format!("{}*", self.type_to_c(inner)),
             Type::RawPtr => "void*".to_string(),
             Type::Struct(name) => name.to_string(),
+            Type::Enum(name) => name.to_string(),
             Type::Array(inner) => format!("{}*", self.type_to_c(inner)),
             Type::SizedArray(inner, _) => format!("{}*", self.type_to_c(inner)),
             Type::Any => "void*".to_string(),
@@ -879,15 +1009,189 @@ impl CBackend {
 
     fn emit_struct(&mut self, struct_def: &ast::StructDef) -> Result<(), CompileError> {
         let mut struct_code = format!("typedef struct {} {{\n", struct_def.name);
-        
+
         for field in &struct_def.fields {
             let field_type = self.type_to_c(&field.ty);
             struct_code.push_str(&format!("    {} {};\n", field_type, field.name));
         }
-        
+
         struct_code.push_str(&format!("}} {};\n\n", struct_def.name));
         self.header.push_str(&struct_code);
-        
+
+        Ok(())
+    }
+
+    fn emit_enum(&mut self, enum_def: &ast::EnumDef) -> Result<(), CompileError> {
+        let enum_name = &enum_def.name;
+
+        self.header.push_str(&format!("typedef enum {{\n"));
+        for (i, variant) in enum_def.variants.iter().enumerate() {
+            self.header.push_str(&format!("    {}_{} = {},\n", enum_name, variant.name, i));
+        }
+        self.header.push_str(&format!("}} {}_Tag;\n\n", enum_name));
+
+        self.header.push_str(&format!("typedef struct {} {{\n", enum_name));
+        self.header.push_str(&format!("    {}_Tag tag;\n", enum_name));
+        self.header.push_str("    union {\n");
+
+        for variant in &enum_def.variants {
+            if let Some(data_types) = &variant.data {
+                if !data_types.is_empty() {
+                    self.header.push_str(&format!("        struct {{\n"));
+                    for (i, ty) in data_types.iter().enumerate() {
+                        let c_type = self.type_to_c(ty);
+                        self.header.push_str(&format!("            {} field{};\n", c_type, i));
+                    }
+                    self.header.push_str(&format!("        }} {};\n", variant.name.to_lowercase()));
+                }
+            }
+        }
+
+        self.header.push_str("    } data;\n");
+        self.header.push_str(&format!("}} {};\n\n", enum_name));
+
+        for variant in &enum_def.variants {
+            if let Some(data_types) = &variant.data {
+                if !data_types.is_empty() {
+                    let mut params = Vec::new();
+                    for (i, ty) in data_types.iter().enumerate() {
+                        params.push(format!("{} field{}", self.type_to_c(ty), i));
+                    }
+
+                    self.header.push_str(&format!("static {} {}_{}_new({}) {{\n",
+                                                  enum_name, enum_name, variant.name, params.join(", ")));
+                    self.header.push_str(&format!("    {} result;\n", enum_name));
+                    self.header.push_str(&format!("    result.tag = {}_{};\n", enum_name, variant.name));
+
+                    for (i, _) in data_types.iter().enumerate() {
+                        self.header.push_str(&format!("    result.data.{}.field{} = field{};\n",
+                                                      variant.name.to_lowercase(), i, i));
+                    }
+
+                    self.header.push_str("    return result;\n");
+                    self.header.push_str("}\n\n");
+                } else {
+                    self.header.push_str(&format!("static {} {}_{}_new() {{\n",
+                                                  enum_name, enum_name, variant.name));
+                    self.header.push_str(&format!("    {} result;\n", enum_name));
+                    self.header.push_str(&format!("    result.tag = {}_{};\n", enum_name, variant.name));
+                    self.header.push_str("    return result;\n");
+                    self.header.push_str("}\n\n");
+                }
+            } else {
+                self.header.push_str(&format!("static {} {}_{}_new() {{\n",
+                                              enum_name, enum_name, variant.name));
+                self.header.push_str(&format!("    {} result;\n", enum_name));
+                self.header.push_str(&format!("    result.tag = {}_{};\n", enum_name, variant.name));
+                self.header.push_str("    return result;\n");
+                self.header.push_str("}\n\n");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn emit_match_switch(&mut self, temp_var: &str, arms: &[ast::MatchArm], code: &mut String) -> Result<(), CompileError> {
+        code.push_str(&format!("switch ({}.tag) {{\n", temp_var));
+
+        for arm in arms {
+            match &arm.pattern {
+                ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
+                    code.push_str(&format!("    case {}_{}: {{\n", enum_name, variant_name));
+
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        if let ast::Pattern::Variable(var_name, _) = pattern {
+                            code.push_str(&format!("        int {} = {}.data.{}.field{};\n",
+                                                   var_name, temp_var, variant_name.to_lowercase(), i));
+                        }
+                    }
+
+                    let body_code = self.emit_expr(&arm.body)?;
+                    code.push_str(&format!("        {};\n", body_code));
+                    code.push_str("        break;\n");
+                    code.push_str("    }\n");
+                }
+                ast::Pattern::Wildcard(_) => {
+                    code.push_str("    default: {\n");
+                    let body_code = self.emit_expr(&arm.body)?;
+                    code.push_str(&format!("        {};\n", body_code));
+                    code.push_str("        break;\n");
+                    code.push_str("    }\n");
+                }
+                ast::Pattern::Variable(var_name, _) => {
+                    code.push_str("    default: {\n");
+                    let expr_type = Type::Unknown;
+                    let c_type = self.type_to_c(&expr_type);
+                    code.push_str(&format!("        {} {} = {};\n", c_type, var_name, temp_var));
+                    let body_code = self.emit_expr(&arm.body)?;
+                    code.push_str(&format!("        {};\n", body_code));
+                    code.push_str("        break;\n");
+                    code.push_str("    }\n");
+                }
+                ast::Pattern::Literal(expr, _) => {
+                    return Err(CompileError::CodegenError {
+                        message: "Literal patterns in enum match not yet supported".to_string(),
+                        span: Some(arm.span),
+                        file_id: self.file_id,
+                    });
+                }
+            }
+        }
+
+        code.push_str("    }\n");
+        Ok(())
+    }
+
+    fn emit_match_switch_with_result(&mut self, temp_var: &str, result_var: &str, arms: &[ast::MatchArm], code: &mut String) -> Result<(), CompileError> {
+        code.push_str(&format!("switch ({}.tag) {{\n", temp_var));
+
+        for arm in arms {
+            match &arm.pattern {
+                ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
+                    code.push_str(&format!("    case {}_{}: {{\n", enum_name, variant_name));
+
+                    // Extract pattern variables
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        if let ast::Pattern::Variable(var_name, _) = pattern {
+                            code.push_str(&format!("        int {} = {}.data.{}.field{};\n",
+                                                   var_name, temp_var, variant_name.to_lowercase(), i));
+                        }
+                    }
+
+                    // Generate body and assign to result
+                    let body_code = self.emit_expr(&arm.body)?;
+                    code.push_str(&format!("        {} = {};\n", result_var, body_code));
+                    code.push_str("        break;\n");
+                    code.push_str("    }\n");
+                }
+                ast::Pattern::Wildcard(_) => {
+                    code.push_str("    default: {\n");
+                    let body_code = self.emit_expr(&arm.body)?;
+                    code.push_str(&format!("        {} = {};\n", result_var, body_code));
+                    code.push_str("        break;\n");
+                    code.push_str("    }\n");
+                }
+                ast::Pattern::Variable(var_name, _) => {
+                    code.push_str("    default: {\n");
+                    let expr_type = Type::Unknown;
+                    let c_type = self.type_to_c(&expr_type);
+                    code.push_str(&format!("        {} {} = {};\n", c_type, var_name, temp_var));
+                    let body_code = self.emit_expr(&arm.body)?;
+                    code.push_str(&format!("        {} = {};\n", result_var, body_code));
+                    code.push_str("        break;\n");
+                    code.push_str("    }\n");
+                }
+                ast::Pattern::Literal(expr, _) => {
+                    return Err(CompileError::CodegenError {
+                        message: "Literal patterns in enum match not yet supported".to_string(),
+                        span: Some(arm.span),
+                        file_id: self.file_id,
+                    });
+                }
+            }
+        }
+
+        code.push_str("    }\n");
         Ok(())
     }
 }

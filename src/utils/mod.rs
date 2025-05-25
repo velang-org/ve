@@ -56,96 +56,96 @@ pub fn process_imports(
     base_path: &Path,
 ) -> Result<(HashMap<String, (Vec<Type>, Type)>, Vec<ast::Function>, Vec<ast::StructDef>, Vec<ast::FfiFunction>, Vec<ast::FfiVariable>)> {
     imports.iter().try_fold((HashMap::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-        |(mut map, mut funcs, mut structs, mut ffi_funcs, mut ffi_vars), import_decl| {
-        match import_decl {
-            ast::ImportDeclaration::ImportAll { module_path, module_type, alias } => {
-                let path_result: Result<PathBuf, anyhow::Error> = match module_type {
-                    ast::ModuleType::Standard => {
-                        resolve_standard_library_path(module_path)
-                    },
-                    ast::ModuleType::Local => {
-                        let current_dir = base_path.parent()
-                            .ok_or_else(|| anyhow!("Base path has no parent"))?;
-                        Ok(current_dir.join(module_path))
-                    },
-                    ast::ModuleType::External => {
-                        resolve_library_path(module_path)
-                    }
-                };
+                            |(mut map, mut funcs, mut structs, mut ffi_funcs, mut ffi_vars), import_decl| {
+                                match import_decl {
+                                    ast::ImportDeclaration::ImportAll { module_path, module_type, alias } => {
+                                        let path_result: Result<PathBuf, anyhow::Error> = match module_type {
+                                            ast::ModuleType::Standard => {
+                                                resolve_standard_library_path(module_path)
+                                            },
+                                            ast::ModuleType::Local => {
+                                                let current_dir = base_path.parent()
+                                                    .ok_or_else(|| anyhow!("Base path has no parent"))?;
+                                                Ok(current_dir.join(module_path))
+                                            },
+                                            ast::ModuleType::External => {
+                                                resolve_library_path(module_path)
+                                            }
+                                        };
 
-                let path = path_result
-                    .with_context(|| format!("Failed to resolve import: {}", module_path))?
-                    .canonicalize()
-                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
+                                        let path = path_result
+                                            .with_context(|| format!("Failed to resolve import: {}", module_path))?
+                                            .canonicalize()
+                                            .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
 
-                let content = std::fs::read_to_string(&path)
-                    .with_context(|| format!("Reading imported file {}", path.display()))?;
+                                        let content = std::fs::read_to_string(&path)
+                                            .with_context(|| format!("Reading imported file {}", path.display()))?;
 
-                let file_id = files.add(path.to_str().unwrap().to_string(), content);
-                let lexer = lexer::Lexer::new(files, file_id);
-                let mut parser = parser::Parser::new(lexer);
-                let program = parser.parse().map_err(|error| {
-                    let file_path = error.labels.get(0)
-                        .map(|l| l.file_id)
-                        .and_then(|fid| Some(files.name(fid)))
-                        .map(|n| n.to_string_lossy().to_string());
+                                        let file_id = files.add(path.to_str().unwrap().to_string(), content);
+                                        let lexer = lexer::Lexer::new(files, file_id);
+                                        let mut parser = parser::Parser::new(lexer);
+                                        let program = parser.parse().map_err(|error| {
+                                            let file_path = error.labels.get(0)
+                                                .map(|l| l.file_id)
+                                                .and_then(|fid| Some(files.name(fid)))
+                                                .map(|n| n.to_string_lossy().to_string());
 
-                    let writer = codespan_reporting::term::termcolor::StandardStream::stderr(
-                        codespan_reporting::term::termcolor::ColorChoice::Auto
-                    );
-                    let config = codespan_reporting::term::Config::default();
-                    let _ = codespan_reporting::term::emit(&mut writer.lock(), &config, files, &error);
+                                            let writer = codespan_reporting::term::termcolor::StandardStream::stderr(
+                                                codespan_reporting::term::termcolor::ColorChoice::Auto
+                                            );
+                                            let config = codespan_reporting::term::Config::default();
+                                            let _ = codespan_reporting::term::emit(&mut writer.lock(), &config, files, &error);
 
-                    if let Some(path) = file_path {
-                        eprintln!("\nParser error in imported file '{}': {}", path, error.message);
-                    } else {
-                        eprintln!("\nParser error: {}", error.message);
-                    }
+                                            if let Some(path) = file_path {
+                                                eprintln!("\nParser error in imported file '{}': {}", path, error.message);
+                                            } else {
+                                                eprintln!("\nParser error: {}", error.message);
+                                            }
 
-                    anyhow!("Parser failed for import {}", module_path)
-                })?;
+                                            anyhow!("Parser failed for import {}", module_path)
+                                        })?;
 
-                for function in program.functions.iter().filter(|f| f.exported) {
-                    let params: Vec<Type> = function.params.iter().map(|(_, t)| t.clone()).collect();
+                                        for function in program.functions.iter().filter(|f| f.exported) {
+                                            let params: Vec<Type> = function.params.iter().map(|(_, t)| t.clone()).collect();
 
-                    let function_name = match alias {
-                        Some(a) => format!("{}::{}", a, function.name),
-                        None => {
-                            let mod_name = module_path
-                                .split('/')
-                                .last()
-                                .unwrap_or(module_path)
-                                .replace(".ve", "");
-                            format!("{}::{}", mod_name, function.name)
-                        }
-                    };
+                                            let function_name = match alias {
+                                                Some(a) => format!("{}::{}", a, function.name),
+                                                None => {
+                                                    let mod_name = module_path
+                                                        .split('/')
+                                                        .last()
+                                                        .unwrap_or(module_path)
+                                                        .replace(".ve", "");
+                                                    format!("{}::{}", mod_name, function.name)
+                                                }
+                                            };
 
-                    map.insert(function_name, (params, function.return_type.clone()));
-                }
+                                            map.insert(function_name, (params, function.return_type.clone()));
+                                        }
 
-                for function in &program.functions {
-                    funcs.push(function.clone());
-                }
+                                        for function in &program.functions {
+                                            funcs.push(function.clone());
+                                        }
 
-                for struct_def in program.structs.iter().filter(|s| s.exported) {
-                    structs.push(struct_def.clone());
-                }
+                                        for struct_def in program.structs.iter().filter(|s| s.exported) {
+                                            structs.push(struct_def.clone());
+                                        }
 
-                for ffi_func in &program.ffi_functions {
-                    ffi_funcs.push(ffi_func.clone());
-                }
+                                        for ffi_func in &program.ffi_functions {
+                                            ffi_funcs.push(ffi_func.clone());
+                                        }
 
-                for ffi_var in &program.ffi_variables {
-                    ffi_vars.push(ffi_var.clone());
-                }
+                                        for ffi_var in &program.ffi_variables {
+                                            ffi_vars.push(ffi_var.clone());
+                                        }
 
-                Ok((map, funcs, structs, ffi_funcs, ffi_vars))
-            },
-            ast::ImportDeclaration::ImportSpecifiers { .. } => {
-                Ok((map, funcs, structs, ffi_funcs, ffi_vars))
-            }
-        }
-    })
+                                        Ok((map, funcs, structs, ffi_funcs, ffi_vars))
+                                    },
+                                    ast::ImportDeclaration::ImportSpecifiers { .. } => {
+                                        Ok((map, funcs, structs, ffi_funcs, ffi_vars))
+                                    }
+                                }
+                            })
 }
 
 fn resolve_standard_library_path(module_path: &str) -> Result<PathBuf> {

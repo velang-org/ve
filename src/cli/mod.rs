@@ -9,6 +9,9 @@ use codespan::Files;
 use codespan_reporting::term;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use crate::{codegen, lexer, parser, typeck};
+#[cfg(target_os = "windows")]
+use crate::utils::{prepare_windows_clang_args, process_imports, validate_ve_file};
+#[cfg(not(target_os = "windows"))]
 use crate::utils::{process_imports, validate_ve_file};
 use std::process::Stdio;
 
@@ -37,6 +40,7 @@ pub enum CliCommand {
         project_name: String,
     },
     Run {
+        input: PathBuf,
         verbose: bool,
     },
     Benchmark {
@@ -101,16 +105,16 @@ enum Command {
         directory: PathBuf,
     },
     Run {
+        #[arg(value_parser = validate_ve_file)]
+        input: PathBuf,
         #[arg(short, long)]
         verbose: bool,
     },
     Benchmark {
         #[arg(value_parser = validate_ve_file)]
         input: PathBuf,
-        
         #[arg(short, long, default_value_t = 10)]
         iterations: usize,
-        
         #[arg(short, long)]
         verbose: bool,
     }
@@ -132,15 +136,14 @@ pub fn parse() -> anyhow::Result<CliCommand> {
         Some(Command::Init { directory, project_name }) => {
             Ok(CliCommand::Init { directory, project_name })
         },
-        Some(Command::Run { verbose}) => {
-            Ok(CliCommand::Run { verbose })
+        Some(Command::Run { input, verbose }) => {
+            Ok(CliCommand::Run { input, verbose })
         },
         Some(Command::Benchmark { input, iterations, verbose }) => {
             Ok(CliCommand::Benchmark { input, iterations, verbose })
         }
         None => {
             let input = args.input.ok_or_else(|| anyhow!("Input file is required"))?;
-            
             if let Some(iterations) = args.iterations {
                 return Ok(CliCommand::Benchmark {
                     input,
@@ -148,7 +151,6 @@ pub fn parse() -> anyhow::Result<CliCommand> {
                     verbose: args.verbose,
                 });
             }
-            
             Ok(CliCommand::Build {
                 input,
                 output: args.output,
@@ -198,9 +200,10 @@ pub fn process_build(
 
     let lexer = lexer::Lexer::new(&files, file_id);
     let mut parser = parser::Parser::new(lexer);
-    let mut program = match parser.parse() {
+
+    let mut program = match parser.parse_with_partial(verbose) {
         Ok(program) => program,
-        Err(error) => {
+        Err((error, partial_program)) => {
             let file_id = error.labels.get(0).map(|l| l.file_id);
             let file_path = file_id.and_then(|fid| Some(files.name(fid))).map(|n| n.to_string_lossy().to_string());
             let module_info = file_path.as_ref().and_then(|path: &String| {
@@ -251,11 +254,23 @@ pub fn process_build(
                 eprintln!("  note: {}", note);
             }
 
+            if verbose {
+                if let Some(partial) = partial_program {
+                    println!("\n--- PARTIAL AST (verbose mode) ---");
+                    println!("Successfully parsed {} functions, {} structs, {} enums",
+                             partial.functions.len(),
+                             partial.structs.len(),
+                             partial.enums.len());
+                    println!("Partial AST:\n{:#?}\n", partial);
+                    return Err(anyhow!("Parser failed, but partial AST shown above"));
+                }
+            }
+
             return Err(anyhow!("Parser failed"));
         }
     };
 
-    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) = 
+    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) =
         process_imports(&mut files, &program.imports, &input)?;
     program.functions.extend(imported_asts);
     program.ffi_functions.extend(imported_ffi_funcs);

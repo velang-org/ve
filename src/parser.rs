@@ -34,6 +34,7 @@ impl<'a> Parser<'a> {
             stmts: Vec::new(),
             functions: Vec::new(),
             structs: Vec::new(),
+            enums: Vec::new(),
             ffi_functions: Vec::new(),
             ffi_variables: Vec::new(),
         };
@@ -48,6 +49,10 @@ impl<'a> Parser<'a> {
                     let mut struct_def = self.parse_struct()?;
                     struct_def.exported = true;
                     program.structs.push(struct_def);
+                } else if self.check(Token::KwEnum) {
+                    let mut enum_def = self.parse_enum()?;
+                    enum_def.exported = true;
+                    program.enums.push(enum_def);
                 } else if self.check(Token::KwFn) {
                     let mut func = self.parse_function()?;
                     func.exported = true;
@@ -61,6 +66,8 @@ impl<'a> Parser<'a> {
                 program.functions.push(self.parse_function()?);
             } else if self.check(Token::KwStruct) {
                 program.structs.push(self.parse_struct()?);
+            } else if self.check(Token::KwEnum) {
+                program.enums.push(self.parse_enum()?);
             } else if self.check(Token::Hash)  {
                 self.advance();
                 let metadata = self.parse_metadata()?;
@@ -77,6 +84,92 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 program.stmts.push(self.parse_stmt()?);
+            }
+        }
+
+        Ok(program)
+    }
+
+    pub fn parse_with_partial(&mut self, verbose: bool) -> Result<ast::Program, (Diagnostic<FileId>, Option<ast::Program>)> {
+        let mut program = ast::Program {
+            imports: Vec::new(),
+            stmts: Vec::new(),
+            functions: Vec::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            ffi_functions: Vec::new(),
+            ffi_variables: Vec::new(),
+        };
+
+        while !self.is_at_end() {
+            let current_program = if verbose {
+                Some(program.clone())
+            } else {
+                None
+            };
+
+            let result = if self.check(Token::KwImport) {
+                self.parse_import().map(|import| program.imports.push(import))
+            } else if self.check(Token::KwExport) {
+                self.advance();
+                if self.check(Token::KwStruct) {
+                    self.parse_struct().map(|mut struct_def| {
+                        struct_def.exported = true;
+                        program.structs.push(struct_def);
+                    })
+                } else if self.check(Token::KwEnum) {
+                    self.parse_enum().map(|mut enum_def| {
+                        enum_def.exported = true;
+                        program.enums.push(enum_def);
+                    })
+                } else if self.check(Token::KwFn) {
+                    self.parse_function().map(|mut func| {
+                        func.exported = true;
+                        program.functions.push(func);
+                    })
+                } else if self.check(Token::LBrace) {
+                    self.parse_export_block(&mut program)
+                } else {
+                    self.error("Expected 'fn', 'struct', or '{' after 'export'", self.peek_span())
+                }
+            } else if self.check(Token::KwFn) {
+                self.parse_function().map(|func| program.functions.push(func))
+            } else if self.check(Token::KwStruct) {
+                self.parse_struct().map(|struct_def| program.structs.push(struct_def))
+            } else if self.check(Token::KwEnum) {
+                self.parse_enum().map(|enum_def| program.enums.push(enum_def))
+            } else if self.check(Token::Hash) {
+                self.advance();
+                self.parse_metadata().and_then(|metadata| {
+                    self.expect(Token::Foreign)?;
+                    self.parse_ffi(metadata)
+                }).map(|item| {
+                    match item {
+                        ForeignItem::Function(f) => program.ffi_functions.push(f),
+                        ForeignItem::Variable(v) => program.ffi_variables.push(v),
+                    }
+                })
+            } else if self.check(Token::Foreign) {
+                self.advance();
+                self.parse_ffi(None).map(|item| {
+                    match item {
+                        ForeignItem::Function(f) => program.ffi_functions.push(f),
+                        ForeignItem::Variable(v) => program.ffi_variables.push(v),
+                    }
+                })
+            } else {
+                self.parse_stmt().map(|stmt| program.stmts.push(stmt))
+            };
+
+            match result {
+                Ok(_) => continue,
+                Err(error) => {
+                    if verbose {
+                        return Err((error, current_program));
+                    } else {
+                        return Err((error, None));
+                    }
+                }
             }
         }
 
@@ -733,6 +826,8 @@ impl<'a> Parser<'a> {
             self.parse_while()
         } else if self.check(Token::KwFor) {
             self.parse_for()
+        } else if self.check(Token::KwMatch) {
+            self.parse_match()
         } else {
             let expr = self.parse_expr()?;
             let span = expr.span();
@@ -894,7 +989,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let current = self.advance().cloned();        match current {
+        let current = self.advance().cloned();
+        match current {
             Some((Token::Int(n), span)) => {
                 Ok(ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
                     span,
@@ -936,7 +1032,53 @@ impl<'a> Parser<'a> {
                 Ok(expr)
             }
             Some((Token::Ident(name), span)) => {
-                if self.check(Token::LBrace) && !self.is_in_comparison_context() {
+                if self.check(Token::Dot) {
+                    let next_pos = self.current + 1;
+                    if let Some((Token::Ident(_), _)) = self.tokens.get(next_pos) {
+                        self.advance();
+                        let (variant_name, variant_span) = self.consume_ident()?;
+
+                        if self.check(Token::LParen) {
+                            self.advance();
+                            let mut args = Vec::new();
+
+                            if !self.check(Token::RParen) {
+                                loop {
+                                    args.push(self.parse_expr()?);
+                                    if !self.check(Token::Comma) {
+                                        break;
+                                    }
+                                    self.advance();
+                                }
+                            }
+
+                            let end_span = self.expect(Token::RParen)?;
+
+                            return Ok(ast::Expr::EnumConstruct(
+                                name.clone(),
+                                variant_name,
+                                args,
+                                ast::ExprInfo {
+                                    span: Span::new(span.start(), end_span.end()),
+                                    ty: ast::Type::Enum(name),
+                                }
+                            ));
+                        } else {
+                            return Ok(ast::Expr::EnumConstruct(
+                                name.clone(),
+                                variant_name,
+                                Vec::new(),
+                                ast::ExprInfo {
+                                    span: Span::new(span.start(), variant_span.end()),
+                                    ty: ast::Type::Enum(name),
+                                }
+                            ));
+                        }
+                    }
+                }
+
+                // struct initialization
+                if self.check(Token::LBrace) && !self.is_in_comparison_context(){
                     self.advance();
 
                     let mut fields = Vec::new();
@@ -997,6 +1139,9 @@ impl<'a> Parser<'a> {
             Some((Token::KwSafe, span)) => {
                 self.parse_safe_block(span)
             },
+            Some((Token::KwMatch, span)) => {
+                self.parse_match_expr(span)
+            },
             _ => {
                 let token = self.previous().map(|(t, _)| t.clone()).unwrap();
                 let span = self.previous().map(|(_, s)| *s).unwrap();
@@ -1035,6 +1180,30 @@ impl<'a> Parser<'a> {
             span,
             ty: ast::Type::Unknown,
         }))
+    }
+
+    fn parse_match_expr(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let expr = self.parse_pattern()?;
+        self.expect(Token::LBrace)?;
+
+        let mut arms = Vec::new();
+        while !self.check(Token::RBrace) {
+            arms.push(self.parse_match_arm()?);
+
+            if self.check(Token::Comma) {
+                self.advance();
+            }
+        }
+
+        let end_span = self.expect(Token::RBrace)?;
+        Ok(ast::Expr::MatchExpr(
+            Box::new(expr),
+            arms,
+            ast::ExprInfo {
+                span: Span::new(start_span.start(), end_span.end()),
+                ty: ast::Type::Unknown,
+            },
+        ))
     }
 
     fn is_at_end(&self) -> bool {
@@ -1082,6 +1251,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_struct(&mut self) -> Result<ast::StructDef, Diagnostic<FileId>> {
+
         let start_span = self.consume(Token::KwStruct, "Expected 'struct'")?;
         let (name, _) = self.consume_ident()?;
 
@@ -1114,6 +1284,58 @@ impl<'a> Parser<'a> {
             repr: None,
         })
     }
+
+    fn parse_enum(&mut self) -> Result<ast::EnumDef, Diagnostic<FileId>> {
+        let start_span = self.consume(Token::KwEnum, "Expected 'enum'")?;
+        let (name, _) = self.consume_ident()?;
+
+        self.expect(Token::LBrace)?;
+
+        let mut variants = Vec::new();
+        while !self.check(Token::RBrace) {
+            let (variant_name, variant_span) = self.consume_ident()?;
+
+            let data = if self.check(Token::LParen) {
+                self.advance();
+                let mut types = Vec::new();
+
+                if !self.check(Token::RParen) {
+                    loop {
+                        types.push(self.parse_type()?);
+                        if !self.check(Token::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+
+                self.expect(Token::RParen)?;
+                Some(types)
+            } else {
+                None
+            };
+
+            variants.push(ast::EnumVariant {
+                name: variant_name,
+                data,
+                span: variant_span,
+            });
+
+            if !self.check(Token::RBrace) {
+                self.expect(Token::Comma)?;
+            }
+        }
+
+        let end_span = self.expect(Token::RBrace)?;
+
+        Ok(ast::EnumDef {
+            name,
+            variants,
+            span: Span::new(start_span.start(), end_span.end()),
+            exported: false,
+        })
+    }
+
 
     fn is_in_comparison_context(&self) -> bool {
         if let Some((token, _)) = self.previous() {
@@ -1290,6 +1512,138 @@ impl<'a> Parser<'a> {
             span,
             ty: ast::Type::String,
         }))
+    }
+
+    fn parse_match(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+        let start_span = self.consume(Token::KwMatch, "Expected 'match'")?;
+        let expr = self.parse_pattern()?;
+        self.expect(Token::LBrace)?;
+
+        let mut arms = Vec::new();
+        while !self.check(Token::RBrace) {
+            arms.push(self.parse_match_arm()?);
+
+            if self.check(Token::Comma) {
+                self.advance();
+            }
+        }
+
+        let end_span = self.expect(Token::RBrace)?;
+        Ok(ast::Stmt::Match(
+            Box::new(expr),
+            arms,
+            Span::new(start_span.start(), end_span.end()),
+        ))
+    }
+
+    fn parse_match_arm(&mut self) -> Result<ast::MatchArm, Diagnostic<FileId>> {
+        let pattern = self.parse_pattern()?;
+        self.expect(Token::Arrow2)?; // =>
+        let body = self.parse_expr()?;
+
+        let pattern_span = pattern.span();
+        let body_span = body.span();
+
+        Ok(ast::MatchArm {
+            pattern,
+            body,
+            span: Span::new(pattern_span.start(), body_span.end()),
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Result<ast::Pattern, Diagnostic<FileId>> {
+        let current = self.peek().cloned();
+        match current {
+            Some((Token::Ident(name), span)) if name == "_" => {
+                self.advance();
+                Ok(ast::Pattern::Wildcard(span))
+            }
+            Some((Token::Ident(name), span)) => {
+                self.advance();
+                if self.check(Token::Dot) {
+                    self.advance();
+                    let (variant_name, variant_span) = self.consume_ident()?;
+
+                    if self.check(Token::LParen) {
+                        self.advance();
+                        let mut patterns = Vec::new();
+
+                        if !self.check(Token::RParen) {
+                            loop {
+                                patterns.push(self.parse_pattern()?);
+                                if !self.check(Token::Comma) {
+                                    break;
+                                }
+                                self.advance();
+                            }
+                        }
+
+                        let end_span = self.expect(Token::RParen)?;
+                        Ok(ast::Pattern::EnumVariant(
+                            name,
+                            variant_name,
+                            patterns,
+                            Span::new(span.start(), end_span.end()),
+                        ))
+                    } else {
+                        Ok(ast::Pattern::EnumVariant(
+                            name,
+                            variant_name,
+                            Vec::new(),
+                            Span::new(span.start(), variant_span.end()),
+                        ))
+                    }
+                } else {
+                    Ok(ast::Pattern::Variable(name, span))
+                }
+            }
+            Some((Token::Int(n), span)) => {
+                self.advance(); // consume the integer
+                Ok(ast::Pattern::Literal(
+                    ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
+                        span,
+                        ty: ast::Type::I32,
+                    }),
+                    span,
+                ))
+            }
+            Some((Token::Str(s), span)) => {
+                self.advance(); // consume the string
+                Ok(ast::Pattern::Literal(
+                    ast::Expr::Str(s, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::String,
+                    }),
+                    span,
+                ))
+            }
+            Some((Token::KwTrue, span)) => {
+                self.advance(); // consume true
+                Ok(ast::Pattern::Literal(
+                    ast::Expr::Bool(true, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Bool,
+                    }),
+                    span,
+                ))
+            }
+            Some((Token::KwFalse, span)) => {
+                self.advance(); // consume false
+                Ok(ast::Pattern::Literal(
+                    ast::Expr::Bool(false, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Bool,
+                    }),
+                    span,
+                ))
+            }
+            Some((_, span)) => {
+                self.error("Expected pattern", span)
+            }
+            None => {
+                self.error("Expected pattern", Span::new(0, 0))
+            }
+        }
     }
 }
 
@@ -1515,7 +1869,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
                     add_sub_pos = Some(i);
                     return add_sub_pos;
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -1536,7 +1890,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
                     mul_div_pos = Some(i);
                     return mul_div_pos;
                 }
-            },
+            }
             _ => {}
         }
     }
