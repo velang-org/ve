@@ -120,6 +120,9 @@ pub fn process_imports(
                     };
 
                     map.insert(function_name, (params, function.return_type.clone()));
+                }
+
+                for function in &program.functions {
                     funcs.push(function.clone());
                 }
 
