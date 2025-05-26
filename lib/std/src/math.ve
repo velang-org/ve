@@ -1,3 +1,12 @@
+#[header="stdlib.h"]
+foreign fn rand() -> i32;
+
+#[header="stdlib.h"]
+foreign fn srand(seed: u32) -> void;
+
+#[header="time.h"]
+foreign fn time(t: i32) -> i32;
+
 export fn abs(n: i32) -> i32 {
     if n < 0 {
         return -n;
@@ -23,3 +32,10 @@ export fn min(a: i32, b: i32) -> i32 {
 export fn clamp(x: i32, min_val: i32, max_val: i32) -> i32 {
     return max(min_val, min(x, max_val));
 }
+
+
+export fn rand_num() -> i32 {
+    srand(time(0) as u32);
+    return rand();
+}
+

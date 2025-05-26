@@ -1490,6 +1490,10 @@ impl<'a> Parser<'a> {
                                 }
                             )
                         )));
+                    } else if expr_text.contains('(') && expr_text.trim().ends_with(')') {
+                        parts.push(ast::TemplateStrPart::Expression(Box::new(
+                            parse_nested_expr(expr_text.trim(), span, self.file_id)?
+                        )));
                     } else {
                         parts.push(ast::TemplateStrPart::Expression(Box::new(
                             ast::Expr::Var(expr_text.trim().to_string(), ast::ExprInfo {
@@ -1777,6 +1781,27 @@ fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId
                 ty: ast::Type::Unknown,
             }
         ));
+    }
+
+    // Handle function calls
+    if let Some(paren_pos) = expr.find('(') {
+        if expr.ends_with(')') {
+            let func_name = expr[..paren_pos].trim().to_string();
+            let args_str = expr[paren_pos+1..expr.len()-1].trim();
+            
+            let mut args = Vec::new();
+            if !args_str.is_empty() {
+                // Simple argument parsing - split by comma and parse each
+                for arg_str in args_str.split(',') {
+                    args.push(parse_nested_expr(arg_str.trim(), span, file_id)?);
+                }
+            }
+            
+            return Ok(ast::Expr::Call(func_name, args, ast::ExprInfo {
+                span,
+                ty: ast::Type::Unknown,
+            }));
+        }
     }
 
     if let Some(index_pos) = expr.find('[') {
