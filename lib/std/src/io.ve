@@ -8,6 +8,9 @@ foreign fn getchar() -> i32;
 foreign fn malloc(size: size_t) -> rawptr;
 
 #[header="stdlib.h"]
+foreign fn rand() -> i32;
+
+#[header="stdlib.h"]
 foreign var stdin: rawptr;
 
 export fn print(s: string) {
@@ -39,4 +42,9 @@ export fn read_line() -> string {
     buffer[i] = 0;
 
     return string_from_cstr(buffer);
+}
+
+
+export fn random() -> i32 {
+    return rand();
 }

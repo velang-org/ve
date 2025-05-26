@@ -315,12 +315,10 @@ pub fn process_build(
 
     let status = std::process::Command::new("clang")
         .args(&clang_args)
-        .stderr(Stdio::null())
         .status()
         .or_else(|_| {
             std::process::Command::new("gcc")
                 .args(&clang_args)
-                .stderr(Stdio::null())
                 .status()
         })
         .map_err(|e| anyhow!("Failed to compile C code: {}", e))?;
