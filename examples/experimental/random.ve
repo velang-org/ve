@@ -2,6 +2,6 @@ import "std/io";
 import "std/math";
 
 fn main() {
-    println(`Pseudo-random number: ${rand_num()}`);
+    println(`Pseudo-random number: ${random()}`);
 }
 

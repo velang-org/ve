@@ -114,7 +114,7 @@ impl TypeChecker {
         let mut local_ctx = Context::new();
         local_ctx.current_return_type = func.return_type.clone();
         local_ctx.struct_defs = self.context.struct_defs.clone();
-        local_ctx.enum_defs = self.context.enum_defs.clone(); // Copy enum definitions too!
+        local_ctx.enum_defs = self.context.enum_defs.clone();
 
         for (name, ty) in &func.params {
             local_ctx.variables.insert(name.clone(), ty.clone());

@@ -34,8 +34,7 @@ export fn clamp(x: i32, min_val: i32, max_val: i32) -> i32 {
 }
 
 
-export fn rand_num() -> i32 {
+export fn random() -> i32 {
     srand(time(0) as u32);
     return rand();
 }
-
