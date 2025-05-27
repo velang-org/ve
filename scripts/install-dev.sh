@@ -8,6 +8,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Check for verbose mode
+VERBOSE=${VERBOSE:-0}
+if [ "$1" = "--verbose" ] || [ "$1" = "-v" ]; then
+    VERBOSE=1
+fi
+
 # Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -53,19 +59,38 @@ main() {
     cd "$PROJECT_ROOT"
     
     print_info "Building VeLang..."
-    if cargo build --release --quiet > /dev/null 2>&1; then
-        print_success "Build completed!"
+    if [ "$VERBOSE" = "1" ]; then
+        print_info "Running in verbose mode - showing all output"
+        if cargo build --release; then
+            print_success "Build completed!"
+        else
+            print_error "Build failed!"
+            safe_exit 1
+        fi
     else
-        print_error "Build failed!"
-        safe_exit 1
+        if cargo build --release --quiet > /dev/null 2>&1; then
+            print_success "Build completed!"
+        else
+            print_error "Build failed!"
+            safe_exit 1
+        fi
     fi
     
     print_info "Installing VeLang..."
-    if cargo install --path . --force --quiet > /dev/null 2>&1; then
-        print_success "Installation completed!"
+    if [ "$VERBOSE" = "1" ]; then
+        if cargo install --path . --force; then
+            print_success "Installation completed!"
+        else
+            print_error "Installation failed!"
+            safe_exit 1
+        fi
     else
-        print_error "Installation failed!"
-        safe_exit 1
+        if cargo install --path . --force --quiet > /dev/null 2>&1; then
+            print_success "Installation completed!"
+        else
+            print_error "Installation failed!"
+            safe_exit 1
+        fi
     fi
     
     print_success "VeLang installed successfully!"

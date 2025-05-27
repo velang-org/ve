@@ -3,6 +3,7 @@
 
 param(
     [switch]$Force,
+    [switch]$Verbose,
     [string]$InstallPath = "$env:USERPROFILE\.velang",
     [string]$Branch = "main"
 )
@@ -105,6 +106,7 @@ function Install-VeLang {
     
     try {
         Write-ColoredOutput "Downloading VeLang source code..." "Info"
+        Write-ColoredOutput "Working directory: $tempDir" "Info"
         Set-Location $tempDir
         
         # Determine which branch to use - priority order:
@@ -131,17 +133,74 @@ function Install-VeLang {
             }
         }
         
-        git clone -b $targetBranch https://github.com/velang-org/ve.git *>$null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to clone VeLang repository from branch '$targetBranch'"
+        Write-ColoredOutput "Target branch: $targetBranch" "Info"
+        
+        # Check internet connectivity and repository access
+        Write-ColoredOutput "Verifying repository access..." "Info"
+        try {
+            $testOutput = & git ls-remote --heads https://github.com/velang-org/ve.git $targetBranch 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not $testOutput) {
+                Write-ColoredOutput "Branch '$targetBranch' may not exist. Available branches:" "Warning"
+                $allBranches = & git ls-remote --heads https://github.com/velang-org/ve.git 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $allBranches | ForEach-Object {
+                        if ($_ -match "refs/heads/(.+)$") {
+                            Write-Host "  - $($matches[1])"
+                        }
+                    }
+                }
+                throw "Branch '$targetBranch' not found"
+            }
+            Write-ColoredOutput "Repository access verified" "Success"
+        } catch {
+            Write-ColoredOutput "Could not verify repository access" "Warning"
+            Write-ColoredOutput "Proceeding with clone attempt..." "Info"
         }
+        
+        # First attempt with error suppression
+        if ($Verbose) {
+            Write-ColoredOutput "Running in verbose mode - showing all output" "Info"
+            git clone -b $targetBranch https://github.com/velang-org/ve.git
+        } else {
+            $cloneOutput = & git clone -b $targetBranch https://github.com/velang-org/ve.git 2>&1
+        }
+        
+        if ($LASTEXITCODE -ne 0) {
+            if (-not $Verbose) {
+                # Show the actual error and try again
+                Write-ColoredOutput "Clone failed on first attempt" "Warning"
+                Write-ColoredOutput "Git error output: $cloneOutput" "Warning"
+                Write-ColoredOutput "Retrying clone with full output..." "Info"
+                
+                # Second attempt with full output visible
+                git clone -b $targetBranch https://github.com/velang-org/ve.git
+            }
+            
+            if ($LASTEXITCODE -ne 0) {
+                Write-ColoredOutput "Failed to clone VeLang repository from branch '$targetBranch'" "Error"
+                Write-ColoredOutput "This could be due to:" "Info"
+                Write-Host "  - Internet connectivity issues"
+                Write-Host "  - Branch '$targetBranch' does not exist"
+                Write-Host "  - GitHub access restrictions"
+                Write-Host "  - Git configuration issues"
+                throw "Repository clone failed"
+            }
+        }
+        
+        # Verify that the directory was created
+        if (-not (Test-Path "ve")) {
+            throw "Repository clone completed but 've' directory not found"
+        }
+        
         Write-ColoredOutput "Source code downloaded successfully" "Success"
         
         Set-Location "ve"
         
         Write-ColoredOutput "Building VeLang..." "Info"
-        cargo build --release --quiet *>$null
+        $buildOutput = & cargo build --release --quiet 2>&1
         if ($LASTEXITCODE -ne 0) {
+            Write-ColoredOutput "Build failed. Output:" "Error"
+            Write-Host $buildOutput
             throw "Failed to build VeLang"
         }
         
@@ -181,11 +240,17 @@ function Install-VeLang {
         # Verify installation
         Write-ColoredOutput "Verifying installation..." "Info"
         try {
-            $version = & $binaryPath --version 2>$null
-            Write-ColoredOutput "VeLang is working: $version" "Success"
+            # Temporarily add to current session PATH for verification
+            $env:PATH = "$InstallPath;$env:PATH"
+            $versionOutput = & $binaryPath --version 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-ColoredOutput "VeLang is working: $versionOutput" "Success"
+            } else {
+                Write-ColoredOutput "VeLang binary created but version check failed: $versionOutput" "Warning"
+            }
         }
         catch {
-            Write-ColoredOutput "VeLang binary exists but may not be working correctly" "Warning"
+            Write-ColoredOutput "VeLang binary exists but may not be working correctly: $_" "Warning"
         }
     }
     finally {

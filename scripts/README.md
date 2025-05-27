@@ -1,6 +1,38 @@
-# VeLang Installation Scripts
+# VeLang Installati### Linux/macOS (Bash)
+```bash
+curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | bash
+```
 
-This directory contains installation and setup scripts for VeLang.
+### Windows (PowerShell)
+```powershell
+iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
+```
+
+### Windows (Command Prompt)
+```cmd
+curl -o install.bat https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.bat && install.bat
+```
+
+## Advanced Usage
+
+### Debug Installation Issues
+
+If installation fails, you can run with verbose output to see detailed error messages:
+
+#### Linux/macOS (Debug Mode)
+```bash
+# Download and run with debug output
+curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | VERBOSE=1 bash
+```
+
+#### Windows PowerShell (Debug Mode)  
+```powershell
+# Download and run with verbose output
+$script = (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
+Invoke-Expression "$script -Verbose"
+```
+
+### Installing from a specific branchirectory contains installation and setup scripts for VeLang.
 
 ## Files
 
@@ -82,6 +114,12 @@ chmod +x install.sh
 # Windows (PowerShell)
 cd scripts
 .\install.ps1
+
+# With verbose output for debugging
+.\install.ps1 -Verbose
+
+# Install to custom path with force flag
+.\install.ps1 -InstallPath "C:\Tools\VeLang" -Force
 
 # Windows (Command Prompt)
 cd scripts

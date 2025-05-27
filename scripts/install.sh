@@ -7,6 +7,12 @@ VELANG_VERSION="0.1.0"
 INSTALL_DIR="$HOME/.velang"
 BIN_DIR="$HOME/.local/bin"
 
+# Check for verbose mode
+VERBOSE=${VERBOSE:-0}
+if [ "$1" = "--verbose" ] || [ "$1" = "-v" ]; then
+    VERBOSE=1
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -115,22 +121,58 @@ download_and_build() {
         print_info "Auto-detected development branch: $BRANCH"
     fi
     
+    print_info "Target branch: $BRANCH"
+    
     # Clone the repository
-    if git clone -b "$BRANCH" https://github.com/velang-org/ve.git > /dev/null 2>&1; then
-        print_success "Source code downloaded successfully"
+    if [ "$VERBOSE" = "1" ]; then
+        print_info "Running in verbose mode - showing all output"
+        if git clone -b "$BRANCH" https://github.com/velang-org/ve.git; then
+            print_success "Source code downloaded successfully"
+        else
+            print_error "Failed to clone VeLang repository from branch '$BRANCH'"
+            safe_exit 1
+        fi
     else
-        print_error "Failed to clone VeLang repository from branch '$BRANCH'"
-        safe_exit 1
+        if git clone -b "$BRANCH" https://github.com/velang-org/ve.git > /dev/null 2>&1; then
+            print_success "Source code downloaded successfully"
+        else
+            print_warning "Clone failed, retrying with verbose output..."
+            if git clone -b "$BRANCH" https://github.com/velang-org/ve.git; then
+                print_success "Source code downloaded successfully"
+            else
+                print_error "Failed to clone VeLang repository from branch '$BRANCH'"
+                print_info "This could be due to:"
+                echo "  - Internet connectivity issues"
+                echo "  - Branch '$BRANCH' does not exist"
+                echo "  - GitHub access restrictions"
+                echo "  - Git configuration issues"
+                safe_exit 1
+            fi
+        fi
     fi
     
     cd ve
     
     print_info "Building VeLang..."
-    if cargo build --release --quiet > /dev/null 2>&1; then
-        print_success "VeLang built successfully"
+    if [ "$VERBOSE" = "1" ]; then
+        if cargo build --release; then
+            print_success "VeLang built successfully"
+        else
+            print_error "Failed to build VeLang"
+            safe_exit 1
+        fi
     else
-        print_error "Failed to build VeLang"
-        safe_exit 1
+        if cargo build --release --quiet > /dev/null 2>&1; then
+            print_success "VeLang built successfully"
+        else
+            print_warning "Build failed, retrying with verbose output..."
+            if cargo build --release; then
+                print_success "VeLang built successfully"
+            else
+                print_error "Failed to build VeLang"
+                safe_exit 1
+            fi
+        fi
     fi
     
     # Create installation directory
