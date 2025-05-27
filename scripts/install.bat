@@ -55,17 +55,18 @@ mkdir "%TEMP_DIR%"
 
 echo [INFO] Downloading VeLang source code...
 cd /d "%TEMP_DIR%"
-git clone https://github.com/velang-org/ve.git
+git clone https://github.com/velang-org/ve.git >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Failed to clone VeLang repository
     pause
     exit /b 1
 )
+echo [SUCCESS] Source code downloaded successfully
 
 cd ve
 
 echo [INFO] Building VeLang...
-cargo build --release
+cargo build --release --quiet >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Failed to build VeLang
     pause

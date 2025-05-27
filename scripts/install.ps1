@@ -106,15 +106,16 @@ function Install-VeLang {
         Write-ColoredOutput "Downloading VeLang source code..." "Info"
         Set-Location $tempDir
         
-        git clone https://github.com/velang-org/ve.git
+        git clone https://github.com/velang-org/ve.git *>$null
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to clone VeLang repository"
         }
+        Write-ColoredOutput "Source code downloaded successfully" "Success"
         
         Set-Location "ve"
         
         Write-ColoredOutput "Building VeLang..." "Info"
-        cargo build --release
+        cargo build --release --quiet *>$null
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to build VeLang"
         }

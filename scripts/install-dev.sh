@@ -21,6 +21,10 @@ print_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
+print_error() {
+    echo -e "\033[0;31m[ERROR]\033[0m $1"
+}
+
 print_banner() {
     echo -e "${BLUE}"
     echo "╭─────────────────────────────────────╮"
@@ -37,10 +41,20 @@ main() {
     cd "$PROJECT_ROOT"
     
     print_info "Building VeLang..."
-    cargo build --release
+    if cargo build --release --quiet > /dev/null 2>&1; then
+        print_success "Build completed!"
+    else
+        print_error "Build failed!"
+        exit 1
+    fi
     
     print_info "Installing VeLang..."
-    cargo install --path . --force
+    if cargo install --path . --force --quiet > /dev/null 2>&1; then
+        print_success "Installation completed!"
+    else
+        print_error "Installation failed!"
+        exit 1
+    fi
     
     print_success "VeLang installed successfully!"
     

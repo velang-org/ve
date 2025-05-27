@@ -90,7 +90,9 @@ download_and_build() {
     cd "$TEMP_DIR"
     
     # Clone the repository
-    if ! git clone https://github.com/velang-org/ve.git; then
+    if git clone https://github.com/velang-org/ve.git > /dev/null 2>&1; then
+        print_success "Source code downloaded successfully"
+    else
         print_error "Failed to clone VeLang repository"
         exit 1
     fi
@@ -98,12 +100,12 @@ download_and_build() {
     cd ve
     
     print_info "Building VeLang..."
-    if ! cargo build --release; then
+    if cargo build --release --quiet > /dev/null 2>&1; then
+        print_success "VeLang built successfully"
+    else
         print_error "Failed to build VeLang"
         exit 1
     fi
-    
-    print_success "VeLang built successfully"
     
     # Create installation directory
     mkdir -p "$INSTALL_DIR"
