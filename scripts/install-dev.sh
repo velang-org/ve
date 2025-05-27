@@ -59,6 +59,7 @@ main() {
     cd "$PROJECT_ROOT"
     
     print_info "Building VeLang..."
+    export RUSTFLAGS="--allow warnings"
     if [ "$VERBOSE" = "1" ]; then
         print_info "Running in verbose mode - showing all output"
         if cargo build --release; then

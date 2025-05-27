@@ -200,6 +200,7 @@ function Install-VeLang {
         Set-Location "ve"
         
         Write-ColoredOutput "Building VeLang..." "Info"
+        $env:RUSTFLAGS = "--allow warnings"
         $buildOutput = & cargo build --release --quiet 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-ColoredOutput "Build failed. Output:" "Error"

@@ -154,6 +154,7 @@ download_and_build() {
     cd ve
     
     print_info "Building VeLang..."
+    export RUSTFLAGS="--allow warnings"
     if [ "$VERBOSE" = "1" ]; then
         if cargo build --release; then
             print_success "VeLang built successfully"
