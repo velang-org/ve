@@ -1783,7 +1783,6 @@ fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId
         ));
     }
 
-    // Handle function calls
     if let Some(paren_pos) = expr.find('(') {
         if expr.ends_with(')') {
             let func_name = expr[..paren_pos].trim().to_string();
@@ -1791,7 +1790,6 @@ fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId
             
             let mut args = Vec::new();
             if !args_str.is_empty() {
-                // Simple argument parsing - split by comma and parse each
                 for arg_str in args_str.split(',') {
                     args.push(parse_nested_expr(arg_str.trim(), span, file_id)?);
                 }

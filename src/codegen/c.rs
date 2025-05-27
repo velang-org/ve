@@ -2,7 +2,7 @@ use crate::ast::Type;
 use crate::{ast, codegen::{CodegenConfig, CompileError}};
 use codespan::{FileId, Span};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 
@@ -15,6 +15,7 @@ pub struct CBackend {
     variables: RefCell<HashMap<String, Type>>,
     functions_map: HashMap<String, Type>,
     imported_functions: HashMap<String, (Vec<Type>, Type)>,
+    ffi_functions: HashSet<String>,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
     imported_structs: Vec<ast::StructDef>,
     enum_defs: HashMap<String, Vec<ast::EnumVariant>>,
@@ -31,6 +32,7 @@ impl CBackend {
             variables: RefCell::new(HashMap::new()),
             functions_map: HashMap::new(),
             imported_functions,
+            ffi_functions: HashSet::new(),
             struct_defs: HashMap::new(),
             imported_structs,
             enum_defs: HashMap::new(),
@@ -49,7 +51,7 @@ impl CBackend {
     {
         for struct_def in structs {
             let struct_name = &struct_def.name;
-            self.header.push_str(&format!("static char* {}_to_str(const {} *obj) {{\n", struct_name, struct_name));
+            self.header.push_str(&format!("static char* ve_{}_to_str(const ve_{} *obj) {{\n", struct_name, struct_name));
             self.header.push_str("    char *buffer = malloc(256);\n");
             self.header.push_str(&format!("    if (!buffer) return \"<failed to allocate memory for {}>\";\n", struct_name));
             let mut format_parts = Vec::new();
@@ -61,7 +63,7 @@ impl CBackend {
                     Type::Bool => ("%s", format!("(obj->{} ? \"true\" : \"false\")", field.name)),
                     Type::String => ("%s", format!("(obj->{} ? obj->{} : \"null\")", field.name, field.name)),
                     Type::Pointer(_) | Type::RawPtr => ("%p", format!("(void*)obj->{}", field.name)),
-                    Type::Struct(ref s) => ("%s", format!("{}_to_str(&obj->{})", s, field.name)),
+                    Type::Struct(ref s) => ("%s", format!("ve_{}_to_str(&obj->{})", s, field.name)),
                     _ => ("?", "\"<unknown type>\"".to_string()),
                 };
                 if i > 0 {
@@ -141,9 +143,11 @@ impl CBackend {
         let mut ffi_decls = String::new();
 
         for ffi in &program.ffi_functions {
-            let ret = self.type_to_c(&ffi.return_type);
+            self.ffi_functions.insert(ffi.name.clone());
+            
+            let ret = self.type_to_c_ffi(&ffi.return_type);
             let params = ffi.params.iter()
-                .map(|ty| self.type_to_c(ty))
+                .map(|ty| self.type_to_c_ffi(ty))
                 .collect::<Vec<String>>()
                 .join(", ");
 
@@ -185,7 +189,19 @@ impl CBackend {
         self.header.push_str("typedef signed char i8;\n");
         self.header.push_str("typedef signed short i16;\n");
         self.header.push_str("typedef signed int i32;\n");
-        self.header.push_str("typedef signed long long i64;\n\n");
+        self.header.push_str("typedef signed long long i64;\n");
+
+        self.header.push_str("typedef unsigned char ve_u8;\n");
+        self.header.push_str("typedef unsigned short ve_u16;\n");
+        self.header.push_str("typedef unsigned int ve_u32;\n");
+        self.header.push_str("typedef unsigned long long ve_u64;\n");
+        self.header.push_str("typedef signed char ve_i8;\n");
+        self.header.push_str("typedef signed short ve_i16;\n");
+        self.header.push_str("typedef signed int ve_i32;\n");
+        self.header.push_str("typedef signed long long ve_i64;\n");
+        self.header.push_str("typedef float ve_f32;\n");
+        self.header.push_str("typedef double ve_f64;\n");
+        self.header.push_str("typedef size_t ve_size_t;\n\n");
 
         for include in self.includes.borrow().iter() {
             self.header.push_str(&format!("#include {}\n", include));
@@ -193,19 +209,19 @@ impl CBackend {
 
         self.header.push('\n');
 
-        self.header.push_str("static char* int_to_str(int num) {\n");
+        self.header.push_str("static char* ve_int_to_str(int num) {\n");
         self.header.push_str("    char* buffer = malloc(12);\n");
         self.header.push_str("    sprintf(buffer, \"%d\", num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
 
-        self.header.push_str("static char* float_to_str(float num) {\n");
+        self.header.push_str("static char* ve_float_to_str(float num) {\n");
         self.header.push_str("    char* buffer = malloc(32);\n");
         self.header.push_str("    sprintf(buffer, \"%g\", num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
 
-        self.header.push_str("static char* bool_to_str(bool b) {\n");
+        self.header.push_str("static char* ve_bool_to_str(bool b) {\n");
         self.header.push_str("    const char* val = b ? \"true\" : \"false\";\n");
         self.header.push_str("    size_t len = strlen(val) + 1;\n");
         self.header.push_str("    char* buffer = malloc(len);\n");
@@ -213,13 +229,13 @@ impl CBackend {
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
 
-        self.header.push_str("static char* ptr_to_str(void* ptr) {\n");
+        self.header.push_str("static char* ve_ptr_to_str(void* ptr) {\n");
         self.header.push_str("    char* buffer = malloc(20);\n");
         self.header.push_str("    sprintf(buffer, \"%p\", ptr);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
 
-        self.header.push_str("static char* concat(const char* s1, const char* s2) {\n");
+        self.header.push_str("static char* ve_concat(const char* s1, const char* s2) {\n");
         self.header.push_str("    size_t len1 = strlen(s1);\n");
         self.header.push_str("    size_t len2 = strlen(s2);\n");
         self.header.push_str("    char* result = malloc(len1 + len2 + 1);\n");
@@ -289,11 +305,12 @@ impl CBackend {
             } else {
                 self.type_to_c(&func.return_type)
             };
+            let func_name = if func.name == "main" { func.name.clone() } else { format!("ve_{}", func.name) };
             let params = func.params.iter()
                 .map(|(name, ty)| format!("{} {}", self.type_to_c(ty), name))
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.body.push_str(&format!("{} {}({});\n", return_type, func.name, params));
+            self.body.push_str(&format!("{} {}({});\n", return_type, func_name, params));
         }
 
         for func in &program.functions {
@@ -310,6 +327,8 @@ impl CBackend {
             self.type_to_c(&func.return_type)
         };
 
+        let func_name = if func.name == "main" { func.name.clone() } else { format!("ve_{}", func.name) };
+
         let mut param_strings = Vec::new();
         for (name, ty) in &func.params {
             let c_ty = self.type_to_c(ty);
@@ -318,7 +337,7 @@ impl CBackend {
         }
         let params = param_strings.join(", ");
 
-        self.body.push_str(&format!("{} {}({}) {{\n", return_type, func.name, params));
+        self.body.push_str(&format!("{} {}({}) {{\n", return_type, func_name, params));
 
         for stmt in &func.body {
             self.emit_stmt(stmt)?;
@@ -474,7 +493,7 @@ impl CBackend {
                 for arm in arms {
                     match &arm.pattern {
                         ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
-                            let case_value = format!("{}_{}", enum_name, variant_name);
+                            let case_value = format!("ve_{}_{}", enum_name, variant_name);
                             self.body.push_str(&format!("case {}: {{\n", case_value));
 
                             let body_code = self.emit_expr(&arm.body)?;
@@ -536,7 +555,7 @@ impl CBackend {
                         _ => {
                             let left_conv = self.convert_to_c_str(&left_code, &left_type);
                             let right_conv = self.convert_to_c_str(&right_code, &right_type);
-                            return Ok(format!("concat({}, {})", left_conv, right_conv));
+                            return Ok(format!("ve_concat({}, {})", left_conv, right_conv));
                         }
                     }
                 }
@@ -560,7 +579,7 @@ impl CBackend {
                             _ => {
                                 let left_conv = self.convert_to_c_str(&left_code, &left.get_type());
                                 let right_conv = self.convert_to_c_str(&right_code, &right.get_type());
-                                Ok(format!("concat({}, {})", left_conv, right_conv))
+                                Ok(format!("ve_concat({}, {})", left_conv, right_conv))
                             }
                         }
                     }
@@ -652,7 +671,13 @@ impl CBackend {
                     }
                 }
 
-                Ok(format!("{}({})", name, args_code.join(", ")))
+                let final_name = if self.ffi_functions.contains(name) {
+                    name.clone()
+                } else {
+                    format!("ve_{}", name) 
+                };
+
+                Ok(format!("{}({})", final_name, args_code.join(", ")))
             },
             ast::Expr::Void(_) => Ok("".to_string()),
             ast::Expr::SafeBlock(stmts, _) => {
@@ -689,9 +714,9 @@ impl CBackend {
                 let expr_type = expr.get_type();
 
                 match (&expr_type, target_ty) {
-                    (Type::I32, Type::String) => Ok(format!("int_to_str({})", expr_code)),
-                    (Type::Bool, Type::String) => Ok(format!("bool_to_str({})", expr_code)),
-                    (Type::Pointer(_), Type::String) | (Type::RawPtr, Type::String) => Ok(format!("ptr_to_str({})", expr_code)),
+                    (Type::I32, Type::String) => Ok(format!("ve_int_to_str({})", expr_code)),
+                    (Type::Bool, Type::String) => Ok(format!("ve_bool_to_str({})", expr_code)),
+                    (Type::Pointer(_), Type::String) | (Type::RawPtr, Type::String) => Ok(format!("ve_ptr_to_str({})", expr_code)),
                     (Type::String, Type::I32) => {
                         self.includes.borrow_mut().insert("<stdlib.h>".to_string());
                         Ok(format!("atoi({})", expr_code))
@@ -720,7 +745,7 @@ impl CBackend {
                     field_inits.push(format!(".{} = {}", field_name, field_code));
                 }
 
-                Ok(format!("({}){{ {} }}", name, field_inits.join(", ")))
+                Ok(format!("(ve_{}){{ {} }}", name, field_inits.join(", ")))
             },
             ast::Expr::FieldAccess(obj, field_name, _info) => {
                 let obj_code = self.emit_expr(obj)?;
@@ -806,8 +831,8 @@ impl CBackend {
                                     match array_type {
                                         Type::Array(element_type) | Type::SizedArray(element_type, _) => {
                                             match *element_type {
-                                                Type::I32 => format!("int_to_str({})", expr_code),
-                                                Type::Bool => format!("bool_to_str({})", expr_code),
+                                                Type::I32 => format!("ve_int_to_str({})", expr_code),
+                                                Type::Bool => format!("ve_bool_to_str({})", expr_code),
                                                 Type::String => expr_code,
                                                 _ => format!("\"[unsupported array element type]\"")
                                             }
@@ -824,7 +849,7 @@ impl CBackend {
                         result = part_code;
                         is_first = false;
                     } else {
-                        result = format!("concat({}, {})", result, part_code);
+                        result = format!("ve_concat({}, {})", result, part_code);
                     }
                 }
 
@@ -852,12 +877,11 @@ impl CBackend {
                     args_code.push(self.emit_expr(arg)?);
                 }
 
+                let prefixed_enum = format!("ve_{}", enum_name);
                 if args_code.is_empty() {
-                    // Unit variant constructor
-                    Ok(format!("{}_{}_new()", enum_name, variant_name))
+                    Ok(format!("{}_{}_new()", prefixed_enum, variant_name))
                 } else {
-                    // Tuple variant constructor
-                    Ok(format!("{}_{}_new({})", enum_name, variant_name, args_code.join(", ")))
+                    Ok(format!("{}_{}_new({})", prefixed_enum, variant_name, args_code.join(", ")))
                 }
             }
 
@@ -877,11 +901,9 @@ impl CBackend {
                 for arm in arms {
                     match &arm.pattern {
                         ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
-                            // Generate case for enum variant
-                            let case_value = format!("{}_{}", enum_name, variant_name);
+                            let case_value = format!("ve_{}_{}", enum_name, variant_name);
                             code.push_str(&format!("case {}: {{\n", case_value));
 
-                            // Generate body code
                             let body_code = self.emit_expr(&arm.body)?;
                             if !body_code.ends_with(';') {
                                 code.push_str(&format!("{};\n", body_code));
@@ -939,6 +961,45 @@ impl CBackend {
         Ok(result)
     }
 
+    fn type_to_c_ffi(&self, ty: &Type) -> String {
+        match ty {
+            Type::I32 => "int".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::String => "const char*".to_string(),
+            Type::Void => "void".to_string(),
+            Type::Ellipsis => "...".to_string(),
+            Type::Unknown => "void*".to_string(),
+            Type::Function(args, ret) => {
+                let args_str = args.iter()
+                    .map(|t| self.type_to_c_ffi(t))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret_str = self.type_to_c_ffi(ret);
+                format!("{}(*)({})", ret_str, args_str)
+            },
+            Type::Arena => "struct ArenaAllocator*".to_string(),
+            Type::Pointer(inner) => format!("{}*", self.type_to_c_ffi(inner)),
+            Type::RawPtr => "void*".to_string(),
+            Type::Struct(name) => name.to_string(), 
+            Type::Enum(name) => name.to_string(), 
+            Type::Array(inner) => format!("{}*", self.type_to_c_ffi(inner)),
+            Type::SizedArray(inner, _) => format!("{}*", self.type_to_c_ffi(inner)),
+            Type::Any => "void*".to_string(),
+            Type::F32 => "float".to_string(),
+            Type::I8 => "int8_t".to_string(),
+            Type::I16 => "int16_t".to_string(),
+            Type::I64 => "int64_t".to_string(),
+            Type::U8 => "unsigned char".to_string(),
+            Type::U16 => "uint16_t".to_string(),
+            Type::U32 => "uint32_t".to_string(),
+            Type::U64 => "uint64_t".to_string(),
+            Type::F64 => "double".to_string(),
+            Type::CChar => "char".to_string(),
+            Type::CInt => "int".to_string(),
+            Type::CSize => "size_t".to_string(),
+        }
+    }
+
     fn type_to_c(&self, ty: &Type) -> String {
         match ty {
             Type::I32 => "int".to_string(),
@@ -958,23 +1019,23 @@ impl CBackend {
             Type::Arena => "struct ArenaAllocator*".to_string(),
             Type::Pointer(inner) => format!("{}*", self.type_to_c(inner)),
             Type::RawPtr => "void*".to_string(),
-            Type::Struct(name) => name.to_string(),
-            Type::Enum(name) => name.to_string(),
+            Type::Struct(name) => format!("ve_{}", name),
+            Type::Enum(name) => format!("ve_{}", name),
             Type::Array(inner) => format!("{}*", self.type_to_c(inner)),
             Type::SizedArray(inner, _) => format!("{}*", self.type_to_c(inner)),
             Type::Any => "void*".to_string(),
             Type::F32 => "float".to_string(),
-            Type::I8 => "int8_t".to_string(),
-            Type::I16 => "int16_t".to_string(),
-            Type::I64 => "int64_t".to_string(),
-            Type::U8 => "unsigned char".to_string(),
-            Type::U16 => "uint16_t".to_string(),
-            Type::U32 => "uint32_t".to_string(),
-            Type::U64 => "uint64_t".to_string(),
+            Type::I8 => "ve_i8".to_string(),
+            Type::I16 => "ve_i16".to_string(),
+            Type::I64 => "ve_i64".to_string(),
+            Type::U8 => "ve_u8".to_string(),
+            Type::U16 => "ve_u16".to_string(),
+            Type::U32 => "ve_u32".to_string(),
+            Type::U64 => "ve_u64".to_string(),
             Type::F64 => "double".to_string(),
             Type::CChar => "char".to_string(),
             Type::CInt => "int".to_string(),
-            Type::CSize => "size_t".to_string(),
+            Type::CSize => "ve_size_t".to_string(),
         }
     }
 
@@ -987,12 +1048,12 @@ impl CBackend {
     fn convert_to_c_str(&mut self, code: &str, ty: &Type) -> String {
         self.includes.borrow_mut().insert("<string.h>".to_string());
         match ty {
-            Type::I32 => format!("int_to_str({})", code),
-            Type::Bool => format!("bool_to_str({})", code),
-            Type::Pointer(_) | Type::RawPtr => format!("ptr_to_str({})", code),
+            Type::I32 => format!("ve_int_to_str({})", code),
+            Type::Bool => format!("ve_bool_to_str({})", code),
+            Type::Pointer(_) | Type::RawPtr => format!("ve_ptr_to_str({})", code),
             Type::String => code.to_string(),
-            Type::Struct(name) => format!("{}_to_str(&{})", name, code),
-            Type::F32 => format!("float_to_str({})", code),
+            Type::Struct(name) => format!("ve_{}_to_str(&{})", name, code),
+            Type::F32 => format!("ve_float_to_str({})", code),
             Type::Array(_) => "[array]".to_string(),
             Type::SizedArray(_, _) => "[sized array]".to_string(),
             Type::Any => "[any]".to_string(),
@@ -1008,21 +1069,22 @@ impl CBackend {
     }
 
     fn emit_struct(&mut self, struct_def: &ast::StructDef) -> Result<(), CompileError> {
-        let mut struct_code = format!("typedef struct {} {{\n", struct_def.name);
+        let struct_name = format!("ve_{}", struct_def.name);
+        let mut struct_code = format!("typedef struct {} {{\n", struct_name);
 
         for field in &struct_def.fields {
             let field_type = self.type_to_c(&field.ty);
             struct_code.push_str(&format!("    {} {};\n", field_type, field.name));
         }
 
-        struct_code.push_str(&format!("}} {};\n\n", struct_def.name));
+        struct_code.push_str(&format!("}} {};\n\n", struct_name));
         self.header.push_str(&struct_code);
 
         Ok(())
     }
 
     fn emit_enum(&mut self, enum_def: &ast::EnumDef) -> Result<(), CompileError> {
-        let enum_name = &enum_def.name;
+        let enum_name = format!("ve_{}", enum_def.name);
 
         self.header.push_str(&format!("typedef enum {{\n"));
         for (i, variant) in enum_def.variants.iter().enumerate() {
@@ -1097,7 +1159,7 @@ impl CBackend {
         for arm in arms {
             match &arm.pattern {
                 ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
-                    code.push_str(&format!("    case {}_{}: {{\n", enum_name, variant_name));
+                    code.push_str(&format!("    case ve_{}_{}: {{\n", enum_name, variant_name));
 
                     for (i, pattern) in patterns.iter().enumerate() {
                         if let ast::Pattern::Variable(var_name, _) = pattern {
@@ -1148,9 +1210,8 @@ impl CBackend {
         for arm in arms {
             match &arm.pattern {
                 ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
-                    code.push_str(&format!("    case {}_{}: {{\n", enum_name, variant_name));
+                    code.push_str(&format!("    case ve_{}_{}: {{\n", enum_name, variant_name));
 
-                    // Extract pattern variables
                     for (i, pattern) in patterns.iter().enumerate() {
                         if let ast::Pattern::Variable(var_name, _) = pattern {
                             code.push_str(&format!("        int {} = {}.data.{}.field{};\n",
@@ -1158,7 +1219,6 @@ impl CBackend {
                         }
                     }
 
-                    // Generate body and assign to result
                     let body_code = self.emit_expr(&arm.body)?;
                     code.push_str(&format!("        {} = {};\n", result_var, body_code));
                     code.push_str("        break;\n");
