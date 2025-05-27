@@ -8,17 +8,38 @@ Velang is in **EARLY DEVELOPMENT** – syntax and features will change radically
 Join our [Discord](https://dsc.gg/velang) server to chat with the community and get help with the language.
 
 ## Installation
+
+### Quick Install (Recommended)
+
+**Unix (Linux/macOS):**
+```bash
+curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
+```
+
+**Windows (Command Prompt):**
+```cmd
+curl -o install.bat https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.bat && install.bat
+```
+
+### Manual Installation
+
 Requirements:
 - Rust 1.70+
-- Clang 17+
-- Windows: Visual Studio Build Tools
+- Clang 17+ (Unix) / Visual Studio Build Tools (Windows)
+- Git
 
-Install:
 ```bash
 git clone https://github.com/velang-org/ve
-cd velang
+cd ve
 cargo install --path .
 ```
+
+For detailed installation instructions and troubleshooting, see [`scripts/INSTALL.md`](scripts/INSTALL.md).
 
 ## Usage
 ```bash
