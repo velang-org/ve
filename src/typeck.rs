@@ -137,10 +137,10 @@ impl TypeChecker {
                 let expr_ty = self.check_expr(expr).unwrap_or(Type::Unknown);
                 if let Some(decl_ty) = decl_ty {
                     if !Self::is_convertible(&expr_ty, decl_ty) {
-                        return Err(self.report_error_vec(
+                        self.report_error(
                             &format!("Cannot convert {} to {}", expr_ty, decl_ty),
                             expr.span(),
-                        ));
+                        );
                     }
                 }
 
@@ -256,14 +256,13 @@ impl TypeChecker {
             Expr::Var(name, ast::ExprInfo {span, ty: expr_type } ) => {
                 let ty = match name.as_str() {
                     "true" | "false" => Type::Bool,
-                    _ => self.context
-                        .variables
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| {
+                    _ => match self.context.variables.get(name).cloned() {
+                        Some(var_type) => var_type,
+                        None => {
                             self.report_error(&format!("Undefined variable '{}'", name), *span);
-                            vec![]
-                        })?,
+                            Type::Unknown
+                        }
+                    }
                 };
                 *expr_type = ty.clone();
                 Ok(ty)
@@ -376,9 +375,13 @@ impl TypeChecker {
                 if found.is_none() {
                     found = self.functions.iter().find(|(k, _)| k.as_str() == name).map(|(_, v)| v.clone());
                 }
-                let Some((param_types, return_type)) = found else {
-                    self.report_error(&format!("Undefined function '{}'", name), *span);
-                    return Ok(Type::Unknown);
+                let (param_types, return_type) = match found {
+                    Some(types) => types,
+                    None => {
+                        self.report_error(&format!("Undefined function '{}'", name), *span);
+                        *expr_type = Type::Unknown;
+                        return Ok(Type::Unknown);
+                    }
                 };
 
                 let has_ellipsis = param_types.last() == Some(&Type::Ellipsis);
@@ -467,6 +470,7 @@ impl TypeChecker {
                     Some(fields) => fields.clone(),
                     None => {
                         self.report_error(&format!("Undefined struct '{}'", name), *span);
+                        *expr_type = Type::Unknown;
                         return Ok(Type::Unknown);
                     }
                 };
@@ -551,6 +555,7 @@ impl TypeChecker {
             Expr::ArrayInit(elements, ast::ExprInfo { span, ty: expr_type }) => {
                 if elements.is_empty() {
                     self.report_error("Cannot infer type of empty array", *span);
+                    *expr_type = Type::Unknown;
                     return Ok(Type::Unknown);
                 }
 
@@ -578,7 +583,6 @@ impl TypeChecker {
                         &format!("Array index must be i32, got {}", index_type),
                         index.span()
                     );
-                    return Ok(Type::Unknown);
                 }
 
                 match array_type {

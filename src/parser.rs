@@ -1077,7 +1077,6 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                // struct initialization
                 if self.check(Token::LBrace) && !self.is_in_comparison_context(){
                     self.advance();
 

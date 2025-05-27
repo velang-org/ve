@@ -126,9 +126,57 @@ pub fn run_benchmark(
             
             let writer = StandardStream::stderr(ColorChoice::Auto);
             let config = term::Config::default();
-            for error in errors {
+            
+            for error in &errors {
                 term::emit(&mut writer.lock(), &config, &files, &error)?;
+                
+                let file_id = error.labels.get(0).map(|l| l.file_id);
+                let file_path = file_id.and_then(|fid| Some(files.name(fid))).map(|n| n.to_string_lossy().to_string());
+                let module_info = file_path.as_ref().and_then(|path: &String| {
+                    if let Some(_idx) = path.find("lib/std") {
+                        Some("standard library".to_string())
+                    } else if let Some(lib_start) = path.find("lib/") {
+                        let rest = &path[lib_start + 4..];
+                        if let Some(end) = rest.find('/') {
+                            let lib_name = &rest[..end];
+                            if lib_name != "std" {
+                                return Some(format!("external library '{}'", lib_name));
+                            }
+                        }
+                        None
+                    } else if let Some(ex_start) = path.find("examples/") {
+                        let rest = &path[ex_start + 9..];
+                        if let Some(end) = rest.find('/') {
+                            let ex_name = &rest[..end];
+                            return Some(format!("example module '{}'", ex_name));
+                        }
+                        None
+                    } else {
+                        None
+                    }
+                });
+
+                let location = if let Some(path) = file_path {
+                    match module_info {
+                        Some(module) => format!("in file '{}' ({})", path, module),
+                        None => format!("in file '{}'", path),
+                    }
+                } else {
+                    "in unknown location".to_string()
+                };
+
+                eprintln!("\nType checker error {}: {}", location, error.message);
+
+                if let Some(label) = error.labels.get(0) {
+                    eprintln!("  --> at {}..{}", label.range.start, label.range.end);
+                    eprintln!("  = detail: {}", label.message);
+                }
+
+                for note in &error.notes {
+                    eprintln!("  note: {}", note);
+                }
             }
+            
             return Err(anyhow!("Type checking failed"));
         }
     }

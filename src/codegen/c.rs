@@ -716,7 +716,8 @@ impl CBackend {
                 match (&expr_type, target_ty) {
                     (Type::I32, Type::String) => Ok(format!("ve_int_to_str({})", expr_code)),
                     (Type::Bool, Type::String) => Ok(format!("ve_bool_to_str({})", expr_code)),
-                    (Type::Pointer(_), Type::String) | (Type::RawPtr, Type::String) => Ok(format!("ve_ptr_to_str({})", expr_code)),
+                    (Type::RawPtr, Type::String) => Ok(format!("(const char*)({})", expr_code)),
+                    (Type::Pointer(_), Type::String) => Ok(format!("ve_ptr_to_str({})", expr_code)),
                     (Type::String, Type::I32) => {
                         self.includes.borrow_mut().insert("<stdlib.h>".to_string());
                         Ok(format!("atoi({})", expr_code))
