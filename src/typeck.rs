@@ -10,6 +10,8 @@ struct Context {
     in_safe: bool,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
     enum_defs: HashMap<String, Vec<String>>,
+    inferring_return_type: bool,
+    inferred_return_type: Option<Type>,
 }
 
 impl Context {
@@ -20,6 +22,8 @@ impl Context {
             in_safe: false,
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
+            inferring_return_type: false,
+            inferred_return_type: None,
         }
     }
 }
@@ -122,8 +126,30 @@ impl TypeChecker {
 
         let original_ctx = std::mem::replace(&mut self.context, local_ctx);
 
+        let mut inferred_return_type: Option<Type> = None;
+        let explicit_return_type = func.return_type != Type::Void;
+        
+        if !explicit_return_type {
+            self.context.inferring_return_type = true;
+        }
+
         for stmt in &mut func.body {
             self.check_stmt(stmt)?;
+            
+            if !explicit_return_type && self.context.inferred_return_type.is_some() {
+                if inferred_return_type.is_none() {
+                    inferred_return_type = self.context.inferred_return_type.clone();
+                    self.context.current_return_type = inferred_return_type.clone().unwrap();
+                    func.return_type = inferred_return_type.clone().unwrap();
+                    
+                    if let Some((params, _)) = self.functions.get(&func.name).cloned() {
+                        self.functions.insert(
+                            func.name.clone(),
+                            (params, inferred_return_type.clone().unwrap())
+                        );
+                    }
+                }
+            }
         }
 
         self.context = original_ctx;
@@ -166,8 +192,14 @@ impl TypeChecker {
             },
             Stmt::Return(expr, _) => {
                 let expr_ty = self.check_expr(expr).unwrap_or(Type::Unknown);
-                let expected_type = self.context.current_return_type.clone();
-                self.expect_type(&expr_ty, &expected_type, expr.span())?;
+                
+                if self.context.inferring_return_type && self.context.inferred_return_type.is_none() {
+                    self.context.inferred_return_type = Some(expr_ty.clone());
+                    self.context.current_return_type = expr_ty;
+                } else {
+                    let expected_type = self.context.current_return_type.clone();
+                    self.expect_type(&expr_ty, &expected_type, expr.span())?;
+                }
             },
             Stmt::Defer(expr, span) => {
                 let expr_ty = self.check_expr(expr)?;
@@ -761,7 +793,6 @@ impl TypeChecker {
             ast::Pattern::EnumVariant(enum_name, _variant_name, patterns, span) => {
                 match expected_ty {
                     Type::Enum(expected_enum) if expected_enum == enum_name => {
-                        // TODO: Validate variant exists and check pattern arguments
                         for pattern in patterns {
                             self.check_pattern(pattern, &Type::Unknown)?;
                         }
