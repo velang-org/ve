@@ -102,7 +102,18 @@ function Test-Dependencies {
 function Install-VeLang {
     Write-ColoredOutput "Creating temporary directory..." "Info"
     $tempDir = Join-Path $env:TEMP "velang_install_$(Get-Random)"
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    
+    # Try to create directory and verify write permissions
+    try {
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        $testFile = Join-Path $tempDir "test.txt"
+        "test" | Out-File $testFile -Encoding ASCII
+        Remove-Item $testFile -Force
+        Write-ColoredOutput "Temporary directory created: $tempDir" "Info"
+    } catch {
+        Write-ColoredOutput "Cannot create or write to temporary directory: $tempDir" "Error"
+        throw "Temporary directory creation failed: $_"
+    }
     
     try {
         Write-ColoredOutput "Downloading VeLang source code..." "Info"
@@ -157,42 +168,34 @@ function Install-VeLang {
             Write-ColoredOutput "Proceeding with clone attempt..." "Info"
         }
         
-        # First attempt with error suppression
+        # Check if 've' directory already exists and remove it
+        if (Test-Path "ve") {
+            Write-ColoredOutput "Removing existing 've' directory..." "Info"
+            Remove-Item "ve" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        # Clone repository
+        Write-ColoredOutput "Cloning repository..." "Info"
         if ($Verbose) {
             Write-ColoredOutput "Running in verbose mode - showing all output" "Info"
             git clone -b $targetBranch https://github.com/velang-org/ve.git
+            $cloneExitCode = $LASTEXITCODE
         } else {
-            $cloneOutput = & git clone -b $targetBranch https://github.com/velang-org/ve.git 2>&1
+            # Suppress progress output but capture errors
+            $cloneOutput = git clone -b $targetBranch https://github.com/velang-org/ve.git --quiet 2>&1
+            $cloneExitCode = $LASTEXITCODE
         }
         
-        if ($LASTEXITCODE -ne 0) {
-            if (-not $Verbose) {
-                # Show the actual error and try again
-                Write-ColoredOutput "Clone failed on first attempt" "Warning"
-                Write-ColoredOutput "Git error output: $cloneOutput" "Warning"
-                Write-ColoredOutput "Retrying clone with full output..." "Info"
-                
-                # Second attempt with full output visible
-                git clone -b $targetBranch https://github.com/velang-org/ve.git
+        # Check if clone was successful by verifying directory exists, not just exit code
+        if (Test-Path "ve") {
+            Write-ColoredOutput "Repository cloned successfully" "Success"
+        } else {
+            Write-ColoredOutput "Clone failed - no 've' directory found (exit code: $cloneExitCode)" "Error"
+            if ($cloneOutput) {
+                Write-ColoredOutput "Git output: $cloneOutput" "Error"
             }
-            
-            if ($LASTEXITCODE -ne 0) {
-                Write-ColoredOutput "Failed to clone VeLang repository from branch '$targetBranch'" "Error"
-                Write-ColoredOutput "This could be due to:" "Info"
-                Write-Host "  - Internet connectivity issues"
-                Write-Host "  - Branch '$targetBranch' does not exist"
-                Write-Host "  - GitHub access restrictions"
-                Write-Host "  - Git configuration issues"
-                throw "Repository clone failed"
-            }
+            throw "Repository clone failed"
         }
-        
-        # Verify that the directory was created
-        if (-not (Test-Path "ve")) {
-            throw "Repository clone completed but 've' directory not found"
-        }
-        
-        Write-ColoredOutput "Source code downloaded successfully" "Success"
         
         Set-Location "ve"
         
