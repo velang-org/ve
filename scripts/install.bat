@@ -23,7 +23,7 @@ if errorlevel 1 (
     echo [ERROR] Git is not installed or not in PATH
     echo Please install Git from: https://git-scm.com/download/win
     pause
-    exit /b 1
+    goto :eof
 )
 
 REM Check for Rust/Cargo
@@ -32,7 +32,7 @@ if errorlevel 1 (
     echo [ERROR] Rust/Cargo is not installed
     echo Please install Rust from: https://rustup.rs/
     pause
-    exit /b 1
+    goto :eof
 )
 
 REM Check for Visual Studio Build Tools or MSVC
@@ -44,7 +44,7 @@ if errorlevel 1 (
     echo https://visualstudio.microsoft.com/visual-cpp-build-tools/
     echo.
     set /p continue="Continue anyway? (y/N): "
-    if /i not "!continue!"=="y" exit /b 1
+    if /i not "!continue!"=="y" goto :eof
 )
 
 echo [SUCCESS] Dependencies check completed
@@ -59,7 +59,7 @@ git clone https://github.com/velang-org/ve.git >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Failed to clone VeLang repository
     pause
-    exit /b 1
+    goto :eof
 )
 echo [SUCCESS] Source code downloaded successfully
 
@@ -70,7 +70,7 @@ cargo build --release --quiet >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Failed to build VeLang
     pause
-    exit /b 1
+    goto :eof
 )
 
 echo [SUCCESS] VeLang built successfully

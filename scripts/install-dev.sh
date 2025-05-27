@@ -25,6 +25,18 @@ print_error() {
     echo -e "\033[0;31m[ERROR]\033[0m $1"
 }
 
+# Function to handle script exit when run via curl/wget
+safe_exit() {
+    local exit_code=${1:-1}
+    if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+        # Script is being run directly
+        exit $exit_code
+    else
+        # Script is being sourced (likely via curl | bash)
+        return $exit_code
+    fi
+}
+
 print_banner() {
     echo -e "${BLUE}"
     echo "╭─────────────────────────────────────╮"
@@ -45,7 +57,7 @@ main() {
         print_success "Build completed!"
     else
         print_error "Build failed!"
-        exit 1
+        safe_exit 1
     fi
     
     print_info "Installing VeLang..."
@@ -53,7 +65,7 @@ main() {
         print_success "Installation completed!"
     else
         print_error "Installation failed!"
-        exit 1
+        safe_exit 1
     fi
     
     print_success "VeLang installed successfully!"

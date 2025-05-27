@@ -39,6 +39,18 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Function to handle script exit when run via curl/wget
+safe_exit() {
+    local exit_code=${1:-1}
+    if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+        # Script is being run directly
+        exit $exit_code
+    else
+        # Script is being sourced (likely via curl | bash)
+        return $exit_code
+    fi
+}
+
 check_dependencies() {
     print_info "Checking dependencies..."
     
@@ -46,13 +58,13 @@ check_dependencies() {
     if ! command -v rustc &> /dev/null; then
         print_error "Rust is not installed. Please install Rust first:"
         echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-        exit 1
+        safe_exit 1
     fi
     
     # Check for Cargo
     if ! command -v cargo &> /dev/null; then
         print_error "Cargo is not installed. Please install Rust with Cargo."
-        exit 1
+        safe_exit 1
     fi
     
     # Check for Clang
@@ -65,7 +77,7 @@ check_dependencies() {
         read -p "Continue anyway? (y/N): " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+            safe_exit 1
         fi
     fi
     
@@ -94,7 +106,7 @@ download_and_build() {
         print_success "Source code downloaded successfully"
     else
         print_error "Failed to clone VeLang repository"
-        exit 1
+        safe_exit 1
     fi
     
     cd ve
@@ -104,7 +116,7 @@ download_and_build() {
         print_success "VeLang built successfully"
     else
         print_error "Failed to build VeLang"
-        exit 1
+        safe_exit 1
     fi
     
     # Create installation directory
@@ -176,7 +188,7 @@ verify_installation() {
         fi
     else
         print_error "VeLang binary not found"
-        exit 1
+        safe_exit 1
     fi
 }
 
@@ -202,7 +214,7 @@ main() {
 # Check if running with bash
 if [ -z "$BASH_VERSION" ]; then
     print_error "This script requires Bash to run"
-    exit 1
+    safe_exit 1
 fi
 
 # Run main function

@@ -48,7 +48,7 @@ function Test-Dependencies {
     # Check PowerShell version
     if ($PSVersionTable.PSVersion.Major -lt 5) {
         Write-ColoredOutput "PowerShell 5.0+ is required" "Error"
-        exit 1
+        throw "PowerShell 5.0+ is required"
     }
     
     # Check for Git
@@ -60,7 +60,7 @@ function Test-Dependencies {
     catch {
         Write-ColoredOutput "Git is not installed or not in PATH" "Error"
         Write-Host "Please install Git from: https://git-scm.com/download/win"
-        exit 1
+        throw "Git is not installed"
     }
     
     # Check for Rust/Cargo
@@ -72,7 +72,7 @@ function Test-Dependencies {
     catch {
         Write-ColoredOutput "Rust/Cargo is not installed" "Error"
         Write-Host "Please install Rust from: https://rustup.rs/"
-        exit 1
+        throw "Rust/Cargo is not installed"
     }
     
     # Check for MSVC compiler
@@ -89,7 +89,7 @@ function Test-Dependencies {
         if (-not $Force) {
             $continue = Read-Host "Continue anyway? (y/N)"
             if ($continue -ne "y" -and $continue -ne "Y") {
-                exit 1
+                throw "MSVC compiler required"
             }
         }
     }
@@ -194,5 +194,19 @@ try {
 }
 catch {
     Write-ColoredOutput "Installation failed: $_" "Error"
-    exit 1
+    Write-Host ""
+    Write-ColoredOutput "If you continue to have issues, please visit:" "Info"
+    Write-Host "  GitHub Issues: https://github.com/velang-org/ve/issues"
+    Write-Host "  Discord: https://dsc.gg/velang"
+    Write-Host ""
+    
+    # Check if we're being run via Invoke-Expression
+    $callingScript = (Get-PSCallStack)[1].Command
+    if ($callingScript -eq "<ScriptBlock>" -or $callingScript -like "*Invoke-Expression*") {
+        # If run via iex, pause instead of exiting
+        Write-Host "Press any key to continue..." -ForegroundColor Yellow
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    } else {
+        exit 1
+    }
 }
