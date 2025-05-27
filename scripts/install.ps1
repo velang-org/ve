@@ -3,7 +3,8 @@
 
 param(
     [switch]$Force,
-    [string]$InstallPath = "$env:USERPROFILE\.velang"
+    [string]$InstallPath = "$env:USERPROFILE\.velang",
+    [string]$Branch = "main"
 )
 
 $ErrorActionPreference = "Stop"
@@ -106,9 +107,33 @@ function Install-VeLang {
         Write-ColoredOutput "Downloading VeLang source code..." "Info"
         Set-Location $tempDir
         
-        git clone https://github.com/velang-org/ve.git *>$null
+        # Determine which branch to use - priority order:
+        # 1. Explicitly provided -Branch parameter
+        # 2. VELANG_BRANCH environment variable  
+        # 3. Auto-detection from script URL
+        # 4. Default to main
+        $targetBranch = $Branch
+        
+        if ($env:VELANG_BRANCH -and $Branch -eq "main") {
+            $targetBranch = $env:VELANG_BRANCH
+            Write-ColoredOutput "Using branch from environment: $targetBranch" "Info"
+        } elseif ($Branch -ne "main") {
+            Write-ColoredOutput "Using specified branch: $targetBranch" "Info"
+        } else {
+            try {
+                $callingScript = (Get-PSCallStack)[1].Command
+                if ($callingScript -like "*feature/installer*") {
+                    $targetBranch = "feature/installer"
+                    Write-ColoredOutput "Auto-detected development branch: $targetBranch" "Info"
+                }
+            } catch {
+                # Use main as fallback
+            }
+        }
+        
+        git clone -b $targetBranch https://github.com/velang-org/ve.git *>$null
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to clone VeLang repository"
+            throw "Failed to clone VeLang repository from branch '$targetBranch'"
         }
         Write-ColoredOutput "Source code downloaded successfully" "Success"
         

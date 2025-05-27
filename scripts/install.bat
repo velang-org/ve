@@ -55,9 +55,28 @@ mkdir "%TEMP_DIR%"
 
 echo [INFO] Downloading VeLang source code...
 cd /d "%TEMP_DIR%"
-git clone https://github.com/velang-org/ve.git >nul 2>&1
+
+REM Determine which branch to use - priority order:
+REM 1. VELANG_BRANCH environment variable
+REM 2. Auto-detection from script context
+REM 3. Default to main
+set "BRANCH=main"
+
+if defined VELANG_BRANCH (
+    set "BRANCH=%VELANG_BRANCH%"
+    echo [INFO] Using branch from environment: !BRANCH!
+) else (
+    REM Check if we're being run from feature/installer context
+    echo %0 | findstr "feature/installer" >nul 2>&1
+    if not errorlevel 1 (
+        set "BRANCH=feature/installer"
+        echo [INFO] Auto-detected development branch: !BRANCH!
+    )
+)
+
+git clone -b %BRANCH% https://github.com/velang-org/ve.git >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Failed to clone VeLang repository
+    echo [ERROR] Failed to clone VeLang repository from branch '%BRANCH%'
     pause
     goto :eof
 )

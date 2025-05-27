@@ -101,11 +101,25 @@ download_and_build() {
     TEMP_DIR=$(mktemp -d)
     cd "$TEMP_DIR"
     
+    # Determine which branch to use - priority order:
+    # 1. VELANG_BRANCH environment variable
+    # 2. Auto-detection from script URL  
+    # 3. Default to main
+    BRANCH="main"
+    
+    if [ -n "$VELANG_BRANCH" ]; then
+        BRANCH="$VELANG_BRANCH"
+        print_info "Using branch from environment: $BRANCH"
+    elif [[ "${BASH_SOURCE[0]}" == *"feature/installer"* ]] || [[ "$0" == *"feature/installer"* ]]; then
+        BRANCH="feature/installer"
+        print_info "Auto-detected development branch: $BRANCH"
+    fi
+    
     # Clone the repository
-    if git clone https://github.com/velang-org/ve.git > /dev/null 2>&1; then
+    if git clone -b "$BRANCH" https://github.com/velang-org/ve.git > /dev/null 2>&1; then
         print_success "Source code downloaded successfully"
     else
-        print_error "Failed to clone VeLang repository"
+        print_error "Failed to clone VeLang repository from branch '$BRANCH'"
         safe_exit 1
     fi
     
