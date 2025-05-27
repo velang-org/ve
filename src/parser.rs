@@ -1852,7 +1852,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
     let mut paren_level = 0;
     let mut bracket_level = 0;
 
-    let mut in_array_access = false;
+    let mut _in_array_access = false;
     let mut array_access_positions = Vec::new();
 
     for i in 0..chars.len() {
@@ -1860,7 +1860,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
             '[' => {
                 bracket_level += 1;
                 if bracket_level == 1 && paren_level == 0 {
-                    in_array_access = true;
+                    _in_array_access = true;
                     array_access_positions.push(i);
                 }
             },
@@ -1868,7 +1868,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
                 if bracket_level > 0 {
                     bracket_level -= 1;
                     if bracket_level == 0 && paren_level == 0 {
-                        in_array_access = false;
+                        _in_array_access = false;
                         array_access_positions.push(i);
                     }
                 }
@@ -1879,7 +1879,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         }
     }
 
-    let mut add_sub_pos = None;
+    let mut _add_sub_pos = None;
     for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
@@ -1896,7 +1896,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         }
     }
 
-    let mut mul_div_pos = None;
+    let mut _mul_div_pos = None;
     for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
@@ -1917,7 +1917,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         }
     }
 
-    let mut pow_pos = None;
+    let mut _pow_pos = None;
     for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;

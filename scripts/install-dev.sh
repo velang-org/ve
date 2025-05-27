@@ -1,7 +1,34 @@
 #!/bin/bash
 
 # Quick local installer for VeLang development
-# This script allows developers to quickly install VeLang from the current directory
+#    print_info "Building VeLang..."
+    if [ "$VERBOSE" = "1" ]; then
+        print_info "Running in verbose mode - showing all output"
+        if cargo build --release; then
+            print_success "Build completed!"
+        else
+            print_error "Build failed!"
+            safe_exit 1
+        fi
+    else
+        # Capture output to check for errors vs warnings
+        build_output=$(cargo build --release 2>&1)
+        build_exit_code=$?
+        
+        if [ $build_exit_code -ne 0 ]; then
+            # Check if output contains actual errors (not just warnings)
+            if echo "$build_output" | grep -q "error:"; then
+                print_error "Build failed with errors:"
+                echo "$build_output"
+                safe_exit 1
+            else
+                # Only warnings, continue
+                print_success "Build completed with warnings (ignored)"
+            fi
+        else
+            print_success "Build completed!"
+        fi
+    fiws developers to quickly install VeLang from the current directory
 
 set -e
 

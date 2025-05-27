@@ -181,9 +181,11 @@ function Install-VeLang {
             git clone -b $targetBranch https://github.com/velang-org/ve.git
             $cloneExitCode = $LASTEXITCODE
         } else {
-            # Suppress progress output but capture errors
+            # Show progress for clone
+            Write-Progress -Activity "Installing VeLang" -Status "Downloading source code..." -PercentComplete 25
             $cloneOutput = git clone -b $targetBranch https://github.com/velang-org/ve.git --quiet 2>&1
             $cloneExitCode = $LASTEXITCODE
+            Write-Progress -Activity "Installing VeLang" -Status "Source code downloaded" -PercentComplete 30
         }
         
         # Check if clone was successful by verifying directory exists, not just exit code
@@ -200,23 +202,46 @@ function Install-VeLang {
         Set-Location "ve"
         
         Write-ColoredOutput "Building VeLang..." "Info"
-        $env:RUSTFLAGS = "--allow warnings"
-        $buildOutput = & cargo build --release --quiet 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-ColoredOutput "Build failed. Output:" "Error"
-            Write-Host $buildOutput
-            throw "Failed to build VeLang"
+        
+        if ($Verbose) {
+            Write-ColoredOutput "Running build in verbose mode" "Info"
+            $buildOutput = & cargo build --release 2>&1
+            $buildExitCode = $LASTEXITCODE
+        } else {
+            # Use progress bar for build
+            Write-Progress -Activity "Building VeLang" -Status "Compiling source code..." -PercentComplete 50
+            $buildOutput = & cargo build --release 2>&1
+            $buildExitCode = $LASTEXITCODE
+            Write-Progress -Activity "Building VeLang" -Completed
+        }
+        
+        # Check if build failed (ignore warnings)
+        if ($buildExitCode -ne 0) {
+            # Check if the output contains only warnings (not errors)
+            $hasErrors = $buildOutput | Where-Object { $_ -match "error:" }
+            if ($hasErrors) {
+                Write-ColoredOutput "Build failed with errors:" "Error"
+                Write-Host $buildOutput
+                throw "Failed to build VeLang"
+            } else {
+                # Only warnings, continue with installation
+                Write-ColoredOutput "Build completed with warnings (ignored)" "Warning"
+            }
         }
         
         Write-ColoredOutput "VeLang built successfully" "Success"
         
         Write-ColoredOutput "Installing VeLang..." "Info"
+        Write-Progress -Activity "Installing VeLang" -Status "Setting up installation..." -PercentComplete 70
+        
         if (-not (Test-Path $InstallPath)) {
             New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
         }
         
         $binaryPath = Join-Path $InstallPath "ve.exe"
         Copy-Item "target\release\ve.exe" $binaryPath -Force
+        
+        Write-Progress -Activity "Installing VeLang" -Status "Copying files..." -PercentComplete 80
         
         # Copy standard library
         if (Test-Path "lib") {
@@ -227,6 +252,8 @@ function Install-VeLang {
         } else {
             Write-ColoredOutput "Standard library directory not found - some imports may fail" "Warning"
         }
+        
+        Write-Progress -Activity "Installing VeLang" -Status "Updating PATH..." -PercentComplete 90
         
         Write-ColoredOutput "VeLang installed to $InstallPath" "Success"
         
@@ -240,6 +267,8 @@ function Install-VeLang {
         } else {
             Write-ColoredOutput "$InstallPath already in PATH" "Info"
         }
+        
+        Write-Progress -Activity "Installing VeLang" -Status "Verifying installation..." -PercentComplete 95
         
         # Verify installation
         Write-ColoredOutput "Verifying installation..." "Info"
@@ -256,6 +285,10 @@ function Install-VeLang {
         catch {
             Write-ColoredOutput "VeLang binary exists but may not be working correctly: $_" "Warning"
         }
+        
+        Write-Progress -Activity "Installing VeLang" -Status "Installation completed" -PercentComplete 100
+        Start-Sleep -Seconds 1
+        Write-Progress -Activity "Installing VeLang" -Completed
     }
     finally {
         # Cleanup
