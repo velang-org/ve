@@ -5,8 +5,6 @@ param(
     [string]$Branch = $env:VELANG_BRANCH
 )
 
-# Configuration
-$VELANG_VERSION = "0.1.0"
 $INSTALL_DIR = Join-Path $env:USERPROFILE ".velang"
 $TEMP_DIR = Join-Path $env:TEMP "velang_install"
 
@@ -86,6 +84,7 @@ New-Item -ItemType Directory -Path $TEMP_DIR -Force | Out-Null
 
 # Download VeLang source code
 Write-Message "INFO" "Downloading VeLang source code..."
+$originalLocation = Get-Location
 Set-Location $TEMP_DIR
 
 # Determine which branch to use - priority order:
@@ -139,7 +138,7 @@ if (-not (Test-Path $INSTALL_DIR)) {
     New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null
 }
 
-$sourceExe = Join-Path "target" "release" "ve.exe"
+$sourceExe = Join-Path (Join-Path "target" "release") "ve.exe"
 $targetExe = Join-Path $INSTALL_DIR "ve.exe"
 Copy-Item $sourceExe $targetExe -Force
 
@@ -174,11 +173,11 @@ catch {
     Write-Message 'WARNING' 'Failed to add VeLang to PATH. You may need to add it manually.'
 }
 
-Write-Message 'SUCCESS' 'VeLang installed to $INSTALL_DIR'
+Write-Message 'SUCCESS' "VeLang installed to $INSTALL_DIR"
 
 # Cleanup
 Write-Message 'INFO' 'Cleaning up...'
-Set-Location $env:TEMP
+Set-Location $originalLocation
 Remove-Item $TEMP_DIR -Recurse -Force
 
 # Verify installation
