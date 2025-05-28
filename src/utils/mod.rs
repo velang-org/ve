@@ -274,6 +274,13 @@ fn suggest_similar_files(missing_path: &Path) -> Option<String> {
 
 fn get_lib_path() -> Result<PathBuf> {
     if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let lib_dir = exe_dir.join("lib");
+            if lib_dir.exists() {
+                return Ok(lib_dir);
+            }
+        }
+        
         let project_root = exe_path.parent()
             .and_then(|p| p.parent())
             .and_then(|p| p.parent());
@@ -285,42 +292,67 @@ fn get_lib_path() -> Result<PathBuf> {
             }
         }
         
-        if let Some(exe_dir) = exe_path.parent() {
-            let lib_dir = exe_dir.join("lib");
+        let deeper_root = exe_path.parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent());
+            
+        if let Some(root) = deeper_root {
+            let lib_dir = root.join("lib");
             if lib_dir.exists() {
                 return Ok(lib_dir);
             }
         }
     }
     
-    let potential_paths = vec![
-        PathBuf::from(env::var("HOME").unwrap_or_default()).join(".velang").join("lib"),
-        PathBuf::from(env::var("USERPROFILE").unwrap_or_default()).join(".velang").join("lib"),
+
+    let mut potential_paths = Vec::new();
+    
+
+    if let Ok(home) = env::var("HOME") {
+        potential_paths.push(PathBuf::from(home).join(".velang").join("lib"));
+    }
+    
+
+    if let Ok(userprofile) = env::var("USERPROFILE") {
+        potential_paths.push(PathBuf::from(userprofile).join(".velang").join("lib"));
+    }
+    
+
+    potential_paths.extend(vec![
         PathBuf::from("/usr/local/share/velang/lib"),
         PathBuf::from("/opt/velang/lib"),
-    ];
+        PathBuf::from("/usr/share/velang/lib"),
+    ]);
     
-    for path in potential_paths {
+
+    for path in &potential_paths {
         if path.exists() {
-            return Ok(path);
+            return Ok(path.clone());
         }
     }
     
+
     let cwd_lib = env::current_dir().unwrap_or_default().join("lib");
     if cwd_lib.exists() {
         return Ok(cwd_lib);
     }
 
+    let attempted_paths: Vec<String> = potential_paths.iter()
+        .map(|p| format!("  - {}", p.display()))
+        .collect();
+
     Err(anyhow::anyhow!(
         "Library directory not found. VeLang requires the standard library to be installed.\n\
         Tried looking in:\n\
         - Directory relative to executable\n\
-        - ~/.velang/lib (Unix) or %USERPROFILE%\\.velang\\lib (Windows)\n\
-        - /usr/local/share/velang/lib\n\
-        - /opt/velang/lib\n\
+        {}\n\
         - ./lib (current directory)\n\
         \n\
-        Please reinstall VeLang or ensure the standard library is properly installed."
+        Please reinstall VeLang or ensure the standard library is properly installed.\n\
+        You can install VeLang using the installation script from:\n\
+        https://github.com/velang-org/ve",
+        attempted_paths.join("\n")
     ))
 }
 
