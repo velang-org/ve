@@ -21,11 +21,6 @@ curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.s
 iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
 ```
 
-**Windows (Command Prompt):**
-```cmd
-curl -o install.bat https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.bat && install.bat
-```
-
 ### Manual Installation
 
 Requirements:
@@ -39,7 +34,7 @@ cd ve
 cargo install --path .
 ```
 
-For detailed installation instructions and troubleshooting, see [`scripts/INSTALL.md`](scripts/INSTALL.md).
+For detailed installation instructions and troubleshooting, see [`scripts/README.md`](scripts/README.md).
 
 ## Usage
 ```bash
