@@ -223,7 +223,7 @@ impl TypeChecker {
                 self.check_block(body)?;
             }
             Stmt::Match(pattern, arms, _) => {
-                let matched_expr_ty = match pattern.as_ref() {
+                let _matched_expr_ty = match pattern.as_ref() {
                     ast::Pattern::Variable(var_name, _) => {
                         self.context.variables.get(var_name).cloned().unwrap_or(Type::Unknown)
                     }

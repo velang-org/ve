@@ -1,0 +1,32 @@
+# Git attributes for VeLang repository
+
+# Ensure shell scripts have LF line endings
+*.sh text eol=lf
+scripts/install.sh text eol=lf
+scripts/uninstall.sh text eol=lf
+
+# Ensure batch files have CRLF line endings  
+*.bat text eol=crlf
+*.cmd text eol=crlf
+scripts/install.bat text eol=crlf
+
+# Ensure PowerShell scripts have CRLF line endings
+*.ps1 text eol=crlf
+scripts/install.ps1 text eol=crlf
+
+# Rust source files
+*.rs text
+*.toml text
+
+# Documentation
+*.md text
+*.txt text
+
+# VeLang source files
+*.ve text
+
+# Binary files
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary

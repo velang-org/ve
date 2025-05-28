@@ -1,6 +1,7 @@
 pub mod init;
 pub(crate) mod run;
 pub mod benchmark;
+pub mod upgrade;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -13,7 +14,7 @@ use crate::{codegen, lexer, parser, typeck};
 use crate::utils::{prepare_windows_clang_args, process_imports, validate_ve_file};
 #[cfg(not(target_os = "windows"))]
 use crate::utils::{process_imports, validate_ve_file};
-use std::process::Stdio;
+
 
 #[derive(Debug)]
 pub struct CliError(pub String);
@@ -47,6 +48,10 @@ pub enum CliCommand {
         input: PathBuf,
         iterations: usize,
         verbose: bool,
+    },
+    Upgrade {
+        no_remind: bool,
+        force: bool,
     }
 }
 
@@ -117,6 +122,12 @@ enum Command {
         iterations: usize,
         #[arg(short, long)]
         verbose: bool,
+    },
+    Upgrade {
+        #[arg(long, help = "Disable update reminder notifications")]
+        no_remind: bool,
+        #[arg(short, long, help = "Force upgrade without confirmation")]
+        force: bool,
     }
 }
 
@@ -141,6 +152,9 @@ pub fn parse() -> anyhow::Result<CliCommand> {
         },
         Some(Command::Benchmark { input, iterations, verbose }) => {
             Ok(CliCommand::Benchmark { input, iterations, verbose })
+        },
+        Some(Command::Upgrade { no_remind, force }) => {
+            Ok(CliCommand::Upgrade { no_remind, force })
         }
         None => {
             let input = args.input.ok_or_else(|| anyhow!("Input file is required"))?;

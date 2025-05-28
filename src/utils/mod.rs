@@ -273,19 +273,55 @@ fn suggest_similar_files(missing_path: &Path) -> Option<String> {
 }
 
 fn get_lib_path() -> Result<PathBuf> {
-    let exe_path = env::current_exe().context("Failed to get current executable path")?;
-    let project_root = exe_path.parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .context("Failed to determine project root")?;
-
-    let lib_dir = project_root.join("lib");
-
-    if !lib_dir.exists() {
-        return Err(anyhow::anyhow!("Library directory not found: {}", lib_dir.display()));
+    if let Ok(exe_path) = env::current_exe() {
+        let project_root = exe_path.parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent());
+        
+        if let Some(root) = project_root {
+            let lib_dir = root.join("lib");
+            if lib_dir.exists() {
+                return Ok(lib_dir);
+            }
+        }
+        
+        if let Some(exe_dir) = exe_path.parent() {
+            let lib_dir = exe_dir.join("lib");
+            if lib_dir.exists() {
+                return Ok(lib_dir);
+            }
+        }
+    }
+    
+    let potential_paths = vec![
+        PathBuf::from(env::var("HOME").unwrap_or_default()).join(".velang").join("lib"),
+        PathBuf::from(env::var("USERPROFILE").unwrap_or_default()).join(".velang").join("lib"),
+        PathBuf::from("/usr/local/share/velang/lib"),
+        PathBuf::from("/opt/velang/lib"),
+    ];
+    
+    for path in potential_paths {
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+    
+    let cwd_lib = env::current_dir().unwrap_or_default().join("lib");
+    if cwd_lib.exists() {
+        return Ok(cwd_lib);
     }
 
-    Ok(lib_dir)
+    Err(anyhow::anyhow!(
+        "Library directory not found. VeLang requires the standard library to be installed.\n\
+        Tried looking in:\n\
+        - Directory relative to executable\n\
+        - ~/.velang/lib (Unix) or %USERPROFILE%\\.velang\\lib (Windows)\n\
+        - /usr/local/share/velang/lib\n\
+        - /opt/velang/lib\n\
+        - ./lib (current directory)\n\
+        \n\
+        Please reinstall VeLang or ensure the standard library is properly installed."
+    ))
 }
 
 #[allow(dead_code)]
