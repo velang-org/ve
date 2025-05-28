@@ -1,339 +1,216 @@
-# VeLang Installation Script for Windows (PowerShell)
-# Requires PowerShell 5.0+ and Git
+# VeLang Installation Script for Windows PowerShell
+# Requires Git and Rust/Cargo
 
 param(
-    [switch]$Force,
-    [switch]$Verbose,
-    [string]$InstallPath = "$env:USERPROFILE\.velang",
-    [string]$Branch = "main"
+    [string]$Branch = $env:VELANG_BRANCH
 )
 
-$ErrorActionPreference = "Stop"
-$VelangVersion = "0.1.0"
+# Configuration
+$VELANG_VERSION = "0.1.0"
+$INSTALL_DIR = Join-Path $env:USERPROFILE ".velang"
+$TEMP_DIR = Join-Path $env:TEMP "velang_install"
 
-# Colors for console output
-$Colors = @{
-    Info = "Cyan"
-    Success = "Green" 
-    Warning = "Yellow"
-    Error = "Red"
-}
-
-function Write-ColoredOutput {
+# Function to display formatted messages
+function Write-Message {
     param(
-        [string]$Message,
-        [string]$Type = "Info"
+        [string]$Type,
+        [string]$Message
     )
     
-    $prefix = switch ($Type) {
-        "Info" { "[INFO]" }
-        "Success" { "[SUCCESS]" }
-        "Warning" { "[WARNING]" }
-        "Error" { "[ERROR]" }
+    switch ($Type) {
+        "INFO" { Write-Host "[INFO] $Message" -ForegroundColor Cyan }
+        "SUCCESS" { Write-Host "[SUCCESS] $Message" -ForegroundColor Green }
+        "WARNING" { Write-Host "[WARNING] $Message" -ForegroundColor Yellow }
+        "ERROR" { Write-Host "[ERROR] $Message" -ForegroundColor Red }
     }
-    
-    Write-Host "$prefix $Message" -ForegroundColor $Colors[$Type]
 }
 
-function Show-Banner {
-    Write-Host ""
-    Write-Host "╭─────────────────────────────────────╮" -ForegroundColor Blue
-    Write-Host "│           VeLang Installer          │" -ForegroundColor Blue  
-    Write-Host "│          Version $VelangVersion              │" -ForegroundColor Blue
-    Write-Host "╰─────────────────────────────────────╯" -ForegroundColor Blue
-    Write-Host ""
-}
-
-function Test-Dependencies {
-    Write-ColoredOutput "Checking dependencies..." "Info"
+# Function to check if command exists
+function Test-Command {
+    param([string]$Command)
     
-    # Check PowerShell version
-    if ($PSVersionTable.PSVersion.Major -lt 5) {
-        Write-ColoredOutput "PowerShell 5.0+ is required" "Error"
-        throw "PowerShell 5.0+ is required"
-    }
-    
-    # Check for Git
     try {
-        $null = Get-Command git -ErrorAction Stop
-        $gitVersion = git --version
-        Write-ColoredOutput "Found Git: $gitVersion" "Info"
+        Get-Command $Command -ErrorAction Stop | Out-Null
+        return $true
     }
     catch {
-        Write-ColoredOutput "Git is not installed or not in PATH" "Error"
-        Write-Host "Please install Git from: https://git-scm.com/download/win"
-        throw "Git is not installed"
-    }
-    
-    # Check for Rust/Cargo
-    try {
-        $null = Get-Command cargo -ErrorAction Stop
-        $cargoVersion = cargo --version
-        Write-ColoredOutput "Found Cargo: $cargoVersion" "Info"
-    }
-    catch {
-        Write-ColoredOutput "Rust/Cargo is not installed" "Error"
-        Write-Host "Please install Rust from: https://rustup.rs/"
-        throw "Rust/Cargo is not installed"
-    }
-    
-    # Check for MSVC compiler
-    try {
-        $null = Get-Command cl -ErrorAction Stop
-        Write-ColoredOutput "Found MSVC compiler" "Info"
-    }
-    catch {
-        Write-ColoredOutput "Visual Studio Build Tools not detected" "Warning"
-        Write-Host "VeLang requires MSVC compiler for C code generation"
-        Write-Host "Please install Visual Studio Build Tools from:"
-        Write-Host "https://visualstudio.microsoft.com/visual-cpp-build-tools/"
-        
-        if (-not $Force) {
-            $continue = Read-Host "Continue anyway? (y/N)"
-            if ($continue -ne "y" -and $continue -ne "Y") {
-                throw "MSVC compiler required"
-            }
-        }
-    }
-    
-    Write-ColoredOutput "Dependencies check completed" "Success"
-}
-
-function Install-VeLang {
-    Write-ColoredOutput "Creating temporary directory..." "Info"
-    $tempDir = Join-Path $env:TEMP "velang_install_$(Get-Random)"
-    
-    # Try to create directory and verify write permissions
-    try {
-        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-        $testFile = Join-Path $tempDir "test.txt"
-        "test" | Out-File $testFile -Encoding ASCII
-        Remove-Item $testFile -Force
-        Write-ColoredOutput "Temporary directory created: $tempDir" "Info"
-    } catch {
-        Write-ColoredOutput "Cannot create or write to temporary directory: $tempDir" "Error"
-        throw "Temporary directory creation failed: $_"
-    }
-    
-    try {
-        Write-ColoredOutput "Downloading VeLang source code..." "Info"
-        Write-ColoredOutput "Working directory: $tempDir" "Info"
-        Set-Location $tempDir
-        
-        # Determine which branch to use - priority order:
-        # 1. Explicitly provided -Branch parameter
-        # 2. VELANG_BRANCH environment variable  
-        # 3. Auto-detection from script URL
-        # 4. Default to main
-        $targetBranch = $Branch
-        
-        if ($env:VELANG_BRANCH -and $Branch -eq "main") {
-            $targetBranch = $env:VELANG_BRANCH
-            Write-ColoredOutput "Using branch from environment: $targetBranch" "Info"
-        } elseif ($Branch -ne "main") {
-            Write-ColoredOutput "Using specified branch: $targetBranch" "Info"
-        } else {
-            try {
-                $callingScript = (Get-PSCallStack)[1].Command
-                if ($callingScript -like "*feature/installer*") {
-                    $targetBranch = "feature/installer"
-                    Write-ColoredOutput "Auto-detected development branch: $targetBranch" "Info"
-                }
-            } catch {
-                # Use main as fallback
-            }
-        }
-        
-        Write-ColoredOutput "Target branch: $targetBranch" "Info"
-        
-        # Check internet connectivity and repository access
-        Write-ColoredOutput "Verifying repository access..." "Info"
-        try {
-            $testOutput = & git ls-remote --heads https://github.com/velang-org/ve.git $targetBranch 2>&1
-            if ($LASTEXITCODE -ne 0 -or -not $testOutput) {
-                Write-ColoredOutput "Branch '$targetBranch' may not exist. Available branches:" "Warning"
-                $allBranches = & git ls-remote --heads https://github.com/velang-org/ve.git 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    $allBranches | ForEach-Object {
-                        if ($_ -match "refs/heads/(.+)$") {
-                            Write-Host "  - $($matches[1])"
-                        }
-                    }
-                }
-                throw "Branch '$targetBranch' not found"
-            }
-            Write-ColoredOutput "Repository access verified" "Success"
-        } catch {
-            Write-ColoredOutput "Could not verify repository access" "Warning"
-            Write-ColoredOutput "Proceeding with clone attempt..." "Info"
-        }
-        
-        # Check if 've' directory already exists and remove it
-        if (Test-Path "ve") {
-            Write-ColoredOutput "Removing existing 've' directory..." "Info"
-            Remove-Item "ve" -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        
-        # Clone repository
-        Write-ColoredOutput "Cloning repository..." "Info"
-        if ($Verbose) {
-            Write-ColoredOutput "Running in verbose mode - showing all output" "Info"
-            git clone -b $targetBranch https://github.com/velang-org/ve.git
-            $cloneExitCode = $LASTEXITCODE
-        } else {
-            # Show progress for clone
-            Write-Progress -Activity "Installing VeLang" -Status "Downloading source code..." -PercentComplete 25
-            $cloneOutput = git clone -b $targetBranch https://github.com/velang-org/ve.git --quiet 2>&1
-            $cloneExitCode = $LASTEXITCODE
-            Write-Progress -Activity "Installing VeLang" -Status "Source code downloaded" -PercentComplete 30
-        }
-        
-        # Check if clone was successful by verifying directory exists, not just exit code
-        if (Test-Path "ve") {
-            Write-ColoredOutput "Repository cloned successfully" "Success"
-        } else {
-            Write-ColoredOutput "Clone failed - no 've' directory found (exit code: $cloneExitCode)" "Error"
-            if ($cloneOutput) {
-                Write-ColoredOutput "Git output: $cloneOutput" "Error"
-            }
-            throw "Repository clone failed"
-        }
-        
-        Set-Location "ve"
-        
-        Write-ColoredOutput "Building VeLang..." "Info"
-        
-        if ($Verbose) {
-            Write-ColoredOutput "Running build in verbose mode" "Info"
-            $buildOutput = & cargo build --release 2>&1
-            $buildExitCode = $LASTEXITCODE
-        } else {
-            # Use progress bar for build
-            Write-Progress -Activity "Building VeLang" -Status "Compiling source code..." -PercentComplete 50
-            $buildOutput = & cargo build --release 2>&1
-            $buildExitCode = $LASTEXITCODE
-            Write-Progress -Activity "Building VeLang" -Completed
-        }
-        
-        # Check if build failed (ignore warnings)
-        if ($buildExitCode -ne 0) {
-            # Check if the output contains only warnings (not errors)
-            $hasErrors = $buildOutput | Where-Object { $_ -match "error:" }
-            if ($hasErrors) {
-                Write-ColoredOutput "Build failed with errors:" "Error"
-                Write-Host $buildOutput
-                throw "Failed to build VeLang"
-            } else {
-                # Only warnings, continue with installation
-                Write-ColoredOutput "Build completed with warnings (ignored)" "Warning"
-            }
-        }
-        
-        Write-ColoredOutput "VeLang built successfully" "Success"
-        
-        Write-ColoredOutput "Installing VeLang..." "Info"
-        Write-Progress -Activity "Installing VeLang" -Status "Setting up installation..." -PercentComplete 70
-        
-        if (-not (Test-Path $InstallPath)) {
-            New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
-        }
-        
-        $binaryPath = Join-Path $InstallPath "ve.exe"
-        Copy-Item "target\release\ve.exe" $binaryPath -Force
-        
-        Write-Progress -Activity "Installing VeLang" -Status "Copying files..." -PercentComplete 80
-        
-        # Copy standard library
-        if (Test-Path "lib") {
-            Write-ColoredOutput "Installing standard library..." "Info"
-            $libPath = Join-Path $InstallPath "lib"
-            Copy-Item "lib" $libPath -Recurse -Force
-            Write-ColoredOutput "Standard library installed" "Success"
-        } else {
-            Write-ColoredOutput "Standard library directory not found - some imports may fail" "Warning"
-        }
-        
-        Write-Progress -Activity "Installing VeLang" -Status "Updating PATH..." -PercentComplete 90
-        
-        Write-ColoredOutput "VeLang installed to $InstallPath" "Success"
-        
-        # Add to PATH
-        Write-ColoredOutput "Adding VeLang to system PATH..." "Info"
-        $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        if ($currentPath -notlike "*$InstallPath*") {
-            $newPath = $currentPath + ";$InstallPath"
-            [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-            Write-ColoredOutput "Added $InstallPath to user PATH" "Success"
-        } else {
-            Write-ColoredOutput "$InstallPath already in PATH" "Info"
-        }
-        
-        Write-Progress -Activity "Installing VeLang" -Status "Verifying installation..." -PercentComplete 95
-        
-        # Verify installation
-        Write-ColoredOutput "Verifying installation..." "Info"
-        try {
-            # Temporarily add to current session PATH for verification
-            $env:PATH = "$InstallPath;$env:PATH"
-            $versionOutput = & $binaryPath --version 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-ColoredOutput "VeLang is working: $versionOutput" "Success"
-            } else {
-                Write-ColoredOutput "VeLang binary created but version check failed: $versionOutput" "Warning"
-            }
-        }
-        catch {
-            Write-ColoredOutput "VeLang binary exists but may not be working correctly: $_" "Warning"
-        }
-        
-        Write-Progress -Activity "Installing VeLang" -Status "Installation completed" -PercentComplete 100
-        Start-Sleep -Seconds 1
-        Write-Progress -Activity "Installing VeLang" -Completed
-    }
-    finally {
-        # Cleanup
-        Write-ColoredOutput "Cleaning up..." "Info"
-        Set-Location $env:TEMP
-        Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
     }
 }
 
-function Show-CompletionMessage {
-    Write-Host ""
-    Write-ColoredOutput "VeLang installation completed!" "Success"
-    Write-Host ""
-    Write-ColoredOutput "To get started:" "Info"
-    Write-Host "  ve --help                 # Show help"
-    Write-Host "  ve init my_project        # Create a new project"
-    Write-Host "  ve example.ve             # Compile and run a file"
-    Write-Host ""
-    Write-ColoredOutput "Join our Discord: https://dsc.gg/velang" "Info"
-    Write-Host ""
-    Write-ColoredOutput "Please restart your terminal to use the 've' command" "Warning"
+# Function to exit with pause
+function Exit-WithPause {
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
 }
 
-# Main execution
-try {
-    Show-Banner
-    Test-Dependencies
-    Install-VeLang
-    Show-CompletionMessage
+
+Write-Message 'INFO' 'Checking dependencies...'
+
+# Check for Git
+if (-not (Test-Command "git")) {
+    Write-Message "ERROR" "Git is not installed or not in PATH"
+    Write-Host "Please install Git from: https://git-scm.com/download/win"
+    Exit-WithPause
 }
-catch {
-    Write-ColoredOutput "Installation failed: $_" "Error"
+
+# Check for Rust/Cargo
+if (-not (Test-Command "cargo")) {
+    Write-Message "ERROR" "Rust/Cargo is not installed"
+    Write-Host "Please install Rust from: https://rustup.rs/"
+    Exit-WithPause
+}
+
+# Check for Visual Studio Build Tools or MSVC
+if (-not (Test-Command "cl")) {
+    Write-Message "WARNING" "Visual Studio Build Tools not detected"
+    Write-Host "VeLang requires MSVC compiler for C code generation"
+    Write-Host "Please install Visual Studio Build Tools from:"
+    Write-Host "https://visualstudio.microsoft.com/visual-cpp-build-tools/"
     Write-Host ""
-    Write-ColoredOutput "If you continue to have issues, please visit:" "Info"
-    Write-Host "  GitHub Issues: https://github.com/velang-org/ve/issues"
-    Write-Host "  Discord: https://dsc.gg/velang"
-    Write-Host ""
-    
-    # Check if we're being run via Invoke-Expression
-    $callingScript = (Get-PSCallStack)[1].Command
-    if ($callingScript -eq "<ScriptBlock>" -or $callingScript -like "*Invoke-Expression*") {
-        # If run via iex, pause instead of exiting
-        Write-Host "Press any key to continue..." -ForegroundColor Yellow
-        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    } else {
+    $continue = Read-Host 'Continue anyway? (y/N)'
+    if ($continue.ToLower() -ne "y") {
         exit 1
     }
+}
+
+Write-Message "SUCCESS" "Dependencies check completed"
+
+# Create temporary directory
+Write-Message "INFO" "Creating temporary directory..."
+if (Test-Path $TEMP_DIR) {
+    Remove-Item $TEMP_DIR -Recurse -Force
+}
+New-Item -ItemType Directory -Path $TEMP_DIR -Force | Out-Null
+
+# Download VeLang source code
+Write-Message "INFO" "Downloading VeLang source code..."
+Set-Location $TEMP_DIR
+
+# Determine which branch to use - priority order:
+# 1. Parameter/VELANG_BRANCH environment variable
+# 2. Auto-detection from script context
+# 3. Default to main
+if (-not $Branch) {
+    $Branch = "main"
+    # Check if we're being run from feature/installer context
+    if ($PSCommandPath -like "*feature/installer*") {
+        $Branch = "feature/installer"
+        Write-Message "INFO" "Auto-detected development branch: $Branch"
+    }
+} else {
+    Write-Message "INFO" "Using branch from environment: $Branch"
+}
+
+try {
+    git clone -b $Branch https://github.com/velang-org/ve.git --quiet 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git clone failed"
+    }
+}
+catch {
+    Write-Message "ERROR" "Failed to clone VeLang repository from branch '$Branch'"
+    Exit-WithPause
+}
+
+Write-Message "SUCCESS" "Source code downloaded successfully"
+
+Set-Location "ve"
+
+# Build VeLang
+Write-Message "INFO" "Building VeLang..."
+try {
+    cargo build --release --quiet 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cargo build failed"
+    }
+}
+catch {
+    Write-Message "ERROR" "Failed to build VeLang"
+    Exit-WithPause
+}
+
+Write-Message "SUCCESS" "VeLang built successfully"
+
+# Install VeLang
+Write-Message "INFO" "Installing VeLang..."
+if (-not (Test-Path $INSTALL_DIR)) {
+    New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null
+}
+
+$sourceExe = Join-Path "target" "release" "ve.exe"
+$targetExe = Join-Path $INSTALL_DIR "ve.exe"
+Copy-Item $sourceExe $targetExe -Force
+
+# Copy standard library
+if (Test-Path "lib") {
+    Write-Message "INFO" "Installing standard library..."
+    $libTarget = Join-Path $INSTALL_DIR "lib"
+    Copy-Item "lib" $libTarget -Recurse -Force
+    Write-Message "SUCCESS" "Standard library installed"
+} else {
+    Write-Message "WARNING" "Standard library directory not found - some imports may fail"
+}
+
+# Add to PATH
+Write-Message "INFO" "Adding VeLang to system PATH..."
+
+try {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($userPath -notlike "*$($INSTALL_DIR)*") {
+        if ($userPath) {
+            $newPath = $userPath + ';' + $INSTALL_DIR
+        } else {
+            $newPath = $INSTALL_DIR
+        }
+        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        Write-Message 'SUCCESS' 'Added VeLang directory to user PATH'
+    } else {
+        Write-Message 'INFO' 'VeLang directory already in PATH, skipping'
+    }
+}
+catch {
+    Write-Message 'WARNING' 'Failed to add VeLang to PATH. You may need to add it manually.'
+}
+
+Write-Message 'SUCCESS' 'VeLang installed to $INSTALL_DIR'
+
+# Cleanup
+Write-Message 'INFO' 'Cleaning up...'
+Set-Location $env:TEMP
+Remove-Item $TEMP_DIR -Recurse -Force
+
+# Verify installation
+Write-Message 'INFO' 'Verifying installation...'
+try {
+    $veExe = Join-Path $INSTALL_DIR 've.exe'
+    & $veExe --version 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'VeLang verification failed'
+    }
+    Write-Message 'SUCCESS' 'VeLang is working correctly'
+}
+catch {
+    Write-Message 'WARNING' 'VeLang binary exists but may not be working correctly'
+}
+
+# Final success message
+Write-Host ''
+Write-Message 'SUCCESS' 'VeLang installation completed!'
+Write-Host ''
+Write-Host 'To get started:'
+Write-Host '  ve --help                 # Show help'
+Write-Host '  ve init my_project        # Create a new project'
+Write-Host '  ve example.ve             # Compile and run a file'
+Write-Host ''
+Write-Host 'Join our Discord: https://dsc.gg/velang'
+Write-Host ''
+Write-Message 'INFO' 'Please restart your command prompt to use ''ve'' command'
+Write-Host ''
+
+# Pause for interactive sessions
+if ($Host.Name -eq 'ConsoleHost') {
+    Write-Host 'Press any key to exit...'
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 }

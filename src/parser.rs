@@ -1879,7 +1879,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         }
     }
 
-    let mut _add_sub_pos = None;
+    let mut add_sub_pos = None;
     for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
@@ -1896,7 +1896,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         }
     }
 
-    let mut _mul_div_pos = None;
+    let mut mul_div_pos = None;
     for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
@@ -1917,7 +1917,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         }
     }
 
-    let mut _pow_pos = None;
+    let mut pow_pos = None;
     for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
