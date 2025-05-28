@@ -1,4 +1,20 @@
-# VeLang Installati### Linux/macOS (Bash)
+# VeLang Installation Scripts
+
+This directory contains installation and setup scripts**Note**: The installation scripts will automatically handle the setup process.for VeLang programming language.
+
+## Available Scripts
+
+### Installation Scripts
+- **`install.sh`** - Installation script for Unix systems (Linux/macOS)
+- **`install.ps1`** - Advanced installation script for Windows (PowerShell)
+- **`install-dev.sh`** - Development installation script
+
+### Utility Scripts
+- **`uninstall.sh`** - Uninstallation script for Unix systems
+
+## Quick Installation
+
+### Linux/macOS (Bash)
 ```bash
 curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | bash
 ```
@@ -8,14 +24,9 @@ curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.s
 iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
 ```
 
-### Windows (Command Prompt)
-```cmd
-curl -o install.bat https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.bat && install.bat
-```
+## Advanced Installation Options
 
-## Advanced Usage
-
-### Debug Installation Issues
+### Debug Mode
 
 If installation fails, you can run with verbose output to see detailed error messages:
 
@@ -25,115 +36,118 @@ If installation fails, you can run with verbose output to see detailed error mes
 curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | VERBOSE=1 bash
 ```
 
-#### Windows PowerShell (Debug Mode)  
+#### Windows PowerShell (Debug Mode)
 ```powershell
 # Download and run with verbose output
 $script = (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
 Invoke-Expression "$script -Verbose"
 ```
 
-### Installing from a specific branchirectory contains installation and setup scripts for VeLang.
+## Prerequisites
 
-## Files
+Before installing VeLang, ensure you have the following dependencies:
 
-### Installation Scripts
-- **`install.sh`** - Installation script for Unix systems (Linux/macOS)
-- **`install.bat`** - Installation script for Windows (Command Prompt)
-- **`install.ps1`** - Advanced installation script for Windows (PowerShell)
+### Required
+- **Git** - For cloning the repository
+- **Rust/Cargo** - For building VeLang from source
+  - Install from [rustup.rs](https://rustup.rs/)
 
-### Utility Scripts
-- **`uninstall.sh`** - Uninstallation script for Unix systems
+### Platform-specific Requirements
 
-### Documentation
-- **`INSTALL.md`** - Comprehensive installation guide
+#### Windows
+- **Visual Studio Build Tools** or **MSVC** - For C code generation
+  - Download from [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
-## Quick Start
-
-### Unix (Linux/macOS)
-```bash
-curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | bash
-```
-
-### Windows (PowerShell)
-```powershell
-iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
-```
-
-### Windows (Command Prompt)
-```cmd
-curl -o install.bat https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.bat && install.bat
-```
-
-## Advanced Usage
-
-### Installing from a specific branch
-
-You can install VeLang from any git branch by setting the `VELANG_BRANCH` environment variable:
-
-#### Unix (Linux/macOS)
-```bash
-# Install from feature/installer branch
-VELANG_BRANCH=feature/installer curl -sSf https://raw.githubusercontent.com/velang-org/ve/feature/installer/scripts/install.sh | bash
-
-# Install from main branch (explicit)
-VELANG_BRANCH=main curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | bash
-```
-
-#### Windows (PowerShell)
-```powershell
-# Install from feature/installer branch
-$env:VELANG_BRANCH="feature/installer"; iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/feature/installer/scripts/install.ps1).Content
-
-# Install from main branch (explicit)
-$env:VELANG_BRANCH="main"; iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
-```
-
-#### Windows (Command Prompt)
-```cmd
-# Install from feature/installer branch
-set VELANG_BRANCH=feature/installer
-curl -o install.bat https://raw.githubusercontent.com/velang-org/ve/feature/installer/scripts/install.bat && install.bat
-
-# Install from main branch (explicit)
-set VELANG_BRANCH=main
-curl -o install.bat https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.bat && install.bat
-```
-
-**Note:** The scripts will automatically detect when you're downloading from a development branch and use the correct branch for installation.
+#### Linux/macOS
+- **C Compiler** - GCC or Clang for code generation
+  - Usually pre-installed or available via package manager
 
 ## Local Installation
 
-If you've cloned the repository:
+If you've cloned the repository locally:
 
+### Linux/macOS
 ```bash
-# Unix/macOS
 cd scripts
 chmod +x install.sh
 ./install.sh
-
-# Windows (PowerShell)
-cd scripts
-.\install.ps1
-
-# With verbose output for debugging
-.\install.ps1 -Verbose
-
-# Install to custom path with force flag
-.\install.ps1 -InstallPath "C:\Tools\VeLang" -Force
-
-# Windows (Command Prompt)
-cd scripts
-install.bat
 ```
 
-## Features
+### Windows (PowerShell)
+```bash
+cd scripts
+.\install.ps1
+```
 
-All installation scripts:
-- ✅ Automatically check system dependencies
-- ✅ Download and build VeLang from source
-- ✅ Install binaries to appropriate locations
-- ✅ Add VeLang to system PATH
-- ✅ Verify installation success
-- ✅ Provide helpful error messages and troubleshooting
+#### PowerShell Advanced Options
+```powershell
+# With verbose output for debugging
+.\install.ps1 -Verbose
+```
 
-For detailed installation instructions, see [INSTALL.md](INSTALL.md).
+**Note:** The installation scripts will automatically detect development branches when run locally.
+
+## Verification
+
+After installation, verify that VeLang is working correctly:
+
+```bash
+# Check VeLang version
+ve --version
+
+# Show help
+ve --help
+
+# Create a new project
+ve init my_project
+
+# Compile and run a VeLang file
+ve example.ve
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### "Command not found: ve"
+- **Solution**: Restart your terminal/command prompt to reload PATH
+- **Alternative**: Source your shell profile manually:
+  ```bash
+  # Linux/macOS
+  source ~/.bashrc  # or ~/.zshrc
+  ```
+
+#### Build Errors on Windows
+- **Issue**: Missing Visual Studio Build Tools
+- **Solution**: Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+
+#### Permission Errors
+- **Linux/macOS**: Run with appropriate permissions
+- **Windows**: Run PowerShell as Administrator if needed
+
+### Getting Help
+
+- **Discord**: [https://dsc.gg/velang](https://dsc.gg/velang)
+- **GitHub Issues**: [https://github.com/velang-org/ve/issues](https://github.com/velang-org/ve/issues)
+- **Documentation**: Check the main repository README
+
+## Uninstallation
+
+### Linux/macOS
+```bash
+# Run the uninstall script
+curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/uninstall.sh | bash
+
+# Or manually remove
+rm -rf ~/.velang
+# Remove from PATH in your shell profile
+```
+
+### Windows
+```powershell
+# Manual removal
+Remove-Item -Recurse -Force "$env:USERPROFILE\.velang"
+# Remove from PATH via System Properties > Environment Variables
+```
+
+---
