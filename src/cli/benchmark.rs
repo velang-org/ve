@@ -98,13 +98,13 @@ pub fn run_benchmark(
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
     write!(&mut stdout, "  [2/4] Type checking... ")?;
     stdout.flush()?;
-    
-    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) = 
+      let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars, imported_stmts) = 
         process_imports(&mut files, &program.imports, &*input)?;
     
     program.functions.extend(imported_asts);
     program.ffi_functions.extend(imported_ffi_funcs);
     program.ffi_variables.extend(imported_ffi_vars.clone());
+    program.stmts.extend(imported_stmts);
 
     if verbose {
         println!("✓ AST parsed successfully");

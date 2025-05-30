@@ -54,9 +54,9 @@ pub fn process_imports(
     files: &mut Files<String>,
     imports: &[ast::ImportDeclaration],
     base_path: &Path,
-) -> Result<(HashMap<String, (Vec<Type>, Type)>, Vec<ast::Function>, Vec<ast::StructDef>, Vec<ast::FfiFunction>, Vec<ast::FfiVariable>)> {
-    imports.iter().try_fold((HashMap::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-                            |(mut map, mut funcs, mut structs, mut ffi_funcs, mut ffi_vars), import_decl| {
+) -> Result<(HashMap<String, (Vec<Type>, Type)>, Vec<ast::Function>, Vec<ast::StructDef>, Vec<ast::FfiFunction>, Vec<ast::FfiVariable>, Vec<ast::Stmt>)> {
+    imports.iter().try_fold((HashMap::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+                            |(mut map, mut funcs, mut structs, mut ffi_funcs, mut ffi_vars, mut stmts), import_decl| {
                                 match import_decl {
                                     ast::ImportDeclaration::ImportAll { module_path, module_type, alias } => {
                                         let path_result: Result<PathBuf, anyhow::Error> = match module_type {
@@ -133,16 +133,30 @@ pub fn process_imports(
 
                                         for ffi_func in &program.ffi_functions {
                                             ffi_funcs.push(ffi_func.clone());
-                                        }
-
-                                        for ffi_var in &program.ffi_variables {
+                                        }                                        for ffi_var in &program.ffi_variables {
                                             ffi_vars.push(ffi_var.clone());
+                                        }                                        // Collect global statements (let statements) from imported modules
+                                        for stmt in &program.stmts {
+                                            match stmt {
+                                                ast::Stmt::Let(..) => {
+                                                    stmts.push(stmt.clone());
+                                                }
+                                                ast::Stmt::Block(block_stmts, _) => {
+                                                    // Extract let statements from blocks
+                                                    for block_stmt in block_stmts {
+                                                        if let ast::Stmt::Let(..) = block_stmt {
+                                                            stmts.push(block_stmt.clone());
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
                                         }
 
-                                        Ok((map, funcs, structs, ffi_funcs, ffi_vars))
+                                        Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts))
                                     },
                                     ast::ImportDeclaration::ImportSpecifiers { .. } => {
-                                        Ok((map, funcs, structs, ffi_funcs, ffi_vars))
+                                        Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts))
                                     }
                                 }
                             })

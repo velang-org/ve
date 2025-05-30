@@ -21,9 +21,6 @@ export fn println(s: string) {
 }
 
 
-fn string_from_cstr(ptr: rawptr) -> string {
-    return ptr as string;
-}
 
 export fn read_line() -> string {
     let buf_size: size_t = 1024;
@@ -40,6 +37,6 @@ export fn read_line() -> string {
 
     buffer[i] = 0;
 
-    return string_from_cstr(buffer);
+    return buffer as string;
 }
 

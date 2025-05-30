@@ -282,13 +282,12 @@ pub fn process_build(
 
             return Err(anyhow!("Parser failed"));
         }
-    };
-
-    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars) =
+    };    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars, imported_stmts) =
         process_imports(&mut files, &program.imports, &input)?;
     program.functions.extend(imported_asts);
     program.ffi_functions.extend(imported_ffi_funcs);
     program.ffi_variables.extend(imported_ffi_vars.clone());
+    program.stmts.extend(imported_stmts);
 
     if verbose {
         println!("Parsed AST:\n{:#?}", program);
