@@ -30,9 +30,8 @@ fn main() -> Result<()> {
         }
         Ok(cli::CliCommand::Benchmark { input, iterations, verbose }) => {
             cli::benchmark::run_benchmark(input, iterations, verbose)
-        }
-        Ok(cli::CliCommand::Upgrade { no_remind, force }) => {
-            cli::upgrade::run_upgrade(no_remind, force)
+        }        Ok(cli::CliCommand::Upgrade { no_remind, force, verbose }) => {
+            cli::upgrade::run_upgrade(no_remind, force, verbose)
         }
         Err(e) => {
             eprintln!("Error: {}", e);

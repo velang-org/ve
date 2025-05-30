@@ -48,10 +48,10 @@ pub enum CliCommand {
         input: PathBuf,
         iterations: usize,
         verbose: bool,
-    },
-    Upgrade {
+    },    Upgrade {
         no_remind: bool,
         force: bool,
+        verbose: bool,
     }
 }
 
@@ -122,12 +122,13 @@ enum Command {
         iterations: usize,
         #[arg(short, long)]
         verbose: bool,
-    },
-    Upgrade {
+    },    Upgrade {
         #[arg(long, help = "Disable update reminder notifications")]
         no_remind: bool,
         #[arg(short, long, help = "Force upgrade without confirmation")]
         force: bool,
+        #[arg(short, long, help = "Show verbose output during upgrade")]
+        verbose: bool,
     }
 }
 
@@ -152,9 +153,8 @@ pub fn parse() -> anyhow::Result<CliCommand> {
         },
         Some(Command::Benchmark { input, iterations, verbose }) => {
             Ok(CliCommand::Benchmark { input, iterations, verbose })
-        },
-        Some(Command::Upgrade { no_remind, force }) => {
-            Ok(CliCommand::Upgrade { no_remind, force })
+        },        Some(Command::Upgrade { no_remind, force, verbose }) => {
+            Ok(CliCommand::Upgrade { no_remind, force, verbose })
         }
         None => {
             let input = args.input.ok_or_else(|| anyhow!("Input file is required"))?;

@@ -128,7 +128,7 @@ pub fn check_and_notify_updates() -> Result<()> {
     Ok(())
 }
 
-pub fn run_upgrade(no_remind: bool, force: bool) -> Result<()> {
+pub fn run_upgrade(no_remind: bool, force: bool, verbose: bool) -> Result<()> {
     if no_remind {
         let mut config = load_config();
         config.remind_updates = false;
@@ -155,9 +155,8 @@ pub fn run_upgrade(no_remind: bool, force: bool) -> Result<()> {
                     return Ok(());
                 }
             }
-            
-            println!("🚀 Starting upgrade...");
-            upgrade_velang()?;
+              println!("🚀 Starting upgrade...");
+            upgrade_velang(verbose)?;
             println!("✅ VeLang upgraded successfully to v{}", new_version);
         },
         None => {
@@ -168,17 +167,25 @@ pub fn run_upgrade(no_remind: bool, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn upgrade_velang() -> Result<()> {
+fn upgrade_velang(verbose: bool) -> Result<()> {
     println!("📥 Downloading latest VeLang source...");
     
     let temp_dir = std::env::temp_dir().join(format!("velang_upgrade_{}", std::process::id()));
+    if verbose {
+        println!("   Using temporary directory: {}", temp_dir.display());
+    }
     fs::create_dir_all(&temp_dir)?;
     
-    let git_status = Command::new("git")
-        .args(&["clone", REPO_URL, temp_dir.to_str().unwrap()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
+    let mut git_cmd = Command::new("git");
+    git_cmd.args(&["clone", REPO_URL, temp_dir.to_str().unwrap()]);
+    
+    if verbose {
+        println!("   Running: git clone {} {}", REPO_URL, temp_dir.display());
+    } else {
+        git_cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    
+    let git_status = git_cmd.status()?;
     
     if !git_status.success() {
         return Err(anyhow!("Failed to clone VeLang repository"));
@@ -186,12 +193,15 @@ fn upgrade_velang() -> Result<()> {
 
     println!("🔨 Building new version...");
     
-    let build_status = Command::new("cargo")
-        .args(&["build", "--release", "--quiet"])
-        .current_dir(&temp_dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
+    let mut build_cmd = Command::new("cargo");
+    if verbose {
+        build_cmd.args(&["build", "--release"]);
+        println!("   Running: cargo build --release");
+    } else {
+        build_cmd.args(&["build", "--release", "--quiet"]);
+        build_cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+      let build_status = build_cmd.current_dir(&temp_dir).status()?;
     
     if !build_status.success() {
         fs::remove_dir_all(&temp_dir)?;
@@ -200,15 +210,24 @@ fn upgrade_velang() -> Result<()> {
 
     println!("📦 Installing new version...");
     
-    let install_status = Command::new("cargo")
-        .args(&["install", "--path", ".", "--force", "--quiet"])
-        .current_dir(&temp_dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
+    let mut install_cmd = Command::new("cargo");
+    if verbose {
+        install_cmd.args(&["install", "--path", ".", "--force"]);
+        println!("   Running: cargo install --path . --force");
+    } else {
+        install_cmd.args(&["install", "--path", ".", "--force", "--quiet"]);
+        install_cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    
+    let install_status = install_cmd.current_dir(&temp_dir).status()?;
+    
     if !install_status.success() {
         fs::remove_dir_all(&temp_dir)?;
         return Err(anyhow!("Failed to install new VeLang version"));
+    }
+    
+    if verbose {
+        println!("   Cleaning up temporary directory: {}", temp_dir.display());
     }
     fs::remove_dir_all(&temp_dir)?;
     Ok(())
