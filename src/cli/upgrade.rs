@@ -201,7 +201,8 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
         build_cmd.args(&["build", "--release", "--quiet"]);
         build_cmd.stdout(Stdio::null()).stderr(Stdio::null());
     }
-      let build_status = build_cmd.current_dir(&temp_dir).status()?;
+    
+    let build_status = build_cmd.current_dir(&temp_dir).status()?;
     
     if !build_status.success() {
         fs::remove_dir_all(&temp_dir)?;
@@ -210,25 +211,141 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
 
     println!("📦 Installing new version...");
     
-    let mut install_cmd = Command::new("cargo");
+    let install_dir = get_velang_install_dir()?;
     if verbose {
-        install_cmd.args(&["install", "--path", ".", "--force"]);
-        println!("   Running: cargo install --path . --force");
-    } else {
-        install_cmd.args(&["install", "--path", ".", "--force", "--quiet"]);
-        install_cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        println!("   Installing to: {}", install_dir.display());
     }
     
-    let install_status = install_cmd.current_dir(&temp_dir).status()?;
+    fs::create_dir_all(&install_dir)?;
     
-    if !install_status.success() {
-        fs::remove_dir_all(&temp_dir)?;
-        return Err(anyhow!("Failed to install new VeLang version"));
+    let source_exe = temp_dir.join("target").join("release").join(if cfg!(windows) { "ve.exe" } else { "ve" });
+    let target_exe = install_dir.join(if cfg!(windows) { "ve.exe" } else { "ve" });
+    
+    #[cfg(windows)]
+    {
+        if verbose {
+            println!("   Stopping any running VeLang processes...");
+        }
+        let _ = Command::new("taskkill")
+            .args(&["/F", "/IM", "ve.exe"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
+    
+    let mut retry_count = 0;
+    const MAX_RETRIES: usize = 5;
+    
+    loop {
+        match fs::copy(&source_exe, &target_exe) {
+            Ok(_) => {
+                if verbose {
+                    println!("   Executable copied successfully");
+                }
+                break;
+            }
+            Err(e) if retry_count < MAX_RETRIES => {
+                retry_count += 1;
+                if verbose {
+                    println!("   Copy attempt {} failed, retrying... ({})", retry_count, e);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+            Err(e) => {
+                fs::remove_dir_all(&temp_dir)?;
+                return Err(anyhow!("Failed to copy executable after {} attempts: {}", MAX_RETRIES, e));
+            }
+        }
+    }
+    
+    let lib_source = temp_dir.join("lib");
+    if lib_source.exists() {
+        let lib_target = install_dir.join("lib");
+        if lib_target.exists() {
+            fs::remove_dir_all(&lib_target)?;
+        }
+        copy_dir_all(&lib_source, &lib_target)?;
+        if verbose {
+            println!("   Standard library copied");
+        }
+    } else if verbose {
+        println!("   Warning: Standard library not found in source");
+    }
+    
+    cleanup_cargo_installation(verbose)?;
     
     if verbose {
         println!("   Cleaning up temporary directory: {}", temp_dir.display());
     }
     fs::remove_dir_all(&temp_dir)?;
+    Ok(())
+}
+
+fn get_velang_install_dir() -> Result<PathBuf> {
+    if let Ok(home) = std::env::var("USERPROFILE") {
+        let velang_dir = PathBuf::from(home).join(".velang");
+        if velang_dir.exists() {
+            return Ok(velang_dir);
+        }
+    }
+    
+    if let Ok(home) = std::env::var("HOME") {
+        let velang_dir = PathBuf::from(home).join(".velang");
+        if velang_dir.exists() {
+            return Ok(velang_dir);
+        }
+    }
+    
+    let user_dir = if cfg!(windows) {
+        std::env::var("USERPROFILE")
+    } else {
+        std::env::var("HOME")
+    };
+    
+    match user_dir {
+        Ok(dir) => Ok(PathBuf::from(dir).join(".velang")),
+        Err(_) => Err(anyhow!("Could not determine user home directory"))
+    }
+}
+
+fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        
+        if src_path.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    
+    Ok(())
+}
+
+fn cleanup_cargo_installation(verbose: bool) -> Result<()> {
+    if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
+        let cargo_bin = PathBuf::from(cargo_home).join("bin").join(if cfg!(windows) { "ve.exe" } else { "ve" });
+        if cargo_bin.exists() {
+            if verbose {
+                println!("   Removing old cargo installation: {}", cargo_bin.display());
+            }
+            let _ = fs::remove_file(&cargo_bin); 
+        }
+    } else if let Ok(home) = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        let cargo_bin = PathBuf::from(home).join(".cargo").join("bin").join(if cfg!(windows) { "ve.exe" } else { "ve" });
+        if cargo_bin.exists() {
+            if verbose {
+                println!("   Removing old cargo installation: {}", cargo_bin.display());
+            }
+            let _ = fs::remove_file(&cargo_bin);
+        }
+    }
+    
     Ok(())
 }
