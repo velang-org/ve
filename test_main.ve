@@ -1,5 +1,0 @@
-import "./test_dependency_analysis.ve";
-
-fn main() -> i32 {
-    return public_function();
-}
