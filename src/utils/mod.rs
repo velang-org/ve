@@ -5,25 +5,8 @@ use codespan::Files;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
-pub fn check_dependencies() -> Result<()> {
-    let has_compiler = std::process::Command::new("clang")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .or_else(|_| std::process::Command::new("gcc").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status())
-        .is_ok();
 
-    if !has_compiler {
-        #[cfg(target_os = "windows")]
-        return Err(anyhow!("Requires Clang. Install from: https://aka.ms/vs/17/release/vs_BuildTools.exe"));
-        #[cfg(not(target_os = "windows"))]
-        return Err(anyhow!("Requires Clang or GCC. Please install a C compiler"));
-    }
-    Ok(())
-}
 
 #[cfg(target_os = "windows")]
 pub fn prepare_windows_clang_args(output: &Path, optimize: bool, c_file: &Path) -> Result<Vec<String>> {
@@ -83,7 +66,8 @@ pub fn process_imports(
 
                                         let file_id = files.add(path.to_str().unwrap().to_string(), content);
                                         let lexer = lexer::Lexer::new(files, file_id);
-                                        let mut parser = parser::Parser::new(lexer);                                        let mut program = parser.parse().map_err(|error| {
+                                        let mut parser = parser::Parser::new(lexer);
+                                        let mut program = parser.parse().map_err(|error| {
                                             let file_path = error.labels.get(0)
                                                 .map(|l| l.file_id)
                                                 .and_then(|fid| Some(files.name(fid)))
@@ -134,16 +118,14 @@ pub fn process_imports(
                                             ffi_vars.push(ffi_var.clone());
                                         }   
                                         for stmt in &program.stmts {
-                                            match stmt {
-                                                ast::Stmt::Let(name, _, _, _, visibility) => {
+                                            match stmt {                                                ast::Stmt::Let(_name, _, _, _, visibility) => {
                                                     // Only import Public and Internal items, not Private
                                                     if matches!(visibility, ast::Visibility::Public | ast::Visibility::Internal) {
                                                         stmts.push(stmt.clone());
                                                     }
                                                 }
                                                 ast::Stmt::Block(block_stmts, _) => {
-                                                    for block_stmt in block_stmts {
-                                                        if let ast::Stmt::Let(name, _, _, _, visibility) = block_stmt {
+                                                    for block_stmt in block_stmts {                                                        if let ast::Stmt::Let(_name, _, _, _, visibility) = block_stmt {
                                                             if matches!(visibility, ast::Visibility::Public | ast::Visibility::Internal) {
                                                                 stmts.push(block_stmt.clone());
                                                             }

@@ -3,6 +3,7 @@ use std::fmt;
 use codespan::Span;
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // Many type variants are used but not detected by dead code analysis
 pub enum Type {
     I32,
     Bool,
@@ -69,8 +70,8 @@ pub struct StructDef {
     pub name: String,
     pub fields: Vec<StructField>,
     #[allow(dead_code)]
-    pub span: Span,
-    pub visibility: Visibility,
+    pub span: Span,    pub visibility: Visibility,
+    #[allow(dead_code)] // Field for future C representation hints
     pub repr: Option<String>,
 }
 
@@ -125,6 +126,7 @@ pub enum Visibility {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Var and Defer statements are used but not detected by dead code analysis  
 pub enum Stmt {
     Let(String, Option<Type>, Expr, Span, Visibility),
     Var(String, Option<Type>, Span),
@@ -160,6 +162,7 @@ pub struct FfiVariable {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // FfiCall expression is used but not detected by dead code analysis
 pub enum Expr {
     Int(i32, ExprInfo),
     Bool(bool, ExprInfo),

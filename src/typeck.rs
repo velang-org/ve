@@ -244,16 +244,8 @@ impl TypeChecker {
                             }
                         }
                         _ => {}
-                    }
-
-                    self.check_expr(&mut arm.body.clone())?;
+                    }                    self.check_expr(&mut arm.body.clone())?;
                 }
-            }
-            _ => {
-                self.report_error(
-                    &format!("Unsupported statement: {:?}", stmt),
-                    stmt.span(),
-                );
             }
         }
         Ok(())

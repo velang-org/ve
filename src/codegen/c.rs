@@ -919,21 +919,9 @@ impl CBackend {
                             });
                         }
                     }
-                }
-
-                code.push_str("}\n");
+                }                code.push_str("}\n");
                 Ok(code)
             }
-
-
-            _ => {
-                Err(CompileError::CodegenError {
-                    message: format!("Unsupported expression type: {:?}", expr),
-                    span: Some(expr.span()),
-                    file_id: self.file_id,
-                })
-            }
-
         }
     }
 
@@ -1151,57 +1139,6 @@ impl CBackend {
         Ok(())
     }
 
-    fn emit_match_switch(&mut self, temp_var: &str, arms: &[ast::MatchArm], code: &mut String) -> Result<(), CompileError> {
-        code.push_str(&format!("switch ({}.tag) {{\n", temp_var));
-
-        for arm in arms {
-            match &arm.pattern {
-                ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
-                    code.push_str(&format!("    case ve_{}_{}: {{\n", enum_name, variant_name));
-
-                    for (i, pattern) in patterns.iter().enumerate() {
-                        if let ast::Pattern::Variable(var_name, _) = pattern {
-                            code.push_str(&format!("        int {} = {}.data.{}.field{};\n",
-                                                   var_name, temp_var, variant_name.to_lowercase(), i));
-                        }
-                    }
-
-                    let body_code = self.emit_expr(&arm.body)?;
-                    code.push_str(&format!("        {};\n", body_code));
-                    code.push_str("        break;\n");
-                    code.push_str("    }\n");
-                }
-                ast::Pattern::Wildcard(_) => {
-                    code.push_str("    default: {\n");
-                    let body_code = self.emit_expr(&arm.body)?;
-                    code.push_str(&format!("        {};\n", body_code));
-                    code.push_str("        break;\n");
-                    code.push_str("    }\n");
-                }
-                ast::Pattern::Variable(var_name, _) => {
-                    code.push_str("    default: {\n");
-                    let expr_type = Type::Unknown;
-                    let c_type = self.type_to_c(&expr_type);
-                    code.push_str(&format!("        {} {} = {};\n", c_type, var_name, temp_var));
-                    let body_code = self.emit_expr(&arm.body)?;
-                    code.push_str(&format!("        {};\n", body_code));
-                    code.push_str("        break;\n");
-                    code.push_str("    }\n");
-                }
-                ast::Pattern::Literal(expr, _) => {
-                    return Err(CompileError::CodegenError {
-                        message: "Literal patterns in enum match not yet supported".to_string(),
-                        span: Some(arm.span),
-                        file_id: self.file_id,
-                    });
-                }
-            }
-        }
-
-        code.push_str("    }\n");
-        Ok(())
-    }
-
     fn emit_match_switch_with_result(&mut self, temp_var: &str, result_var: &str, arms: &[ast::MatchArm], code: &mut String) -> Result<(), CompileError> {
         code.push_str(&format!("switch ({}.tag) {{\n", temp_var));
 
@@ -1233,13 +1170,12 @@ impl CBackend {
                     code.push_str("    default: {\n");
                     let expr_type = Type::Unknown;
                     let c_type = self.type_to_c(&expr_type);
-                    code.push_str(&format!("        {} {} = {};\n", c_type, var_name, temp_var));
-                    let body_code = self.emit_expr(&arm.body)?;
+                    code.push_str(&format!("        {} {} = {};\n", c_type, var_name, temp_var));                    let body_code = self.emit_expr(&arm.body)?;
                     code.push_str(&format!("        {} = {};\n", result_var, body_code));
                     code.push_str("        break;\n");
                     code.push_str("    }\n");
                 }
-                ast::Pattern::Literal(expr, _) => {
+                ast::Pattern::Literal(_expr, _) => {
                     return Err(CompileError::CodegenError {
                         message: "Literal patterns in enum match not yet supported".to_string(),
                         span: Some(arm.span),

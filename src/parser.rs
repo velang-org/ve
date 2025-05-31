@@ -826,19 +826,8 @@ impl<'a> Parser<'a> {
 
             if self.check(Token::Semi) {
                 self.advance();
-            }
-
-            Ok(ast::Stmt::Expr(expr, span))
+            }        Ok(ast::Stmt::Expr(expr, span))
         }
-    }
-
-    fn parse_defer(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
-        self.expect(Token::KwDefer)?;
-        let start_span = self.previous().map(|(_, s)| *s).unwrap();
-        let expr = self.parse_expr()?;
-        self.expect(Token::Semi)?;
-        let end_span = self.previous().map(|(_, s)| *s).unwrap();
-        Ok(ast::Stmt::Defer(expr, Span::new(start_span.start(), end_span.end())))
     }
 
     fn parse_while(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
@@ -1864,10 +1853,7 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
             ')' => if paren_level > 0 { paren_level -= 1 },
             _ => {}
         }
-    }
-
-    let mut add_sub_pos = None;
-    for i in 0..chars.len() {
+    }    for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
         }
@@ -1875,16 +1861,12 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         match chars[i] {
             '+' | '-' => {
                 if i > 0 && !is_operator_char(chars[i-1]) && paren_level == 0 && bracket_level == 0 {
-                    add_sub_pos = Some(i);
-                    return add_sub_pos;
+                    return Some(i);
                 }
             }
             _ => {}
         }
-    }
-
-    let mut mul_div_pos = None;
-    for i in 0..chars.len() {
+    }    for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
         }
@@ -1896,16 +1878,12 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
                 }
 
                 if paren_level == 0 && bracket_level == 0 {
-                    mul_div_pos = Some(i);
-                    return mul_div_pos;
+                    return Some(i);
                 }
             }
             _ => {}
         }
-    }
-
-    let mut pow_pos = None;
-    for i in 0..chars.len() {
+    }    for i in 0..chars.len() {
         if is_inside_array_access(i, &array_access_positions) {
             continue;
         }
@@ -1913,14 +1891,12 @@ fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
         match chars[i] {
             '*' => {
                 if i+1 < chars.len() && chars[i+1] == '*' && paren_level == 0 && bracket_level == 0 {
-                    pow_pos = Some(i);
-                    return pow_pos;
+                    return Some(i);
                 }
             },
             '^' => {
                 if paren_level == 0 && bracket_level == 0 {
-                    pow_pos = Some(i);
-                    return pow_pos;
+                    return Some(i);
                 }
             },
             _ => {}
