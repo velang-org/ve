@@ -289,18 +289,26 @@ impl TypeChecker {
             }
             Expr::BinOp(left, op, right, ast::ExprInfo { span, ty: expr_type } ) => {
                 let left_ty = self.check_expr(left)?;
-                let right_ty = self.check_expr(right)?;
-
-                let result_ty = match op {
+                let right_ty = self.check_expr(right)?;                let result_ty = match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Pow2 | BinOp::Mod => {
                         if (left_ty == Type::I32 && right_ty == Type::I32)
                             || (left_ty == Type::F32 && right_ty == Type::F32)
                             || (left_ty == Type::F64 && right_ty == Type::F64)
+                            || (matches!(left_ty, Type::Struct(ref name) if name == "size_t") && right_ty == Type::I32)
+                            || (left_ty == Type::I32 && matches!(right_ty, Type::Struct(ref name) if name == "size_t"))
+                            || (matches!(left_ty, Type::Struct(ref name) if name == "size_t") && matches!(right_ty, Type::Struct(ref name2) if name2 == "size_t"))
+                            || (left_ty == Type::CSize && right_ty == Type::I32)
+                            || (left_ty == Type::I32 && right_ty == Type::CSize)
+                            || (left_ty == Type::CSize && right_ty == Type::CSize)
                         {
                             if left_ty == Type::F32 || right_ty == Type::F32 {
                                 Type::F32
                             } else if left_ty == Type::F64 || right_ty == Type::F64 {
                                 Type::F64
+                            } else if matches!(left_ty, Type::Struct(ref name) if name == "size_t") || matches!(right_ty, Type::Struct(ref name) if name == "size_t") {
+                                Type::Struct("size_t".to_string())
+                            } else if left_ty == Type::CSize || right_ty == Type::CSize {
+                                Type::CSize
                             } else {
                                 Type::I32
                             }
@@ -594,13 +602,15 @@ impl TypeChecker {
                 let array_type = Type::Array(Box::new(first_type));
                 *expr_type = array_type.clone();
                 Ok(array_type)
-            },
-            Expr::ArrayAccess(array, index, ast::ExprInfo { span: _, ty: expr_type }) => {
+            },            Expr::ArrayAccess(array, index, ast::ExprInfo { span: _, ty: expr_type }) => {
                 let array_type = self.check_expr(array)?;
                 let index_type = self.check_expr(index)?;
-                if !Self::is_convertible(&index_type, &Type::I32) {
+                if !Self::is_convertible(&index_type, &Type::I32) 
+                    && !matches!(index_type, Type::Struct(ref name) if name == "size_t")
+                    && index_type != Type::CSize
+                {
                     self.report_error(
-                        &format!("Array index must be i32, got {}", index_type),
+                        &format!("Array index must be i32 or size_t, got {}", index_type),
                         index.span()
                     );
                 }
@@ -612,6 +622,11 @@ impl TypeChecker {
                         Ok(element_type)
                     },
                     Type::SizedArray(element_type, _) => {
+                        let element_type = *element_type;
+                        *expr_type = element_type.clone();
+                        Ok(element_type)
+                    },
+                    Type::Pointer(element_type) => {
                         let element_type = *element_type;
                         *expr_type = element_type.clone();
                         Ok(element_type)
@@ -820,9 +835,7 @@ impl TypeChecker {
         } else {
             Ok(())
         }
-    }
-
-    fn is_convertible(from: &Type, to: &Type) -> bool {
+    }    fn is_convertible(from: &Type, to: &Type) -> bool {
         if from == to {
             return true;
         }
@@ -844,9 +857,7 @@ impl TypeChecker {
             (Type::Pointer(_), Type::I32) => true,
             (Type::I32, Type::Pointer(_)) => true,
             (Type::RawPtr, Type::I32) => true,
-            (Type::I32, Type::RawPtr) => true,
-            (Type::Pointer(a), Type::Pointer(b)) => Self::is_convertible(a, b),
-            (Type::Struct(a), Type::Struct(b)) => a == b,
+            (Type::I32, Type::RawPtr) => true,            (Type::Pointer(a), Type::Pointer(b)) => Self::is_convertible(a, b),
             (Type::Array(from_elem), Type::Array(to_elem)) => Self::is_convertible(from_elem, to_elem),
             (Type::SizedArray(from_elem, _), Type::Array(to_elem)) => Self::is_convertible(from_elem, to_elem),
             (Type::Array(from_elem), Type::SizedArray(to_elem, _)) => Self::is_convertible(from_elem, to_elem),
@@ -861,6 +872,25 @@ impl TypeChecker {
             (Type::I32, Type::F64) => true,
             (Type::F64, Type::I32) => true,
             (Type::F64, Type::String) => true,
+            // Integer type conversions
+            (Type::I32, Type::U8) | (Type::U8, Type::I32) => true,
+            (Type::I32, Type::U16) | (Type::U16, Type::I32) => true,
+            (Type::I32, Type::U32) | (Type::U32, Type::I32) => true,
+            (Type::I32, Type::U64) | (Type::U64, Type::I32) => true,
+            (Type::I32, Type::I8) | (Type::I8, Type::I32) => true,
+            (Type::I32, Type::I16) | (Type::I16, Type::I32) => true,
+            (Type::I32, Type::I64) | (Type::I64, Type::I32) => true,
+            // size_t conversions
+            (Type::I32, Type::CSize) | (Type::CSize, Type::I32) => true,
+            (Type::U32, Type::CSize) | (Type::CSize, Type::U32) => true,
+            (Type::U64, Type::CSize) | (Type::CSize, Type::U64) => true,
+            // Struct type handling for size_t and u8 (legacy support)
+            (Type::I32, Type::Struct(name)) if name == "size_t" => true,
+            (Type::Struct(name), Type::I32) if name == "size_t" => true,
+            (Type::I32, Type::Struct(name)) if name == "u8" => true,
+            (Type::Struct(name), Type::I32) if name == "u8" => true,
+            // General struct type equality - this must come last for struct patterns
+            (Type::Struct(a), Type::Struct(b)) => a == b,
             _ => false,
         }
     }
