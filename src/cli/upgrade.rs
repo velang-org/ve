@@ -220,17 +220,35 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
     
     let source_exe = temp_dir.join("target").join("release").join(if cfg!(windows) { "ve.exe" } else { "ve" });
     let target_exe = install_dir.join(if cfg!(windows) { "ve.exe" } else { "ve" });
-    
-    #[cfg(windows)]
+      #[cfg(windows)]
     {
         if verbose {
-            println!("   Stopping any running VeLang processes...");
+            println!("   Stopping any running VeLang processes (except current upgrade)...");
         }
-        let _ = Command::new("taskkill")
-            .args(&["/F", "/IM", "ve.exe"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        
+        let current_pid = std::process::id();
+        
+       
+        let output = Command::new("wmic")
+            .args(&["process", "where", "name='ve.exe'", "get", "ProcessId", "/format:value"])
+            .output();
+            
+        if let Ok(output) = output {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                if let Some(pid_str) = line.strip_prefix("ProcessId=") {
+                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                        if pid != current_pid && pid != 0 {
+                            let _ = Command::new("taskkill")
+                                .args(&["/F", "/PID", &pid.to_string()])
+                                .stdout(Stdio::null())
+                                .stderr(Stdio::null())
+                                .status();
+                        }
+                    }
+                }
+            }
+        }
         
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
