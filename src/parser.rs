@@ -670,11 +670,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<ast::Type, Diagnostic<FileId>> {
-        let next = self.advance().map(|(t, s)| (t.clone(), *s));
-
-        match next {
+        let next = self.advance().map(|(t, s)| (t.clone(), *s));        match next {
             Some((Token::Ellipsis, _)) => Ok(ast::Type::Ellipsis),
+            Some((Token::TyI8, _)) => Ok(ast::Type::I8),
+            Some((Token::TyI16, _)) => Ok(ast::Type::I16),
             Some((Token::TyI32, _)) => Ok(ast::Type::I32),
+            Some((Token::TyI64, _)) => Ok(ast::Type::I64),
+            Some((Token::TyU8, _)) => Ok(ast::Type::U8),
+            Some((Token::TyU16, _)) => Ok(ast::Type::U16),
+            Some((Token::TyU32, _)) => Ok(ast::Type::U32),
+            Some((Token::TyU64, _)) => Ok(ast::Type::U64),
+            Some((Token::TyF32, _)) => Ok(ast::Type::F32),
+            Some((Token::TyF64, _)) => Ok(ast::Type::F64),
             Some((Token::TyBool, _)) => Ok(ast::Type::Bool),
             Some((Token::TyString, _)) => Ok(ast::Type::String),
             Some((Token::TyVoid, _)) => Ok(ast::Type::Void),
@@ -706,10 +713,8 @@ impl<'a> Parser<'a> {
                 } else {
                     self.expect(Token::RBracket)?;
                     Ok(ast::Type::Array(Box::new(element_type)))
-                }
-            },
+                }            },
             Some((Token::Ident(name), _)) => Ok(ast::Type::Struct(name)),
-            Some((Token::TyF64, _)) => Ok(ast::Type::F64),
             Some((_, span)) => self.error("Expected type annotation", span),
             None => self.error("Expected type annotation", Span::new(0, 0)),
         }

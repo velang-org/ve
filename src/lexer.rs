@@ -59,8 +59,7 @@ pub enum Token {
     #[token("${")]
     StrInterpolStart,
 
-    #[token("i32")]
-    TyI32,
+
     #[token("bool")]
     TyBool,
     #[token("string")]
@@ -69,8 +68,48 @@ pub enum Token {
     TyVoid,
     #[token("any")]
     TyAny,
+
+
+    #[token("byte")]
+    #[token("u8")]
+    TyU8,
+
+    #[token("ushort")]
+    #[token("u16")]
+    TyU16,
+
+    #[token("uint")]
+    #[token("u32")]
+    TyU32,
+
+    #[token("ulong")]
+    #[token("u64")]
+    TyU64,
+
+    #[token("sbyte")]
+    #[token("i8")]
+    TyI8,
+
+    #[token("short")]
+    #[token("i16")]
+    TyI16,
+
+    #[token("int")]
+    #[token("i32")]
+    TyI32,
+
+    #[token("long")]
+    #[token("i64")]
+    TyI64,
+
+    #[token("float")]
+    #[token("f32")]
+    TyF32,
+
+    #[token("double")]
     #[token("f64")]
     TyF64,
+
     #[token("->")]
     Arrow,
     #[token(":")]

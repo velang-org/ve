@@ -289,9 +289,15 @@ impl TypeChecker {
             }
             Expr::BinOp(left, op, right, ast::ExprInfo { span, ty: expr_type } ) => {
                 let left_ty = self.check_expr(left)?;
-                let right_ty = self.check_expr(right)?;                let result_ty = match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Pow2 | BinOp::Mod => {
-                        if (left_ty == Type::I32 && right_ty == Type::I32)
+                let right_ty = self.check_expr(right)?;                let result_ty = match op {                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Pow2 | BinOp::Mod => {
+                        if (left_ty == Type::I8 && right_ty == Type::I8)
+                            || (left_ty == Type::I16 && right_ty == Type::I16)
+                            || (left_ty == Type::I32 && right_ty == Type::I32)
+                            || (left_ty == Type::I64 && right_ty == Type::I64)
+                            || (left_ty == Type::U8 && right_ty == Type::U8)
+                            || (left_ty == Type::U16 && right_ty == Type::U16)
+                            || (left_ty == Type::U32 && right_ty == Type::U32)
+                            || (left_ty == Type::U64 && right_ty == Type::U64)
                             || (left_ty == Type::F32 && right_ty == Type::F32)
                             || (left_ty == Type::F64 && right_ty == Type::F64)
                             || (matches!(left_ty, Type::Struct(ref name) if name == "size_t") && right_ty == Type::I32)
@@ -305,12 +311,28 @@ impl TypeChecker {
                                 Type::F32
                             } else if left_ty == Type::F64 || right_ty == Type::F64 {
                                 Type::F64
+                            } else if left_ty == Type::I64 || right_ty == Type::I64 {
+                                Type::I64
+                            } else if left_ty == Type::U64 || right_ty == Type::U64 {
+                                Type::U64
+                            } else if left_ty == Type::I32 || right_ty == Type::I32 {
+                                Type::I32
+                            } else if left_ty == Type::U32 || right_ty == Type::U32 {
+                                Type::U32
+                            } else if left_ty == Type::I16 || right_ty == Type::I16 {
+                                Type::I16
+                            } else if left_ty == Type::U16 || right_ty == Type::U16 {
+                                Type::U16
+                            } else if left_ty == Type::I8 || right_ty == Type::I8 {
+                                Type::I8
+                            } else if left_ty == Type::U8 || right_ty == Type::U8 {
+                                Type::U8
                             } else if matches!(left_ty, Type::Struct(ref name) if name == "size_t") || matches!(right_ty, Type::Struct(ref name) if name == "size_t") {
                                 Type::Struct("size_t".to_string())
                             } else if left_ty == Type::CSize || right_ty == Type::CSize {
                                 Type::CSize
                             } else {
-                                Type::I32
+                                left_ty
                             }
                         } else if left_ty == Type::String && right_ty == Type::String && matches!(op, BinOp::Add) {
                             Type::String
@@ -367,10 +389,10 @@ impl TypeChecker {
                 Ok(result_ty)
             }
             Expr::UnaryOp(op, operand, ast::ExprInfo { span, ty: expr_type }) => {
-                let operand_ty = self.check_expr(operand)?;
-                let result_ty = match op {
+                let operand_ty = self.check_expr(operand)?;                let result_ty = match op {
                     ast::UnOp::Neg => {
-                        if operand_ty == Type::I32 || operand_ty == Type::F32 {
+                        if operand_ty == Type::I8 || operand_ty == Type::I16 || operand_ty == Type::I32 || operand_ty == Type::I64
+                            || operand_ty == Type::F32 || operand_ty == Type::F64 {
                             operand_ty
                         } else {
                             self.report_error(
@@ -380,7 +402,19 @@ impl TypeChecker {
                             Type::Unknown
                         }
                     }
-                    ast::UnOp::Plus => operand_ty,
+                    ast::UnOp::Plus => {
+                        if operand_ty == Type::I8 || operand_ty == Type::I16 || operand_ty == Type::I32 || operand_ty == Type::I64
+                            || operand_ty == Type::U8 || operand_ty == Type::U16 || operand_ty == Type::U32 || operand_ty == Type::U64
+                            || operand_ty == Type::F32 || operand_ty == Type::F64 {
+                            operand_ty
+                        } else {
+                            self.report_error(
+                                &format!("Cannot apply unary plus to type {}", operand_ty),
+                                *span,
+                            );
+                            Type::Unknown
+                        }
+                    }
                 };
                 *expr_type = result_ty.clone();
                 Ok(result_ty)
@@ -657,12 +691,11 @@ impl TypeChecker {
                                     );
                                 }
 
-                                match array_ty {
-                                    Type::Array(element_type) => {
+                                match array_ty {                                    Type::Array(element_type) => {
                                         array_info.ty = *element_type.clone();
                                         if !Self::is_convertible(&element_type, &Type::String)
-                                            && !Self::is_convertible(&element_type, &Type::I32)
-                                            && !Self::is_convertible(&element_type, &Type::Bool) {
+                                            && !matches!(*element_type, Type::I8 | Type::I16 | Type::I32 | Type::I64 
+                                                | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
                                             self.report_error(
                                                 &format!("Cannot convert array element type {} to string", element_type),
                                                 array.span()
@@ -672,8 +705,8 @@ impl TypeChecker {
                                     Type::SizedArray(element_type, _) => {
                                         array_info.ty = *element_type.clone();
                                         if !Self::is_convertible(&element_type, &Type::String)
-                                            && !Self::is_convertible(&element_type, &Type::I32)
-                                            && !Self::is_convertible(&element_type, &Type::Bool) {
+                                            && !matches!(*element_type, Type::I8 | Type::I16 | Type::I32 | Type::I64 
+                                                | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
                                             self.report_error(
                                                 &format!("Cannot convert array element type {} to string", element_type),
                                                 array.span()
@@ -699,18 +732,18 @@ impl TypeChecker {
                                             self.report_error(&format!("Undefined variable '{}'", name), var_info.span);
                                             vec![]
                                         })?,
-                                };
-                                var_info.ty = ty.clone();
-                                if !matches!(ty, Type::String | Type::I32 | Type::Bool | Type::F32) {
+                                };                                var_info.ty = ty.clone();
+                                if !matches!(ty, Type::String | Type::I8 | Type::I16 | Type::I32 | Type::I64 
+                                    | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
                                     self.errors.push(Diagnostic::error().with_message(msg).with_labels(vec![
                                         Label::primary(self.file_id, span)
                                     ]));
                                 }
-                            },
-                            _ => {
-                                if !matches!(ty, Type::String | Type::I32 | Type::Bool | Type::F32) {
+                            },                            _ => {
+                                if !matches!(ty, Type::String | Type::I8 | Type::I16 | Type::I32 | Type::I64 
+                                    | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
                                     self.errors.push(Diagnostic::error().with_message(msg).with_labels(vec![
