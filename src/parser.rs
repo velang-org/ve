@@ -987,8 +987,7 @@ impl<'a> Parser<'a> {
                     span,
                     ty: ast::Type::String,
                 }))
-            }
-            Some((Token::TemplateStr(s), span)) => {
+            }            Some((Token::TemplateStr(s), span)) => {
                 self.parse_template_string(s, span)
             }
             Some((Token::KwTrue, span)) => {
@@ -1341,9 +1340,7 @@ impl<'a> Parser<'a> {
             i = i.saturating_sub(1);
         }
 
-        false
-    }
-
+        false    }// Improved template string parsing - creates a sub-parser for interpolated expressions
     fn parse_template_string(&mut self, content: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut parts = Vec::new();
         let mut current = String::new();
@@ -1381,108 +1378,9 @@ impl<'a> Parser<'a> {
                 let expr_end = i - 1;
                 let expr_text: String = chars[expr_start..expr_end].iter().collect();
 
-                if expr_text.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    parts.push(ast::TemplateStrPart::Expression(Box::new(
-                        ast::Expr::Var(expr_text.trim().to_string(), ast::ExprInfo {
-                            span,
-                            ty: ast::Type::Unknown,
-                        })
-                    )));
-                } else if let Some(index_pos) = expr_text.find('[') {
-                    if expr_text.ends_with(']') {
-                        let array_name = expr_text[..index_pos].trim().to_string();
-                        let index_str = expr_text[index_pos+1..expr_text.len()-1].trim();
-
-                        if let Ok(index) = index_str.parse::<i32>() {
-                            parts.push(ast::TemplateStrPart::Expression(Box::new(
-                                ast::Expr::ArrayAccess(
-                                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
-                                        span,
-                                        ty: ast::Type::Unknown,
-                                    })),
-                                    Box::new(ast::Expr::Int(index, ast::ExprInfo {
-                                        span,
-                                        ty: ast::Type::I32,
-                                    })),
-                                    ast::ExprInfo {
-                                        span,
-                                        ty: ast::Type::Unknown,
-                                    }
-                                )
-                            )));
-                        } else {
-                            parts.push(ast::TemplateStrPart::Expression(Box::new(
-                                ast::Expr::ArrayAccess(
-                                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
-                                        span,
-                                        ty: ast::Type::Unknown,
-                                    })),
-                                    Box::new(ast::Expr::Var(index_str.to_string(), ast::ExprInfo {
-                                        span,
-                                        ty: ast::Type::Unknown,
-                                    })),
-                                    ast::ExprInfo {
-                                        span,
-                                        ty: ast::Type::Unknown,
-                                    }
-                                )
-                            )));
-                        }
-                    } else {
-                        parts.push(ast::TemplateStrPart::Expression(Box::new(
-                            ast::Expr::Var(expr_text.trim().to_string(), ast::ExprInfo {
-                                span,
-                                ty: ast::Type::Unknown,
-                            })
-                        )));
-                    }
-                } else {
-                    if let Some(op_pos) = find_operator(&expr_text) {
-                        let (left, right) = split_at_operator(&expr_text, op_pos);
-                        let op = determine_operator(&expr_text, op_pos);
-
-                        let left_expr = if left.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
-                            ast::Expr::Var(left.trim().to_string(), ast::ExprInfo {
-                                span,
-                                ty: ast::Type::Unknown,
-                            })
-                        } else {
-                            parse_nested_expr(left.trim(), span, self.file_id)?
-                        };
-
-                        let right_expr = if right.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
-                            ast::Expr::Var(right.trim().to_string(), ast::ExprInfo {
-                                span,
-                                ty: ast::Type::Unknown,
-                            })
-                        } else {
-                            parse_nested_expr(right.trim(), span, self.file_id)?
-                        };
-
-                        parts.push(ast::TemplateStrPart::Expression(Box::new(
-                            ast::Expr::BinOp(
-                                Box::new(left_expr),
-                                op,
-                                Box::new(right_expr),
-                                ast::ExprInfo {
-                                    span,
-                                    ty: ast::Type::Unknown,
-                                }
-                            )
-                        )));
-                    } else if expr_text.contains('(') && expr_text.trim().ends_with(')') {
-                        parts.push(ast::TemplateStrPart::Expression(Box::new(
-                            parse_nested_expr(expr_text.trim(), span, self.file_id)?
-                        )));
-                    } else {
-                        parts.push(ast::TemplateStrPart::Expression(Box::new(
-                            ast::Expr::Var(expr_text.trim().to_string(), ast::ExprInfo {
-                                span,
-                                ty: ast::Type::Unknown,
-                            })
-                        )));
-                    }
-                }
+                // Use proper tokenization instead of string parsing
+                let expr = self.parse_interpolated_expr(&expr_text, span)?;
+                parts.push(ast::TemplateStrPart::Expression(Box::new(expr)));
             } else {
                 current.push(c);
             }
@@ -1496,6 +1394,36 @@ impl<'a> Parser<'a> {
             span,
             ty: ast::Type::String,
         }))
+    }
+      // Parse interpolated expression using proper tokenization
+    fn parse_interpolated_expr(&mut self, expr_text: &str, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+        // Create a temporary lexer for the expression
+        let mut temp_files = codespan::Files::new();
+        let temp_file_id = temp_files.add("interpolation".to_string(), expr_text.to_string());
+        let temp_lexer = super::lexer::Lexer::new(&temp_files, temp_file_id);
+        let tokens = temp_lexer.tokens();
+        
+        // Create a sub-parser
+        let mut sub_parser = Parser {
+            tokens,
+            current: 0,
+            files: &temp_files,
+            file_id: temp_file_id,
+        };
+        
+        // Parse the expression
+        if sub_parser.tokens.is_empty() {
+            return self.error("Empty interpolation expression", span);
+        }
+        
+        let expr = sub_parser.parse_expr()?;
+        
+        // Check that we consumed all tokens
+        if !sub_parser.is_at_end() {
+            return self.error("Unexpected tokens after expression in interpolation", span);
+        }
+        
+        Ok(expr)
     }
 
     fn parse_match(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
@@ -1631,330 +1559,6 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn find_operator(expr: &str) -> Option<usize> {
-    let chars: Vec<char> = expr.chars().collect();
-    let mut paren_level = 0;
-    let mut bracket_level = 0;
-
-    for i in 0..chars.len() {
-        match chars[i] {
-            '(' => paren_level += 1,
-            ')' => paren_level -= 1,
-            '[' => bracket_level += 1,
-            ']' => bracket_level -= 1,
-            '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' | '&' | '|' | '^' => {
-                if paren_level == 0 && bracket_level == 0 {
-                    if i+1 < chars.len() {
-                        let next = chars[i+1];
-                        if (chars[i] == '*' && next == '*') || // **
-                            (chars[i] == '=' && next == '=') || // ==
-                            (chars[i] == '!' && next == '=') || // !=
-                            (chars[i] == '>' && next == '=') || // >=
-                            (chars[i] == '<' && next == '=') || // <=
-                            (chars[i] == '&' && next == '&') || // &&
-                            (chars[i] == '|' && next == '|') {  // ||
-                            return Some(i);
-                        }
-                    }
-
-                    return Some(i);
-                }
-            },
-            _ => {}
-        }
-    }
-
-    None
-}
-
-fn split_at_operator(expr: &str, pos: usize) -> (String, String) {
-    let mut end_pos = pos + 1;
-    let chars: Vec<char> = expr.chars().collect();
-
-    if pos+1 < chars.len() {
-        let curr = chars[pos];
-        let next = chars[pos+1];
-        if (curr == '*' && next == '*') || // **
-            (curr == '=' && next == '=') || // ==
-            (curr == '!' && next == '=') || // !=
-            (curr == '>' && next == '=') || // >=
-            (curr == '<' && next == '=') || // <=
-            (curr == '&' && next == '&') || // &&
-            (curr == '|' && next == '|') {  // ||
-            end_pos = pos + 2;
-        }
-    }
-
-    let left = expr[..pos].to_string();
-    let right = expr[end_pos..].to_string();
-
-    (left, right)
-}
-
-fn determine_operator(expr: &str, pos: usize) -> ast::BinOp {
-    let chars: Vec<char> = expr.chars().collect();
-    let c = chars[pos];
-
-    if pos+1 < chars.len() {
-        let next = chars[pos+1];
-        match (c, next) {
-            ('*', '*') => return ast::BinOp::Pow,
-            ('=', '=') => return ast::BinOp::Eq,
-            ('!', '=') => return ast::BinOp::NotEq,
-            ('>', '=') => return ast::BinOp::GtEq,
-            ('<', '=') => return ast::BinOp::LtEq,
-            ('&', '&') => return ast::BinOp::And,
-            ('|', '|') => return ast::BinOp::Or,
-            _ => {}
-        }
-    }
-
-    match c {
-        '+' => ast::BinOp::Add,
-        '-' => ast::BinOp::Sub,
-        '*' => ast::BinOp::Mul,
-        '/' => ast::BinOp::Div,
-        '%' => ast::BinOp::Mod,
-        '^' => ast::BinOp::Pow2,
-        '>' => ast::BinOp::Gt,
-        '<' => ast::BinOp::Lt,
-        _ => ast::BinOp::Add
-    }
-}
-
-
-fn parse_nested_expr(expr: &str, span: codespan::Span, file_id: codespan::FileId) -> Result<ast::Expr, codespan_reporting::diagnostic::Diagnostic<codespan::FileId>> {
-    let expr = expr.trim();
-
-    if expr.starts_with('(') && expr.ends_with(')') {
-        let inner = &expr[1..expr.len()-1];
-        return parse_nested_expr(inner, span, file_id);
-    }
-
-    if let Ok(num) = expr.parse::<i32>() {
-        return Ok(ast::Expr::Int(num, ast::ExprInfo {
-            span,
-            ty: ast::Type::I32,
-        }));
-    }
-
-    if expr == "true" || expr == "false" {
-        return Ok(ast::Expr::Bool(expr == "true", ast::ExprInfo {
-            span,
-            ty: ast::Type::Bool,
-        }));
-    }
-
-    if let Some(pos) = find_lowest_priority_operator(expr) {
-        let (left, right) = split_at_operator(expr, pos);
-        let op = determine_operator(expr, pos);
-
-        let left_expr = parse_nested_expr(left.trim(), span, file_id)?;
-        let right_expr = parse_nested_expr(right.trim(), span, file_id)?;
-
-        return Ok(ast::Expr::BinOp(
-            Box::new(left_expr),
-            op,
-            Box::new(right_expr),
-            ast::ExprInfo {
-                span,
-                ty: ast::Type::Unknown,
-            }
-        ));
-    }
-
-    if let Some(paren_pos) = expr.find('(') {
-        if expr.ends_with(')') {
-            let func_name = expr[..paren_pos].trim().to_string();
-            let args_str = expr[paren_pos+1..expr.len()-1].trim();
-            
-            let mut args = Vec::new();
-            if !args_str.is_empty() {
-                for arg_str in args_str.split(',') {
-                    args.push(parse_nested_expr(arg_str.trim(), span, file_id)?);
-                }
-            }
-            
-            return Ok(ast::Expr::Call(func_name, args, ast::ExprInfo {
-                span,
-                ty: ast::Type::Unknown,
-            }));
-        }
-    }
-
-    if let Some(index_pos) = expr.find('[') {
-        if expr.ends_with(']') {
-            let array_name = expr[..index_pos].trim().to_string();
-            let index_str = expr[index_pos+1..expr.len()-1].trim();
-
-
-            if let Ok(index) = index_str.parse::<i32>() {
-                return Ok(ast::Expr::ArrayAccess(
-                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    })),
-                    Box::new(ast::Expr::Int(index, ast::ExprInfo {
-                        span,
-                        ty: ast::Type::I32,
-                    })),
-                    ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    }
-                ));
-            } else {
-                return Ok(ast::Expr::ArrayAccess(
-                    Box::new(ast::Expr::Var(array_name, ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    })),
-                    Box::new(ast::Expr::Var(index_str.to_string(), ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    })),
-                    ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    }
-                ));
-            }
-        }
-    }
-
-    Ok(ast::Expr::Var(expr.to_string(), ast::ExprInfo {
-        span,
-        ty: ast::Type::Unknown,
-    }))
-}
-
-fn find_lowest_priority_operator(expr: &str) -> Option<usize> {
-    let chars: Vec<char> = expr.chars().collect();
-    let mut paren_level = 0;
-    let mut bracket_level = 0;
-
-    let mut _in_array_access = false;
-    let mut array_access_positions = Vec::new();
-
-    for i in 0..chars.len() {
-        match chars[i] {
-            '[' => {
-                bracket_level += 1;
-                if bracket_level == 1 && paren_level == 0 {
-                    _in_array_access = true;
-                    array_access_positions.push(i);
-                }
-            },
-            ']' => {
-                if bracket_level > 0 {
-                    bracket_level -= 1;
-                    if bracket_level == 0 && paren_level == 0 {
-                        _in_array_access = false;
-                        array_access_positions.push(i);
-                    }
-                }
-            },
-            '(' => paren_level += 1,
-            ')' => if paren_level > 0 { paren_level -= 1 },
-            _ => {}
-        }
-    }    for i in 0..chars.len() {
-        if is_inside_array_access(i, &array_access_positions) {
-            continue;
-        }
-
-        match chars[i] {
-            '+' | '-' => {
-                if i > 0 && !is_operator_char(chars[i-1]) && paren_level == 0 && bracket_level == 0 {
-                    return Some(i);
-                }
-            }
-            _ => {}
-        }
-    }    for i in 0..chars.len() {
-        if is_inside_array_access(i, &array_access_positions) {
-            continue;
-        }
-
-        match chars[i] {
-            '*' | '/' | '%' => {
-                if chars[i] == '*' && i+1 < chars.len() && chars[i+1] == '*' {
-                    continue;
-                }
-
-                if paren_level == 0 && bracket_level == 0 {
-                    return Some(i);
-                }
-            }
-            _ => {}
-        }
-    }    for i in 0..chars.len() {
-        if is_inside_array_access(i, &array_access_positions) {
-            continue;
-        }
-
-        match chars[i] {
-            '*' => {
-                if i+1 < chars.len() && chars[i+1] == '*' && paren_level == 0 && bracket_level == 0 {
-                    return Some(i);
-                }
-            },
-            '^' => {
-                if paren_level == 0 && bracket_level == 0 {
-                    return Some(i);
-                }
-            },
-            _ => {}
-        }
-    }
-
-    for i in 0..chars.len() {
-        if is_inside_array_access(i, &array_access_positions) {
-            continue;
-        }
-
-        match chars[i] {
-            '>' | '<' | '=' | '!' => {
-                if paren_level == 0 && bracket_level == 0 {
-                    if i+1 < chars.len() {
-                        let next = chars[i+1];
-                        if (chars[i] == '=' && next == '=') || // ==
-                            (chars[i] == '!' && next == '=') || // !=
-                            (chars[i] == '>' && next == '=') || // >=
-                            (chars[i] == '<' && next == '=') {  // <=
-                            return Some(i);
-                        }
-                    }
-
-                    if chars[i] == '>' || chars[i] == '<' {
-                        return Some(i);
-                    }
-                }
-            },
-            _ => {}
-        }
-    }
-
-    None
-}
-
-fn is_inside_array_access(pos: usize, array_access_positions: &[usize]) -> bool {
-    if array_access_positions.len() < 2 {
-        return false;
-    }
-
-    for i in 0..array_access_positions.len() / 2 {
-        let start = array_access_positions[i * 2];
-        let end = array_access_positions[i * 2 + 1];
-
-        if pos > start && pos < end {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn is_operator_char(c: char) -> bool {
-    matches!(c, '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' | '(' | '[' | ' ' | '!')
-}
+// These functions are no longer needed with proper tokenization
+// fn find_operator, split_at_operator, determine_operator, parse_nested_expr
+// have been removed as they were part of the problematic string-based parsing

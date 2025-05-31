@@ -49,16 +49,10 @@ pub enum Token {
     Ellipsis,
     #[token("foreign")]
     Foreign,
-
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     Str(String),
-
     #[regex(r#"`([^`\\]|\\.)*`"#, |lex| lex.slice()[1..lex.slice().len()-1].to_string())]
     TemplateStr(String),
-
-    #[token("${")]
-    StrInterpolStart,
-
 
     #[token("bool")]
     TyBool,
