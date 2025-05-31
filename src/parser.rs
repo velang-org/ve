@@ -44,18 +44,16 @@ impl<'a> Parser<'a> {
                 let import = self.parse_import()?;
                 program.imports.push(import);
             } else if self.check(Token::KwExport) {
-                self.advance();
-                if self.check(Token::KwStruct) {
+                self.advance();            if self.check(Token::KwStruct) {
                     let mut struct_def = self.parse_struct()?;
-                    struct_def.exported = true;
+                    struct_def.visibility = ast::Visibility::Public;
                     program.structs.push(struct_def);
-                } else if self.check(Token::KwEnum) {
-                    let mut enum_def = self.parse_enum()?;
-                    enum_def.exported = true;
+                } else if self.check(Token::KwEnum) {                    let mut enum_def = self.parse_enum()?;
+                    enum_def.visibility = ast::Visibility::Public;
                     program.enums.push(enum_def);
                 } else if self.check(Token::KwFn) {
                     let mut func = self.parse_function()?;
-                    func.exported = true;
+                    func.visibility = ast::Visibility::Public;
                     program.functions.push(func);
                 } else if self.check(Token::LBrace) {
                     self.parse_export_block(&mut program)?;
@@ -111,20 +109,18 @@ impl<'a> Parser<'a> {
             let result = if self.check(Token::KwImport) {
                 self.parse_import().map(|import| program.imports.push(import))
             } else if self.check(Token::KwExport) {
-                self.advance();
-                if self.check(Token::KwStruct) {
+                self.advance();                if self.check(Token::KwStruct) {
                     self.parse_struct().map(|mut struct_def| {
-                        struct_def.exported = true;
+                        struct_def.visibility = ast::Visibility::Public;
                         program.structs.push(struct_def);
                     })
                 } else if self.check(Token::KwEnum) {
                     self.parse_enum().map(|mut enum_def| {
-                        enum_def.exported = true;
-                        program.enums.push(enum_def);
+                        enum_def.visibility = ast::Visibility::Public;                        program.enums.push(enum_def);
                     })
                 } else if self.check(Token::KwFn) {
                     self.parse_function().map(|mut func| {
-                        func.exported = true;
+                        func.visibility = ast::Visibility::Public;
                         program.functions.push(func);
                     })
                 } else if self.check(Token::LBrace) {
@@ -249,16 +245,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_export_block(&mut self, program: &mut ast::Program) -> Result<(), Diagnostic<FileId>> {
-        self.expect(Token::LBrace)?;
-
-        while !self.check(Token::RBrace) {
+        self.expect(Token::LBrace)?;        while !self.check(Token::RBrace) {
             if self.check(Token::KwFn) {
                 let mut func = self.parse_function()?;
-                func.exported = true;
+                func.visibility = ast::Visibility::Public;
                 program.functions.push(func);
             } else if self.check(Token::KwStruct) {
                 let mut struct_def = self.parse_struct()?;
-                struct_def.exported = true;
+                struct_def.visibility = ast::Visibility::Public;
                 program.structs.push(struct_def);
             } else {
                 return self.error("Expected 'fn' or 'struct' in export block", self.peek_span());
@@ -755,15 +749,13 @@ impl<'a> Parser<'a> {
         let end_span = match body.last() {
             Some(last_stmt) => last_stmt.span(),
             None => start_span,
-        };
-
-        Ok(ast::Function {
+        };        Ok(ast::Function {
             name,
             params,
             return_type,
             body,
             span: Span::new(start_span.start(), end_span.end()),
-            exported: false,
+            visibility: ast::Visibility::Private,
         })
     }
 
@@ -961,13 +953,12 @@ impl<'a> Parser<'a> {
                 ast::Expr::Str(..) => ast::Type::String,
                 ast::Expr::Bool(..) => ast::Type::Bool,
                 _ => ast::Type::Unknown,
-            };
-
-            stmts.push(ast::Stmt::Let(
+            };            stmts.push(ast::Stmt::Let(
                 ident,
                 type_annot.clone(),
                 expr,
                 span,
+                ast::Visibility::Private,
             ));
         }
 
@@ -1273,13 +1264,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let end_span = self.expect(Token::RBrace)?;
-
-        Ok(ast::StructDef {
+        let end_span = self.expect(Token::RBrace)?;        Ok(ast::StructDef {
             name,
             fields,
             span: Span::new(start_span.start(), end_span.end()),
-            exported: false,
+            visibility: ast::Visibility::Private,
             repr: None,
         })
     }
@@ -1325,13 +1314,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let end_span = self.expect(Token::RBrace)?;
-
-        Ok(ast::EnumDef {
+        let end_span = self.expect(Token::RBrace)?;        Ok(ast::EnumDef {
             name,
             variants,
             span: Span::new(start_span.start(), end_span.end()),
-            exported: false,
+            visibility: ast::Visibility::Private,
         })
     }
 

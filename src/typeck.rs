@@ -86,9 +86,7 @@ impl TypeChecker {
                 .map(|v| v.name.clone())
                 .collect();
             self.context.enum_defs.insert(enum_def.name.clone(), variants);
-        }
-
-        for func in &program.functions {
+        }        for func in &program.functions {
             let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
             self.functions.insert(
                 func.name.clone(),
@@ -96,15 +94,13 @@ impl TypeChecker {
             );
         }
 
-        for func in &mut program.functions {
-            if !func.exported {
-                self.context.current_return_type = func.return_type.clone();
-                self.check_function(func)?;
-            }
-        }
-
         for stmt in &mut program.stmts {
             self.check_stmt(stmt)?;
+        }
+
+        for func in &mut program.functions {
+            self.context.current_return_type = func.return_type.clone();
+            self.check_function(func)?;
         }
 
         if self.errors.is_empty() {
@@ -112,13 +108,13 @@ impl TypeChecker {
         } else {
             Err(std::mem::take(&mut self.errors))
         }
-    }
-
-    fn check_function(&mut self, func: &mut ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
+    }    fn check_function(&mut self, func: &mut ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
         let mut local_ctx = Context::new();
         local_ctx.current_return_type = func.return_type.clone();
         local_ctx.struct_defs = self.context.struct_defs.clone();
         local_ctx.enum_defs = self.context.enum_defs.clone();
+        
+        local_ctx.variables = self.context.variables.clone();
 
         for (name, ty) in &func.params {
             local_ctx.variables.insert(name.clone(), ty.clone());
@@ -159,7 +155,7 @@ impl TypeChecker {
 
     fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Vec<Diagnostic<FileId>>> {
         match stmt {
-            Stmt::Let(name, decl_ty, expr, _) => {
+            Stmt::Let(name, decl_ty, expr, _, _) => {
                 let expr_ty = self.check_expr(expr).unwrap_or(Type::Unknown);
                 if let Some(decl_ty) = decl_ty {
                     if !Self::is_convertible(&expr_ty, decl_ty) {

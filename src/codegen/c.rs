@@ -253,11 +253,9 @@ impl CBackend {
         self.header.push_str("    }\n");
         self.header.push_str("    return result;\n");
         self.header.push_str("}\n\n");
-    }
-
-    fn emit_globals(&mut self, program: &ast::Program) -> Result<(), CompileError> {
+    }    fn emit_globals(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         for stmt in &program.stmts {
-            if let ast::Stmt::Let(name, ty, expr, _) = stmt {
+            if let ast::Stmt::Let(name, ty, expr, _, _) = stmt {
                 if self.is_constant_expr(expr) {
                     let c_ty = self.type_to_c(ty.as_ref().unwrap_or(&Type::I32));
                     let value = self.emit_expr(expr)?;
@@ -359,7 +357,7 @@ impl CBackend {
 
     fn emit_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
         match stmt {
-            ast::Stmt::Let(name, ty, expr, _) => {
+            ast::Stmt::Let(name, ty, expr, _, _) => {
                 if let ast::Expr::MatchExpr(pattern, arms, info) = expr {
                     let var_type = ty.clone().unwrap_or_else(|| info.ty.clone());
                     let c_ty = self.type_to_c(&var_type);
@@ -379,8 +377,7 @@ impl CBackend {
                     self.body.push_str(&format!("{} {} = {};\n", c_ty, name, temp_var));
                     self.variables.borrow_mut().insert(name.clone(), var_type);
                     return Ok(());
-                }
-                let var_type = if let Some(ty) = ty {
+                }                let var_type = if let Some(ty) = ty {
                     ty.clone()
                 } else {
                     match expr {

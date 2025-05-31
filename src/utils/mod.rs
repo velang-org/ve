@@ -2,7 +2,7 @@ use crate::ast::Type;
 use crate::{ast, lexer, parser};
 use anyhow::{anyhow, Context, Result};
 use codespan::Files;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -83,8 +83,7 @@ pub fn process_imports(
 
                                         let file_id = files.add(path.to_str().unwrap().to_string(), content);
                                         let lexer = lexer::Lexer::new(files, file_id);
-                                        let mut parser = parser::Parser::new(lexer);
-                                        let program = parser.parse().map_err(|error| {
+                                        let mut parser = parser::Parser::new(lexer);                                        let mut program = parser.parse().map_err(|error| {
                                             let file_path = error.labels.get(0)
                                                 .map(|l| l.file_id)
                                                 .and_then(|fid| Some(files.name(fid)))
@@ -103,9 +102,10 @@ pub fn process_imports(
                                             }
 
                                             anyhow!("Parser failed for import {}", module_path)
-                                        })?;
+                                        })?;  
+                                        analyze_and_mark_dependencies(&mut program);
 
-                                        for function in program.functions.iter().filter(|f| f.exported) {
+                                        for function in program.functions.iter().filter(|f| matches!(f.visibility, ast::Visibility::Public | ast::Visibility::Internal)) {
                                             let params: Vec<Type> = function.params.iter().map(|(_, t)| t.clone()).collect();
 
                                             let function_name = match alias {
@@ -120,14 +120,11 @@ pub fn process_imports(
                                                 }
                                             };
 
-                                            map.insert(function_name, (params, function.return_type.clone()));
-                                        }
-
-                                        for function in &program.functions {
+                                            map.insert(function_name.clone(), (params, function.return_type.clone()));
                                             funcs.push(function.clone());
                                         }
 
-                                        for struct_def in program.structs.iter().filter(|s| s.exported) {
+                                        for struct_def in program.structs.iter().filter(|s| matches!(s.visibility, ast::Visibility::Public)) {
                                             structs.push(struct_def.clone());
                                         }
 
@@ -135,17 +132,21 @@ pub fn process_imports(
                                             ffi_funcs.push(ffi_func.clone());
                                         }                                        for ffi_var in &program.ffi_variables {
                                             ffi_vars.push(ffi_var.clone());
-                                        }                                        // Collect global statements (let statements) from imported modules
+                                        }   
                                         for stmt in &program.stmts {
                                             match stmt {
-                                                ast::Stmt::Let(..) => {
-                                                    stmts.push(stmt.clone());
+                                                ast::Stmt::Let(name, _, _, _, visibility) => {
+                                                    // Only import Public and Internal items, not Private
+                                                    if matches!(visibility, ast::Visibility::Public | ast::Visibility::Internal) {
+                                                        stmts.push(stmt.clone());
+                                                    }
                                                 }
                                                 ast::Stmt::Block(block_stmts, _) => {
-                                                    // Extract let statements from blocks
                                                     for block_stmt in block_stmts {
-                                                        if let ast::Stmt::Let(..) = block_stmt {
-                                                            stmts.push(block_stmt.clone());
+                                                        if let ast::Stmt::Let(name, _, _, _, visibility) = block_stmt {
+                                                            if matches!(visibility, ast::Visibility::Public | ast::Visibility::Internal) {
+                                                                stmts.push(block_stmt.clone());
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -154,8 +155,73 @@ pub fn process_imports(
                                         }
 
                                         Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts))
-                                    },
-                                    ast::ImportDeclaration::ImportSpecifiers { .. } => {
+                                    },                                    ast::ImportDeclaration::ImportSpecifiers { module_path, module_type, specifiers } => {
+                                        let path_result: Result<PathBuf, anyhow::Error> = match module_type {
+                                            ast::ModuleType::Standard => {
+                                                resolve_standard_library_path(module_path)
+                                            },
+                                            ast::ModuleType::Local => {
+                                                let current_dir = base_path.parent()
+                                                    .ok_or_else(|| anyhow!("Base path has no parent"))?;
+                                                Ok(current_dir.join(module_path))
+                                            },
+                                            ast::ModuleType::External => {
+                                                resolve_library_path(module_path)
+                                            }
+                                        };
+
+                                        let path = path_result
+                                            .with_context(|| format!("Failed to resolve import: {}", module_path))?
+                                            .canonicalize()
+                                            .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
+
+                                        let content = std::fs::read_to_string(&path)
+                                            .with_context(|| format!("Failed to read file: {}", path.display()))?;                                        let file_id = files.add(path.to_string_lossy().to_string(), content.clone());
+
+                                        let lexer = lexer::Lexer::new(files, file_id);
+                                        let mut parser = parser::Parser::new(lexer);
+                                        let mut program = parser.parse()
+                                            .map_err(|e| anyhow!("Parsing error: {:?}", e))?;
+
+                                        analyze_and_mark_dependencies(&mut program);
+
+                                        for specifier in specifiers {
+                                            let item_name = &specifier.name;
+                                            let final_name = match &specifier.alias {
+                                                Some(alias) => alias.clone(),
+                                                None => item_name.clone(),
+                                            };   
+                                            if let Some(function) = program.functions.iter()
+                                                .find(|f| f.name == *item_name && matches!(f.visibility, ast::Visibility::Public)) {
+                                                let params: Vec<Type> = function.params.iter().map(|(_, t)| t.clone()).collect();
+                                                map.insert(final_name.clone(), (params, function.return_type.clone()));
+                                                
+                                                let mut imported_func = function.clone();
+                                                imported_func.name = final_name.clone();
+                                                funcs.push(imported_func);
+                                            }
+
+                                            if let Some(struct_def) = program.structs.iter()
+                                                .find(|s| s.name == *item_name && matches!(s.visibility, ast::Visibility::Public)) {
+                                                let mut imported_struct = struct_def.clone();
+                                                imported_struct.name = final_name.clone();
+                                                structs.push(imported_struct);
+                                            }
+
+
+                                            for stmt in &program.stmts {
+                                                if let ast::Stmt::Let(name, _, _, _, visibility) = stmt {
+                                                    if name == item_name && matches!(visibility, ast::Visibility::Public | ast::Visibility::Internal) {
+                                                        let mut imported_stmt = stmt.clone();                                                  
+                                                        if let ast::Stmt::Let(ref mut stmt_name, ref _ty, ref _expr, ref _span, ref _vis) = imported_stmt {
+                                                            *stmt_name = final_name.clone();
+                                                        }
+                                                        stmts.push(imported_stmt);
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts))
                                     }
                                 }
@@ -372,3 +438,182 @@ fn get_lib_path() -> Result<PathBuf> {
 
 #[allow(dead_code)]
 pub type ImportedFunctions = HashMap<String, (Vec<Type>, Type)>;
+
+/// Analyzes the program to identify dependencies and marks variables as `Internal`
+/// if they are needed by public functions. This mutation affects subsequent processing
+/// by ensuring that only necessary variables are exposed with appropriate visibility.
+fn analyze_and_mark_dependencies(program: &mut ast::Program) {  
+    // First, collect all let statement names (including those in blocks)
+    let mut let_statements: HashMap<String, usize> = HashMap::new();
+    
+    // Helper to collect let statements recursively
+    fn collect_let_statements_recursive(stmts: &[ast::Stmt], lets: &mut HashMap<String, usize>, base_index: &mut usize) {
+        for stmt in stmts {
+            match stmt {
+                ast::Stmt::Let(name, _, _, _, _) => {
+                    lets.insert(name.clone(), *base_index);
+                    *base_index += 1;
+                }
+                ast::Stmt::Block(block_stmts, _) => {
+                    collect_let_statements_recursive(block_stmts, lets, base_index);
+                }
+                _ => {
+                    *base_index += 1;
+                }
+            }
+        }
+    }
+    
+    let mut base_index = 0;
+    collect_let_statements_recursive(&program.stmts, &mut let_statements, &mut base_index);
+    
+    // Find dependencies for each exported function
+    let mut needed_variables: HashSet<String> = HashSet::new();    
+    for function in &program.functions {
+        if matches!(function.visibility, ast::Visibility::Public) {
+            let mut function_deps = HashSet::new();
+            collect_variable_dependencies_from_block(&function.body, &mut function_deps);
+            needed_variables.extend(function_deps);
+        }
+    }      
+      // Mark needed variables as Internal (including those in blocks)
+    fn mark_variables_recursive(stmts: &mut [ast::Stmt], needed_vars: &HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                ast::Stmt::Let(name, _ty, _expr, _span, visibility) => {
+                    if needed_vars.contains(name) && matches!(visibility, ast::Visibility::Private) {
+                        *visibility = ast::Visibility::Internal;
+                    }
+                }
+                ast::Stmt::Block(block_stmts, _) => {
+                    mark_variables_recursive(block_stmts, needed_vars);
+                }
+                _ => {}
+            }
+        }
+    }    
+    mark_variables_recursive(&mut program.stmts, &needed_variables);
+}
+
+/// Recursively collects all variable identifiers used in a block of statements
+fn collect_variable_dependencies_from_block(stmts: &[ast::Stmt], dependencies: &mut HashSet<String>) {
+    for stmt in stmts {
+        collect_variable_dependencies(stmt, dependencies);
+    }
+}
+
+/// Recursively collects all variable identifiers used in an expression or statement
+fn collect_variable_dependencies(stmt: &ast::Stmt, dependencies: &mut HashSet<String>) {
+    match stmt {
+        ast::Stmt::Let(_, _, expr, _, _) => {
+            collect_expr_dependencies(expr, dependencies);
+        }
+        ast::Stmt::Return(expr, _) => {
+            collect_expr_dependencies(expr, dependencies);
+        }
+        ast::Stmt::Block(stmts, _) => {
+            for stmt in stmts {
+                collect_variable_dependencies(stmt, dependencies);
+            }
+        }
+        ast::Stmt::If(condition, then_stmt, else_stmt, _) => {
+            collect_expr_dependencies(condition, dependencies);
+            collect_variable_dependencies_from_block(then_stmt, dependencies);
+            if let Some(else_stmt) = else_stmt {
+                collect_variable_dependencies_from_block(else_stmt, dependencies);
+            }
+        }
+        ast::Stmt::While(condition, body, _) => {
+            collect_expr_dependencies(condition, dependencies);
+            collect_variable_dependencies_from_block(body, dependencies);
+        }
+        ast::Stmt::For(_, iter_expr, body, _) => {
+            collect_expr_dependencies(iter_expr, dependencies);
+            collect_variable_dependencies_from_block(body, dependencies);
+        }
+        ast::Stmt::Expr(expr, _) => {
+            collect_expr_dependencies(expr, dependencies);
+        }
+        _ => {}
+    }
+}
+
+/// Recursively collects all variable identifiers used in an expression
+fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String>) {
+    match expr {
+        ast::Expr::Var(name, _) => {
+            dependencies.insert(name.clone());
+        }
+        ast::Expr::BinOp(left, _, right, _) => {
+            collect_expr_dependencies(left, dependencies);
+            collect_expr_dependencies(right, dependencies);
+        }
+        ast::Expr::UnaryOp(_, expr, _) => {
+            collect_expr_dependencies(expr, dependencies);
+        }
+        ast::Expr::Call(_, args, _) => {
+            for arg in args {
+                collect_expr_dependencies(arg, dependencies);
+            }
+        }
+        ast::Expr::FfiCall(_, args, _) => {
+            for arg in args {
+                collect_expr_dependencies(arg, dependencies);
+            }
+        }
+        ast::Expr::ArrayAccess(array, index, _) => {
+            collect_expr_dependencies(array, dependencies);
+            collect_expr_dependencies(index, dependencies);
+        }
+        ast::Expr::FieldAccess(obj, _, _) => {
+            collect_expr_dependencies(obj, dependencies);
+        }
+        ast::Expr::ArrayInit(elements, _) => {
+            for element in elements {
+                collect_expr_dependencies(element, dependencies);
+            }
+        }
+        ast::Expr::StructInit(_, fields, _) => {
+            for (_, expr) in fields {
+                collect_expr_dependencies(expr, dependencies);
+            }
+        }
+        ast::Expr::Cast(expr, _, _) => {
+            collect_expr_dependencies(expr, dependencies);
+        }
+        ast::Expr::Assign(left, right, _) => {
+            collect_expr_dependencies(left, dependencies);
+            collect_expr_dependencies(right, dependencies);
+        }
+        ast::Expr::Deref(expr, _) => {
+            collect_expr_dependencies(expr, dependencies);
+        }
+        ast::Expr::Range(start, end, _) => {
+            collect_expr_dependencies(start, dependencies);
+            collect_expr_dependencies(end, dependencies);
+        }
+        ast::Expr::EnumConstruct(_, _, args, _) => {
+            for arg in args {
+                collect_expr_dependencies(arg, dependencies);
+            }
+        }
+        // Literals don't have dependencies
+        ast::Expr::Int(_, _) | ast::Expr::F32(_, _) | ast::Expr::Bool(_, _) | ast::Expr::Str(_, _) | ast::Expr::Void(_) => {}
+        // Handle other expression types that might have nested expressions
+        ast::Expr::SafeBlock(stmts, _) => {
+            collect_variable_dependencies_from_block(stmts, dependencies);
+        }
+        ast::Expr::TemplateStr(parts, _) => {
+            for part in parts {
+                if let ast::TemplateStrPart::Expression(expr) = part {
+                    collect_expr_dependencies(expr, dependencies);
+                }
+            }
+        }
+        ast::Expr::MatchExpr(_, arms, _) => {
+            for arm in arms {
+                collect_expr_dependencies(&arm.body, dependencies);
+            }
+        }
+    }
+}

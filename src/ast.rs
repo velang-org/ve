@@ -53,7 +53,7 @@ pub struct Function {
     pub body: Vec<Stmt>,
     #[allow(dead_code)]
     pub span: Span,
-    pub exported: bool,
+    pub visibility: Visibility,
 }
 
 #[derive(Debug, Clone)]
@@ -70,7 +70,7 @@ pub struct StructDef {
     pub fields: Vec<StructField>,
     #[allow(dead_code)]
     pub span: Span,
-    pub exported: bool,
+    pub visibility: Visibility,
     pub repr: Option<String>,
 }
 
@@ -88,7 +88,7 @@ pub struct EnumDef {
     pub variants: Vec<EnumVariant>,
     #[allow(dead_code)]
     pub span: Span,
-    pub exported: bool,
+    pub visibility: Visibility,
 }
 
 #[derive(Debug, Clone)]
@@ -117,9 +117,16 @@ pub struct Program {
     pub ffi_variables: Vec<FfiVariable>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Visibility {
+    Private,    // dostępne tylko w tym module
+    Internal,   // dostępne w module i jego importach (dla dependencies)
+    Public,     // dostępne publicznie (export)
+}
+
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Let(String, Option<Type>, Expr, Span),
+    Let(String, Option<Type>, Expr, Span, Visibility),
     Var(String, Option<Type>, Span),
     Expr(Expr, Span),
     If(Expr, Vec<Stmt>, Option<Vec<Stmt>>, Span),
@@ -390,7 +397,7 @@ impl Pattern {
 impl Stmt {
     pub fn span(&self) -> Span {
         match self {
-            Stmt::Let(_, _, _, span) => *span,
+            Stmt::Let(_, _, _, span, _) => *span,
             Stmt::Var(_, _, span) => *span,
             Stmt::Expr(_, span) => *span,
             Stmt::If(_, _, _, span) => *span,

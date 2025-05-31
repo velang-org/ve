@@ -1,0 +1,11 @@
+// Test file for dependency analysis
+let internal_var = 42;
+let unused_var = 100;
+
+export fn public_function() -> i32 {
+    return internal_var + 10;
+}
+
+fn private_function() -> i32 {
+    return unused_var;
+}
