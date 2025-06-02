@@ -1395,15 +1395,12 @@ impl<'a> Parser<'a> {
             ty: ast::Type::String,
         }))
     }
-      // Parse interpolated expression using proper tokenization
     fn parse_interpolated_expr(&mut self, expr_text: &str, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
-        // Create a temporary lexer for the expression
         let mut temp_files = codespan::Files::new();
         let temp_file_id = temp_files.add("interpolation".to_string(), expr_text.to_string());
         let temp_lexer = super::lexer::Lexer::new(&temp_files, temp_file_id);
         let tokens = temp_lexer.tokens();
         
-        // Create a sub-parser
         let mut sub_parser = Parser {
             tokens,
             current: 0,
@@ -1411,14 +1408,13 @@ impl<'a> Parser<'a> {
             file_id: temp_file_id,
         };
         
-        // Parse the expression
         if sub_parser.tokens.is_empty() {
             return self.error("Empty interpolation expression", span);
         }
         
         let expr = sub_parser.parse_expr()?;
         
-        // Check that we consumed all tokens
+
         if !sub_parser.is_at_end() {
             return self.error("Unexpected tokens after expression in interpolation", span);
         }
@@ -1510,7 +1506,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Some((Token::Int(n), span)) => {
-                self.advance(); // consume the integer
+                self.advance(); 
                 Ok(ast::Pattern::Literal(
                     ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
                         span,
@@ -1520,7 +1516,7 @@ impl<'a> Parser<'a> {
                 ))
             }
             Some((Token::Str(s), span)) => {
-                self.advance(); // consume the string
+                self.advance();
                 Ok(ast::Pattern::Literal(
                     ast::Expr::Str(s, ast::ExprInfo {
                         span,
@@ -1530,7 +1526,7 @@ impl<'a> Parser<'a> {
                 ))
             }
             Some((Token::KwTrue, span)) => {
-                self.advance(); // consume true
+                self.advance();
                 Ok(ast::Pattern::Literal(
                     ast::Expr::Bool(true, ast::ExprInfo {
                         span,
@@ -1540,7 +1536,7 @@ impl<'a> Parser<'a> {
                 ))
             }
             Some((Token::KwFalse, span)) => {
-                self.advance(); // consume false
+                self.advance(); 
                 Ok(ast::Pattern::Literal(
                     ast::Expr::Bool(false, ast::ExprInfo {
                         span,
