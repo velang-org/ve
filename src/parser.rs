@@ -540,35 +540,67 @@ impl<'a> Parser<'a> {
                     span,
                     ty: ast::Type::Unknown,
                 }))
-            }
-            Token::Dot => {
+            }            Token::Dot => {
                 let (field, field_span) = self.consume_ident()?;
                 if self.check(Token::LParen) {
-                    let method_span = Span::new(lhs.span().start(), field_span.end());
-                    let args = self.parse_call_args()?;
-                    let end_span = args.1;
-                    Ok(ast::Expr::Call(
-                        format!("{}.{}", "<method>", field),
-                        {
-                            let mut v = vec![lhs];
-                            v.extend(args.0);
-                            v
-                        },
-                        ast::ExprInfo {
-                            span: Span::new(method_span.start(), end_span.end()),
-                            ty: ast::Type::Unknown,
-                        },
-                    ))
+                    // Check if this could be an enum construct with arguments
+                    if let ast::Expr::Var(enum_name, _) = &lhs {
+                        // This looks like EnumType.Variant(args) - treat as enum construct
+                        let args = self.parse_call_args()?;
+                        let end_span = args.1;
+                        Ok(ast::Expr::EnumConstruct(
+                            enum_name.clone(),
+                            field,
+                            args.0,
+                            ast::ExprInfo {
+                                span: Span::new(lhs.span().start(), end_span.end()),
+                                ty: ast::Type::Enum(enum_name.clone()),
+                            },
+                        ))
+                    } else {
+                        // Regular method call
+                        let method_span = Span::new(lhs.span().start(), field_span.end());
+                        let args = self.parse_call_args()?;
+                        let end_span = args.1;
+                        Ok(ast::Expr::Call(
+                            format!("{}.{}", "<method>", field),
+                            {
+                                let mut v = vec![lhs];
+                                v.extend(args.0);
+                                v
+                            },
+                            ast::ExprInfo {
+                                span: Span::new(method_span.start(), end_span.end()),
+                                ty: ast::Type::Unknown,
+                            },
+                        ))
+                    }
                 } else {
-                    let span = Span::new(lhs.span().start(), field_span.end());
-                    Ok(ast::Expr::FieldAccess(
-                        Box::new(lhs),
-                        field,
-                        ast::ExprInfo {
-                            span,
-                            ty: ast::Type::Unknown,
-                        },
-                    ))
+                    // Check if this could be an enum construct without arguments
+                    if let ast::Expr::Var(enum_name, _) = &lhs {
+                        // This could be either EnumType.Variant or struct.field
+                        // For now, we'll create a field access and let the type checker decide
+                        let span = Span::new(lhs.span().start(), field_span.end());
+                        Ok(ast::Expr::FieldAccess(
+                            Box::new(lhs),
+                            field,
+                            ast::ExprInfo {
+                                span,
+                                ty: ast::Type::Unknown,
+                            },
+                        ))
+                    } else {
+                        // Definitely field access on a complex expression
+                        let span = Span::new(lhs.span().start(), field_span.end());
+                        Ok(ast::Expr::FieldAccess(
+                            Box::new(lhs),
+                            field,
+                            ast::ExprInfo {
+                                span,
+                                ty: ast::Type::Unknown,
+                            },
+                        ))
+                    }
                 }
             }
             Token::DotDot => {
@@ -1016,51 +1048,6 @@ impl<'a> Parser<'a> {
 
                 Ok(expr)
             }            Some((Token::Ident(name), span)) => {
-                if self.check(Token::Dot) {
-                    self.advance();
-                    if matches!(self.peek_token(), Token::Ident(_)) {
-                        let (variant_name, variant_span) = self.consume_ident()?;
-
-                        if self.check(Token::LParen) {
-                            self.advance();
-                            let mut args = Vec::new();
-
-                            if !self.check(Token::RParen) {
-                                loop {
-                                    args.push(self.parse_expr()?);
-                                    if !self.check(Token::Comma) {
-                                        break;
-                                    }
-                                    self.advance();
-                                }
-                            }
-
-                            let end_span = self.expect(Token::RParen)?;
-
-                            return Ok(ast::Expr::EnumConstruct(
-                                name.clone(),
-                                variant_name,
-                                args,
-                                ast::ExprInfo {
-                                    span: Span::new(span.start(), end_span.end()),
-                                    ty: ast::Type::Enum(name),
-                                }
-                            ));
-                        } else {
-                            return Ok(ast::Expr::EnumConstruct(
-                                name.clone(),
-                                variant_name,
-                                Vec::new(),
-                                ast::ExprInfo {
-                                    span: Span::new(span.start(), variant_span.end()),                                    ty: ast::Type::Enum(name),
-                                }
-                            ));
-                        }
-                    } else {
-                        let span = self.peek_span();
-                        return self.error("Expected identifier after dot", span);
-                    }
-                }
                 if self.check(Token::LBrace) && self.can_start_struct_init(){
                     self.advance();
 

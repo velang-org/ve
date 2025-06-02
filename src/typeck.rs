@@ -249,12 +249,22 @@ impl TypeChecker {
             }
         }
         Ok(())
-    }
-
-    fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
+    }    fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
         if let Expr::FieldAccess(obj, field_name, span_info) = expr {
             if let Expr::Var(name, _) = obj.as_ref() {
-                if self.context.enum_defs.contains_key(name) {
+                if let Some(var_type) = self.context.variables.get(name) {
+                    if let Type::Enum(enum_name) = var_type {
+                        let enum_type = Type::Enum(enum_name.clone());
+                        *expr = Expr::EnumConstruct(
+                            enum_name.clone(),
+                            field_name.clone(),
+                            vec![],
+                            ast::ExprInfo { span: span_info.span, ty: enum_type.clone() }
+                        );
+                        return Ok(enum_type);
+                    }
+                }
+                else if self.context.enum_defs.contains_key(name) {
                     let enum_type = Type::Enum(name.clone());
                     *expr = Expr::EnumConstruct(
                         name.clone(),
@@ -905,7 +915,6 @@ impl TypeChecker {
             (Type::I32, Type::F64) => true,
             (Type::F64, Type::I32) => true,
             (Type::F64, Type::String) => true,
-            // Integer type conversions
             (Type::I32, Type::U8) | (Type::U8, Type::I32) => true,
             (Type::I32, Type::U16) | (Type::U16, Type::I32) => true,
             (Type::I32, Type::U32) | (Type::U32, Type::I32) => true,
@@ -913,16 +922,13 @@ impl TypeChecker {
             (Type::I32, Type::I8) | (Type::I8, Type::I32) => true,
             (Type::I32, Type::I16) | (Type::I16, Type::I32) => true,
             (Type::I32, Type::I64) | (Type::I64, Type::I32) => true,
-            // size_t conversions
             (Type::I32, Type::CSize) | (Type::CSize, Type::I32) => true,
             (Type::U32, Type::CSize) | (Type::CSize, Type::U32) => true,
             (Type::U64, Type::CSize) | (Type::CSize, Type::U64) => true,
-            // Struct type handling for size_t and u8 (legacy support)
             (Type::I32, Type::Struct(name)) if name == "size_t" => true,
             (Type::Struct(name), Type::I32) if name == "size_t" => true,
             (Type::I32, Type::Struct(name)) if name == "u8" => true,
             (Type::Struct(name), Type::I32) if name == "u8" => true,
-            // General struct type equality - this must come last for struct patterns
             (Type::Struct(a), Type::Struct(b)) => a == b,
             _ => false,
         }
