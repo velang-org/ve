@@ -509,6 +509,7 @@ impl TypeChecker {
                     (Type::I32, Type::U32) => Ok(target_ty.clone()),
                     (Type::U32, Type::I32) => Ok(target_ty.clone()),
                     (Type::String, Type::I32) => Ok(target_ty.clone()),
+                    (Type::F32, Type::String) => Ok(target_ty.clone()),
                     _ => {
                         if !Self::is_convertible(&source_ty, target_ty) {
                             self.report_error(

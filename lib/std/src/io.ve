@@ -4,10 +4,7 @@ foreign fn printf(fmt: string, ...) -> i32;
 #[header="stdio.h"]
 foreign fn getchar() -> i32;
 
-#[header="stdlib.h"]
-foreign fn malloc(size: size_t) -> rawptr;
-
-
+foreign fn ve_arena_alloc(size: size_t) -> rawptr;
 
 #[header="stdlib.h"]
 foreign var stdin: rawptr;
@@ -20,11 +17,9 @@ export fn println(s: string) {
     printf("%s\n", s);
 }
 
-
-
 export fn read_line() -> string {
     let buf_size: size_t = 1024;
-    let buffer: *u8 = malloc(buf_size) as *u8;
+    let buffer: *u8 = ve_arena_alloc(buf_size) as *u8;
 
     let i: size_t = 0;
     let c = getchar();
