@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::iter::Peekable;
+use std::slice::Iter;
 use super::{ast, lexer::{Lexer, Token}};
 use codespan::{FileId, Files, Span};
 use codespan_reporting::diagnostic::Diagnostic;
@@ -6,11 +8,12 @@ use codespan_reporting::diagnostic::Diagnostic;
 type Precedence = u8;
 
 pub struct Parser<'a> {
-    tokens: Vec<(Token, Span)>,
-    current: usize,
+    tokens: Peekable<Iter<'a, (Token, Span)>>,
     #[allow(dead_code)]
     files: &'a Files<String>,
     file_id: FileId,
+    token_vec: &'a [(Token, Span)],
+    previous_token: Option<(Token, Span)>,
 }
 
 enum ForeignItem {
@@ -19,12 +22,16 @@ enum ForeignItem {
 }
 
 impl<'a> Parser<'a> {
+    
     pub fn new(lexer: Lexer<'a>) -> Self {
+        let tokens_vec = lexer.tokens();
+        let leaked_tokens = Box::leak(tokens_vec.into_boxed_slice());
         Self {
-            tokens: lexer.tokens(),
-            current: 0,
+            tokens: leaked_tokens.iter().peekable(),
             files: lexer.files,
             file_id: lexer.file_id,
+            token_vec: leaked_tokens,
+            previous_token: None,
         }
     }
 
@@ -56,9 +63,9 @@ impl<'a> Parser<'a> {
                     func.visibility = ast::Visibility::Public;
                     program.functions.push(func);
                 } else if self.check(Token::LBrace) {
-                    self.parse_export_block(&mut program)?;
-                } else {
-                    return self.error("Expected 'fn', 'struct', or '{' after 'export'", self.peek_span());
+                    self.parse_export_block(&mut program)?;                } else {
+                    let span = self.peek_span();
+                    return self.error("Expected 'fn', 'struct', or '{' after 'export'", span);
                 }
             } else if self.check(Token::KwFn) {
                 program.functions.push(self.parse_function()?);
@@ -124,9 +131,9 @@ impl<'a> Parser<'a> {
                         program.functions.push(func);
                     })
                 } else if self.check(Token::LBrace) {
-                    self.parse_export_block(&mut program)
-                } else {
-                    self.error("Expected 'fn', 'struct', or '{' after 'export'", self.peek_span())
+                    self.parse_export_block(&mut program)                } else {
+                    let span = self.peek_span();
+                    self.error("Expected 'fn', 'struct', or '{' after 'export'", span)
                 }
             } else if self.check(Token::KwFn) {
                 self.parse_function().map(|func| program.functions.push(func))
@@ -238,9 +245,9 @@ impl<'a> Parser<'a> {
                 name,
                 ty,
                 metadata
-            }))
-        } else {
-            return self.error("Expected 'fn' or 'var' in foreign block", self.peek_span());
+            }))        } else {
+            let span = self.peek_span();
+            return self.error("Expected 'fn' or 'var' in foreign block", span);
         }
     }
 
@@ -253,9 +260,9 @@ impl<'a> Parser<'a> {
             } else if self.check(Token::KwStruct) {
                 let mut struct_def = self.parse_struct()?;
                 struct_def.visibility = ast::Visibility::Public;
-                program.structs.push(struct_def);
-            } else {
-                return self.error("Expected 'fn' or 'struct' in export block", self.peek_span());
+                program.structs.push(struct_def);            } else {
+                let span = self.peek_span();
+                return self.error("Expected 'fn' or 'struct' in export block", span);
             }
 
             if self.check(Token::Comma) {
@@ -268,11 +275,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_import(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
-        self.consume(Token::KwImport, "Expected 'import'")?;
-        if self.check(Token::Str(String::new())) {
+        self.consume(Token::KwImport, "Expected 'import'")?;        if self.check(Token::Str(String::new())) {
             let module_path = match self.advance().cloned() {
                 Some((Token::Str(path), _)) => path.clone(),
-                _ => return self.error("Expected module path", self.peek_span()),
+                _ => {
+                    let span = self.peek_span();
+                    return self.error("Expected module path", span);
+                }
             };
 
             let module_type = if module_path.starts_with("std/") {
@@ -293,23 +302,26 @@ impl<'a> Parser<'a> {
             };
             self.expect(Token::Semi)?;
             return Ok(ast::ImportDeclaration::ImportAll { module_path, module_type, alias });
-        }
-
-        let import_decl = match self.peek_token() {
+        }        let import_decl = match self.peek_token() {
             Token::Str(_) => self.parse_import_all()?,
             Token::LBrace => self.parse_import_specifiers()?,
             Token::Ident(_) => self.parse_import_specifier()?,
-            _ => return self.error("Invalid import statement", self.peek_span()),
+            _ => {
+                let span = self.peek_span();
+                return self.error("Invalid import statement", span);
+            }
         };
 
         self.expect(Token::Semi)?;
         Ok(import_decl)
-    }
-
-    fn parse_import_all(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
+    } 
+       fn parse_import_all(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
         let module_path = match self.advance().cloned() {
             Some((Token::Str(path), _)) => path.clone(),
-            _ => return self.error("Expected module path", self.peek_span()),
+            _ => {
+                let span = self.peek_span();
+                return self.error("Expected module path", span);
+            }
         };
 
         let module_type = if module_path.starts_with("std/") {
@@ -344,13 +356,14 @@ impl<'a> Parser<'a> {
                 break;
             }
             self.advance();
-        }
-
-        self.expect(Token::RBrace)?;
+        }        self.expect(Token::RBrace)?;
         self.expect(Token::KwFrom)?;
         let module_path = match self.advance().cloned() {
             Some((Token::Str(path), _)) => path.clone(),
-            _ => return self.error("Expected module path", self.peek_span()),
+            _ => {
+                let span = self.peek_span();
+                return self.error("Expected module path", span);
+            }
         };
 
         let module_type = if module_path.starts_with("std/") {
@@ -364,12 +377,14 @@ impl<'a> Parser<'a> {
         Ok(ast::ImportDeclaration::ImportSpecifiers { module_path, module_type, specifiers })
     }
 
-    fn parse_import_specifier(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
-        let (name, alias) = self.parse_import_specifier_item()?;
+    fn parse_import_specifier(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {        let (name, alias) = self.parse_import_specifier_item()?;
         self.expect(Token::KwFrom)?;
         let module_path = match self.advance().cloned() {
             Some((Token::Str(path), _)) => path.clone(),
-            _ => return self.error("Expected module path", self.peek_span()),
+            _ => {
+                let span = self.peek_span();
+                return self.error("Expected module path", span);
+            }
         };
 
         let module_type = if module_path.starts_with("std/") {
@@ -406,9 +421,8 @@ impl<'a> Parser<'a> {
 
     fn parse_expr(&mut self) -> Result<ast::Expr,   Diagnostic<FileId>> {
         self.parse_expr_bp(0)
-    }
+    }    fn parse_expr_bp(&mut self, min_bp: Precedence) -> Result<ast::Expr, Diagnostic<FileId>> {
 
-    fn parse_expr_bp(&mut self, min_bp: Precedence) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut lhs = self.parse_prefix()?;
 
         while let Some((op, _)) = self.peek() {
@@ -426,16 +440,11 @@ impl<'a> Parser<'a> {
         }
 
         Ok(lhs)
-    }
-
-    fn peek_token(&self) -> Token {
-        self.peek().map(|(t, _)| t.clone()).unwrap_or(Token::Error)
-    }
-    fn peek_span(&self) -> Span {
-        self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0))
-    }
-
-    fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+    }    fn peek_token(&mut self) -> Token {
+        self.tokens.peek().map(|(t, _)| (*t).clone()).unwrap_or(Token::Error)
+    }    fn peek_span(&mut self) -> Span {
+        self.tokens.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0))
+    }    fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let token = self.peek_token();
         match token {
             Token::Star => {
@@ -587,12 +596,13 @@ impl<'a> Parser<'a> {
                         ty: ast::Type::Unknown,
                     },
                 ))
-            }
-            _ => {
-                let token = self.peek().unwrap();
+            }            _ => {
+                let (token, span) = self.peek().unwrap();
+                let token = token.clone();
+                let span = *span;
                 self.error(
-                    &format!("Unexpected token in infix position: {:?}", token.0),
-                    token.1,
+                    &format!("Unexpected token in infix position: {:?}", token),
+                    span,
                 )
             }
         }
@@ -647,20 +657,17 @@ impl<'a> Parser<'a> {
         }
         self.expect(Token::RBrace)?;
         Ok(stmts)
-    }
-
-    fn consume(&mut self, expected: Token, err_msg: &str) -> Result<Span, Diagnostic<FileId>> {
+    }    fn consume(&mut self, expected: Token, err_msg: &str) -> Result<Span, Diagnostic<FileId>> {
         if self.check(expected.clone()) {
-            let span = self.peek().map(|(_, s)| *s).unwrap();
+            let span = self.tokens.peek().map(|(_, s)| *s).unwrap();
             self.advance();
             Ok(span)
         } else {
-            let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
+            let span = self.tokens.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
             self.error(err_msg, span)
         }
-    }
+    }    fn consume_ident(&mut self) -> Result<(String, Span), Diagnostic<FileId>> {
 
-    fn consume_ident(&mut self) -> Result<(String, Span), Diagnostic<FileId>> {
         let token = self.advance().cloned();
         match token.as_ref() {
             Some((Token::Ident(name), span)) => Ok((name.clone(), *span)),
@@ -696,9 +703,7 @@ impl<'a> Parser<'a> {
                 Ok(ast::Type::Array(Box::new(element_type)))
             },
             Some((Token::LBracket, _)) => {
-                let element_type = self.parse_type()?;
-
-                if self.check(Token::Semi) {
+                let element_type = self.parse_type()?;                if self.check(Token::Semi) {
                     self.advance();
 
                     let size_token = self.advance().cloned();
@@ -708,7 +713,10 @@ impl<'a> Parser<'a> {
                             self.expect(Token::RBracket)?;
                             Ok(ast::Type::SizedArray(Box::new(element_type), size as usize))
                         },
-                        _ => self.error("Expected array size (integer)", self.peek_span())
+                        _ => {
+                            let span = self.peek_span();
+                            self.error("Expected array size (integer)", span)
+                        }
                     }
                 } else {
                     self.expect(Token::RBracket)?;
@@ -718,10 +726,8 @@ impl<'a> Parser<'a> {
             Some((_, span)) => self.error("Expected type annotation", span),
             None => self.error("Expected type annotation", Span::new(0, 0)),
         }
-    }
-
-    fn parse_return(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
-        self.expect(Token::KwReturn)?;
+    }    fn parse_return(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+        self.consume(Token::KwReturn, "Expected 'return'")?;
         let ret_span = self.previous().map(|(_, s)| *s).unwrap();
         let expr = if self.check(Token::Semi) {
             ast::Expr::Void(ast::ExprInfo {
@@ -762,15 +768,13 @@ impl<'a> Parser<'a> {
             span: Span::new(start_span.start(), end_span.end()),
             visibility: ast::Visibility::Private,
         })
-    }
-
-    fn parse_parameters(&mut self) -> Result<Vec<(String, ast::Type)>, Diagnostic<FileId>> {
+    }    fn parse_parameters(&mut self) -> Result<Vec<(String, ast::Type)>, Diagnostic<FileId>> {
         self.consume(Token::LParen, "Expected '(' after function name")?;
         let mut params = Vec::new();
         while !self.check(Token::RParen) {
             if self.check(Token::Ellipsis) {
                 self.advance();
-                if self.check(Token::Ident(String::new())) {
+                if matches!(self.peek_token(), Token::Ident(_)) {
                     let (name, _) = self.consume_ident()?;
                     self.consume(Token::Colon, "Expected ':' after parameter name")?;
                     let param_type = self.parse_type()?;
@@ -779,24 +783,27 @@ impl<'a> Parser<'a> {
                     params.push(("...".to_string(), ast::Type::Ellipsis));
                 }
                 break;
-            }
-            else if self.check(Token::Dot) &&
-                self.tokens.get(self.current + 1).map(|(t, _)| t) == Some(&Token::Dot) &&
-                self.tokens.get(self.current + 2).map(|(t, _)| t) == Some(&Token::Dot)
-            {
-                self.advance();
-                self.advance();
-                self.advance();
-                if self.check(Token::Ident(String::new())) {
-                    let (name, _) = self.consume_ident()?;
-                    self.consume(Token::Colon, "Expected ':' after parameter name")?;
-                    let param_type = self.parse_type()?;
-                    params.push((format!("...{}", name), param_type));
+            }            else if self.check(Token::Dot) {
+                self.advance(); 
+                if self.check(Token::Dot) {
+                    self.advance(); 
+                    if self.check(Token::Dot) {
+                        self.advance();                        if matches!(self.peek_token(), Token::Ident(_)) {
+                            let (name, _) = self.consume_ident()?;
+                            self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                            let param_type = self.parse_type()?;
+                            params.push((format!("...{}", name), param_type));
+                        } else {
+                            params.push(("...".to_string(), ast::Type::Any));
+                        }
+                        break;                    } else {
+                        let span = self.peek_span();
+                        return self.error("Expected third dot for variadic parameter", span);
+                    }
                 } else {
-                    params.push(("...".to_string(), ast::Type::Any));
-                }
-                break;
-            } else {
+                    let span = self.peek_span();
+                    return self.error("Expected second dot for variadic parameter", span);
+                }            }else {
                 let (name, _) = self.consume_ident()?;
                 self.consume(Token::Colon, "Expected ':' after parameter name")?;
                 let param_type = self.parse_type()?;
@@ -809,9 +816,7 @@ impl<'a> Parser<'a> {
         }
         self.consume(Token::RParen, "Expected ')' after parameters")?;
         Ok(params)
-    }
-
-    fn parse_stmt(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+    }    fn parse_stmt(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         if self.check(Token::KwLet) {
             self.advance();
             self.parse_let(true)
@@ -866,9 +871,7 @@ impl<'a> Parser<'a> {
             body,
             Span::new(for_span.start(), self.previous().unwrap().1.end()),
         ))
-    }
-
-    fn parse_if(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+    }    fn parse_if(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.consume(Token::KwIf, "Expected 'if'")?;
         let if_span = self.previous().map(|(_, s)| *s).unwrap();
         let condition = self.parse_expr()?;
@@ -971,9 +974,7 @@ impl<'a> Parser<'a> {
             stmts,
             Span::new(let_span.start(), end)
         ))
-    }
-
-    fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+    }    fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let current = self.advance().cloned();
         match current {
             Some((Token::Int(n), span)) => {
@@ -1014,12 +1015,10 @@ impl<'a> Parser<'a> {
                 let _span = Span::new(span_start.start(), span_end.end());
 
                 Ok(expr)
-            }
-            Some((Token::Ident(name), span)) => {
+            }            Some((Token::Ident(name), span)) => {
                 if self.check(Token::Dot) {
-                    let next_pos = self.current + 1;
-                    if let Some((Token::Ident(_), _)) = self.tokens.get(next_pos) {
-                        self.advance();
+                    self.advance();
+                    if matches!(self.peek_token(), Token::Ident(_)) {
                         let (variant_name, variant_span) = self.consume_ident()?;
 
                         if self.check(Token::LParen) {
@@ -1053,15 +1052,16 @@ impl<'a> Parser<'a> {
                                 variant_name,
                                 Vec::new(),
                                 ast::ExprInfo {
-                                    span: Span::new(span.start(), variant_span.end()),
-                                    ty: ast::Type::Enum(name),
+                                    span: Span::new(span.start(), variant_span.end()),                                    ty: ast::Type::Enum(name),
                                 }
                             ));
                         }
+                    } else {
+                        let span = self.peek_span();
+                        return self.error("Expected identifier after dot", span);
                     }
                 }
-
-                if self.check(Token::LBrace) && !self.is_in_comparison_context(){
+                if self.check(Token::LBrace) && self.can_start_struct_init(){
                     self.advance();
 
                     let mut fields = Vec::new();
@@ -1187,42 +1187,32 @@ impl<'a> Parser<'a> {
                 ty: ast::Type::Unknown,
             },
         ))
-    }
-
-    fn is_at_end(&self) -> bool {
-        self.current >= self.tokens.len()
-    }
-
-    fn check(&self, token: Token) -> bool {
-        matches!(self.peek(), Some((t, _)) if *t == token)
-    }
-
-    fn advance(&mut self) -> Option<&(Token, Span)> {
-        if !self.is_at_end() {
-            self.current += 1;
-        }
-        self.previous()
-    }
-
-    fn previous(&self) -> Option<&(Token, Span)> {
-        if self.current > 0 {
-            self.tokens.get(self.current - 1)
+    }    fn is_at_end(&mut self) -> bool {
+        self.tokens.peek().is_none()
+    }    fn check(&mut self, token: Token) -> bool {
+        matches!(self.tokens.peek(), Some((t, _)) if *t == token)
+    }    fn advance(&mut self) -> Option<&(Token, Span)> {
+        if let Some(token) = self.tokens.next() {
+            self.previous_token = Some(token.clone());
+            Some(token)
         } else {
             None
         }
     }
 
-    fn peek(&self) -> Option<&(Token, Span)> {
-        self.tokens.get(self.current)
+    fn previous(&self) -> Option<&(Token, Span)> {
+        self.previous_token.as_ref()
     }
 
-    fn expect(&mut self, token: Token) -> Result<Span, Diagnostic<FileId>> {
+    fn peek(&mut self) -> Option<&(Token, Span)> {
+        self.tokens.peek().map(|x| *x)
+    }    fn expect(&mut self, token: Token) -> Result<Span, Diagnostic<FileId>> {
         if self.check(token.clone()) {
-            let span = self.peek().map(|(_, s)| *s).unwrap();
+            let span = self.tokens.peek().map(|(_, s)| *s).unwrap();
             self.advance();
             Ok(span)
         } else {
-            let span = self.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
+            let span = self.tokens.peek().map(|(_, s)| *s).unwrap_or(Span::new(0, 0));
             self.error(&format!("Expected {:?}", token), span)
         }
     }
@@ -1315,32 +1305,22 @@ impl<'a> Parser<'a> {
         })
     }
 
-
-    fn is_in_comparison_context(&self) -> bool {
-        if let Some((token, _)) = self.previous() {
-            match token {
-                Token::Gt | Token::Lt | Token::EqEq | Token::AndAnd | Token::OrOr => {
-                    return true;
-                }
-                _ => {}
-            }
-        }
-
-        let mut i = self.current.saturating_sub(2);
-        while i > 0 && i < self.tokens.len() {
-            if let Some((token, _)) = self.tokens.get(i) {
-                match token {
-                    Token::KwIf | Token::KwWhile => {
-                        return true;
-                    }
-                    Token::Semi | Token::LBrace | Token::RBrace => break,
-                    _ => {}
+    fn can_start_struct_init(&mut self) -> bool {
+        let mut temp_tokens = self.tokens.clone();
+        if let Some((Token::LBrace, _)) = temp_tokens.peek() {
+            temp_tokens.next();
+        
+            if let Some((Token::Ident(_), _)) = temp_tokens.peek() {
+                temp_tokens.next();
+                if let Some((Token::Colon, _)) = temp_tokens.peek() {
+                    return true; 
                 }
             }
-            i = i.saturating_sub(1);
         }
+        
+        false
+    }
 
-        false    }// Improved template string parsing - creates a sub-parser for interpolated expressions
     fn parse_template_string(&mut self, content: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut parts = Vec::new();
         let mut current = String::new();
@@ -1394,27 +1374,19 @@ impl<'a> Parser<'a> {
             span,
             ty: ast::Type::String,
         }))
-    }
-    fn parse_interpolated_expr(&mut self, expr_text: &str, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+    }    fn parse_interpolated_expr(&mut self, expr_text: &str, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut temp_files = codespan::Files::new();
         let temp_file_id = temp_files.add("interpolation".to_string(), expr_text.to_string());
         let temp_lexer = super::lexer::Lexer::new(&temp_files, temp_file_id);
-        let tokens = temp_lexer.tokens();
         
-        let mut sub_parser = Parser {
-            tokens,
-            current: 0,
-            files: &temp_files,
-            file_id: temp_file_id,
-        };
+        let mut sub_parser = Parser::new(temp_lexer);
         
-        if sub_parser.tokens.is_empty() {
+        if sub_parser.is_at_end() {
             return self.error("Empty interpolation expression", span);
         }
         
         let expr = sub_parser.parse_expr()?;
         
-
         if !sub_parser.is_at_end() {
             return self.error("Unexpected tokens after expression in interpolation", span);
         }
