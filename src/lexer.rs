@@ -168,6 +168,8 @@ pub enum Token {
     Arrow2,
     #[token("#")]
     Hash,
+    #[token("!")]
+    Bang,
 
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse().ok())]
     F32(f32),

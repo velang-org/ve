@@ -476,6 +476,21 @@ impl<'a> Parser<'a> {
                     }
                 ))
             }
+            Token::Bang => {
+                let op_span = self.peek_span();
+                self.advance();
+                let prefix_bp = self.get_prefix_bp(&token);
+                let expr = self.parse_expr_bp(prefix_bp)?;
+                let span = expr.span();
+                Ok(ast::Expr::UnaryOp(
+                    ast::UnOp::Not,
+                    Box::new(expr),
+                    ast::ExprInfo {
+                        span,
+                        ty: ast::Type::Unknown
+                    }
+                ))
+            }
             _ => {
                 self.parse_atom()
             }
@@ -543,9 +558,7 @@ impl<'a> Parser<'a> {
             }            Token::Dot => {
                 let (field, field_span) = self.consume_ident()?;
                 if self.check(Token::LParen) {
-                    // Check if this could be an enum construct with arguments
                     if let ast::Expr::Var(enum_name, _) = &lhs {
-                        // This looks like EnumType.Variant(args) - treat as enum construct
                         let args = self.parse_call_args()?;
                         let end_span = args.1;
                         Ok(ast::Expr::EnumConstruct(
@@ -558,7 +571,6 @@ impl<'a> Parser<'a> {
                             },
                         ))
                     } else {
-                        // Regular method call
                         let method_span = Span::new(lhs.span().start(), field_span.end());
                         let args = self.parse_call_args()?;
                         let end_span = args.1;
@@ -576,10 +588,7 @@ impl<'a> Parser<'a> {
                         ))
                     }
                 } else {
-                    // Check if this could be an enum construct without arguments
                     if let ast::Expr::Var(enum_name, _) = &lhs {
-                        // This could be either EnumType.Variant or struct.field
-                        // For now, we'll create a field access and let the type checker decide
                         let span = Span::new(lhs.span().start(), field_span.end());
                         Ok(ast::Expr::FieldAccess(
                             Box::new(lhs),
@@ -590,7 +599,6 @@ impl<'a> Parser<'a> {
                             },
                         ))
                     } else {
-                        // Definitely field access on a complex expression
                         let span = Span::new(lhs.span().start(), field_span.end());
                         Ok(ast::Expr::FieldAccess(
                             Box::new(lhs),
@@ -658,7 +666,7 @@ impl<'a> Parser<'a> {
 
     fn get_prefix_bp(&self, token: &Token) -> Precedence {
         match token {
-            Token::Star | Token::Plus | Token::Minus => 8,
+            Token::Star | Token::Plus | Token::Minus | Token::Bang => 8,
             _ => 0,
         }
     }
@@ -1307,7 +1315,7 @@ impl<'a> Parser<'a> {
         
         false
     }
-
+    
     fn parse_template_string(&mut self, content: String, span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         let mut parts = Vec::new();
         let mut current = String::new();
@@ -1345,7 +1353,6 @@ impl<'a> Parser<'a> {
                 let expr_end = i - 1;
                 let expr_text: String = chars[expr_start..expr_end].iter().collect();
 
-                // Use proper tokenization instead of string parsing
                 let expr = self.parse_interpolated_expr(&expr_text, span)?;
                 parts.push(ast::TemplateStrPart::Expression(Box::new(expr)));
             } else {
@@ -1405,7 +1412,7 @@ impl<'a> Parser<'a> {
 
     fn parse_match_arm(&mut self) -> Result<ast::MatchArm, Diagnostic<FileId>> {
         let pattern = self.parse_pattern()?;
-        self.expect(Token::Arrow2)?; // =>
+        self.expect(Token::Arrow2)?;
         let body = self.parse_expr()?;
 
         let pattern_span = pattern.span();

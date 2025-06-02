@@ -399,11 +399,13 @@ impl TypeChecker {
                 Ok(result_ty)
             }
             Expr::UnaryOp(op, operand, ast::ExprInfo { span, ty: expr_type }) => {
-                let operand_ty = self.check_expr(operand)?;                let result_ty = match op {
+                let operand_ty = self.check_expr(operand)?;
+                    let result_ty = match op {
                     ast::UnOp::Neg => {
-                        if operand_ty == Type::I8 || operand_ty == Type::I16 || operand_ty == Type::I32 || operand_ty == Type::I64
-                            || operand_ty == Type::F32 || operand_ty == Type::F64 {
-                            operand_ty
+                        if operand_ty == Type::I8 || operand_ty == Type::I16 
+                        || operand_ty == Type::I32 || operand_ty == Type::I64
+                        || operand_ty == Type::F32 || operand_ty == Type::F64 {
+                        operand_ty
                         } else {
                             self.report_error(
                                 &format!("Cannot negate type {}", operand_ty),
@@ -413,13 +415,26 @@ impl TypeChecker {
                         }
                     }
                     ast::UnOp::Plus => {
-                        if operand_ty == Type::I8 || operand_ty == Type::I16 || operand_ty == Type::I32 || operand_ty == Type::I64
-                            || operand_ty == Type::U8 || operand_ty == Type::U16 || operand_ty == Type::U32 || operand_ty == Type::U64
-                            || operand_ty == Type::F32 || operand_ty == Type::F64 {
-                            operand_ty
+                        if operand_ty == Type::I8 || operand_ty == Type::I16 
+                        || operand_ty == Type::I32 || operand_ty == Type::I64
+                        || operand_ty == Type::U8 || operand_ty == Type::U16 
+                        || operand_ty == Type::U32 || operand_ty == Type::U64
+                        || operand_ty == Type::F32 || operand_ty == Type::F64 {
+                        operand_ty
                         } else {
                             self.report_error(
                                 &format!("Cannot apply unary plus to type {}", operand_ty),
+                                *span,
+                            );
+                            Type::Unknown
+                        }
+                    }
+                    ast::UnOp::Not => {
+                        if operand_ty == Type::Bool {
+                            Type::Bool
+                        } else {
+                            self.report_error(
+                                &format!("Cannot apply logical NOT to type {}", operand_ty),
                                 *span,
                             );
                             Type::Unknown

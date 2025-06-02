@@ -3,7 +3,7 @@ use std::fmt;
 use codespan::Span;
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Many type variants are used but not detected by dead code analysis
+#[allow(dead_code)] 
 pub enum Type {
     I32,
     Bool,
@@ -71,7 +71,7 @@ pub struct StructDef {
     pub fields: Vec<StructField>,
     #[allow(dead_code)]
     pub span: Span,    pub visibility: Visibility,
-    #[allow(dead_code)] // Field for future C representation hints
+    #[allow(dead_code)] 
     pub repr: Option<String>,
 }
 
@@ -120,13 +120,13 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
-    Private,    // dostępne tylko w tym module
-    Internal,   // dostępne w module i jego importach (dla dependencies)
-    Public,     // dostępne publicznie (export)
+    Private,   
+    Internal,
+    Public,    
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Var and Defer statements are used but not detected by dead code analysis  
+#[allow(dead_code)] 
 pub enum Stmt {
     Let(String, Option<Type>, Expr, Span, Visibility),
     Var(String, Option<Type>, Span),
@@ -162,7 +162,7 @@ pub struct FfiVariable {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // FfiCall expression is used but not detected by dead code analysis
+#[allow(dead_code)] 
 pub enum Expr {
     Int(i32, ExprInfo),
     Bool(bool, ExprInfo),
@@ -183,7 +183,7 @@ pub enum Expr {
     TemplateStr(Vec<TemplateStrPart>, ExprInfo),
     F32(f32, ExprInfo),
     FfiCall(String, Vec<Expr>, ExprInfo),
-    EnumConstruct(String, String, Vec<Expr>, ExprInfo), // EnumName::Variant(args)
+    EnumConstruct(String, String, Vec<Expr>, ExprInfo),
     MatchExpr(Box<Pattern>, Vec<MatchArm>, ExprInfo),
     Void(ExprInfo),
 }
@@ -296,6 +296,7 @@ impl Expr {
 pub enum UnOp {
     Neg,
     Plus,
+    Not,
 }
 
 #[derive(Debug, Clone)]

@@ -207,11 +207,23 @@ impl CBackend {
 
         self.header.push('\n');
 
-        // Arena memory management system
         self.header.push_str("typedef struct {\n");
         self.header.push_str("    char* memory;\n");
         self.header.push_str("    size_t used;\n");
-        self.header.push_str("    size_t capacity;\n");        self.header.push_str("} ve_Arena;\n\n");        // Generate platform-specific thread-local storage at compile time
+        self.header.push_str("    size_t capacity;\n");
+        self.header.push_str("} ve_Arena;\n\n");
+
+        self.header.push_str("static void** ve_malloc_ptrs = NULL;\n");
+        self.header.push_str("static size_t ve_malloc_count = 0;\n");
+        self.header.push_str("static size_t ve_malloc_capacity = 0;\n");
+        self.header.push_str("static void ve_track_malloc(void* ptr) {\n");
+        self.header.push_str("    if (ve_malloc_count >= ve_malloc_capacity) {\n");
+        self.header.push_str("        ve_malloc_capacity = ve_malloc_capacity ? ve_malloc_capacity * 2 : 16;\n");
+        self.header.push_str("        ve_malloc_ptrs = realloc(ve_malloc_ptrs, sizeof(void*) * ve_malloc_capacity);\n");
+        self.header.push_str("    }\n");
+        self.header.push_str("    ve_malloc_ptrs[ve_malloc_count++] = ptr;\n");
+        self.header.push_str("}\n\n");
+
         let thread_local_keyword = if cfg!(target_os = "windows") && cfg!(target_env = "msvc") {
             "__declspec(thread)"
         } else if cfg!(any(target_env = "gnu", target_env = "musl")) || 
@@ -238,14 +250,36 @@ impl CBackend {
         self.header.push_str("    if (ve_arena_depth == 0) {\n");
         self.header.push_str("        ve_temp_arena.used = 0;\n");
         self.header.push_str("    }\n");
-        self.header.push_str("}\n\n");        self.header.push_str("char* ve_arena_alloc(size_t size) {\n");
+        self.header.push_str("}\n\n");
+
+        self.header.push_str("char* ve_arena_alloc(size_t size) {\n");
         self.header.push_str("    if (ve_temp_arena.used + size >= ve_temp_arena.capacity) {\n");
-        self.header.push_str("        return malloc(size);\n");
+        self.header.push_str("        char* ptr = malloc(size);\n");
+        self.header.push_str("        ve_track_malloc(ptr);\n");
+        self.header.push_str("        return ptr;\n");
         self.header.push_str("    }\n");
         self.header.push_str("    char* result = ve_temp_arena.memory + ve_temp_arena.used;\n");
         self.header.push_str("    ve_temp_arena.used += size;\n");
         self.header.push_str("    return result;\n");
-        self.header.push_str("}\n\n");self.header.push_str("static char* ve_int_to_str(int num) {\n");
+        self.header.push_str("}\n\n");
+
+        self.header.push_str("static void ve_arena_cleanup() {\n");
+        self.header.push_str("    for (size_t i = 0; i < ve_malloc_count; i++) {\n");
+        self.header.push_str("        free(ve_malloc_ptrs[i]);\n");
+        self.header.push_str("    }\n");
+        self.header.push_str("    free(ve_malloc_ptrs);\n");
+        self.header.push_str("    ve_malloc_ptrs = NULL;\n");
+        self.header.push_str("    ve_malloc_count = 0;\n");
+        self.header.push_str("    ve_malloc_capacity = 0;\n");
+        self.header.push_str("    if (ve_temp_arena.memory) {\n");
+        self.header.push_str("        free(ve_temp_arena.memory);\n");
+        self.header.push_str("        ve_temp_arena.memory = NULL;\n");
+        self.header.push_str("        ve_temp_arena.used = 0;\n");
+        self.header.push_str("        ve_temp_arena.capacity = 0;\n");
+        self.header.push_str("    }\n");
+        self.header.push_str("}\n\n");
+
+        self.header.push_str("static char* ve_int_to_str(int num) {\n");
         self.header.push_str("    char* buffer = ve_arena_alloc(12);\n");
         self.header.push_str("    sprintf(buffer, \"%d\", num);\n");
         self.header.push_str("    return buffer;\n");
@@ -369,6 +403,7 @@ impl CBackend {
                 }
             }
 
+            self.body.push_str("    ve_arena_cleanup();\n");
             self.body.push_str("    return 0;\n}\n");
         }
         Ok(())
@@ -423,6 +458,7 @@ impl CBackend {
             let last_is_return = func.body.last().is_some_and(|s| matches!(s, ast::Stmt::Return(..)));
 
             if !last_is_return {
+                self.body.push_str("    ve_arena_cleanup();\n");
                 self.body.push_str("    return 0;\n");
             }
         } else if func.return_type == Type::Void {
@@ -873,7 +909,7 @@ impl CBackend {
                     {} {}[] = {{ {} }}; \
                     {}* {} = ve_arena_alloc({} * sizeof({})); \
                     if ({}) {{ \
-                        for (int _i = 0; _i < {}; _i++) {{{}[_i] = {}[_i];}} \
+                        for (int _i = 0; i < {}; _i++) {{{}[_i] = {}[_i];}} \
                     }} \
                     {}; \
                 }})",
@@ -960,6 +996,7 @@ impl CBackend {
                 match op {
                     ast::UnOp::Neg => Ok(format!("-{}", inner_code)),
                     ast::UnOp::Plus => Ok(format!("{}", inner_code)),
+                    ast::UnOp::Not => Ok(format!("!{}", inner_code)),
                 }
             }
 
