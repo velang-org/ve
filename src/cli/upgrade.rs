@@ -217,44 +217,41 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
     }
     
     fs::create_dir_all(&install_dir)?;
-    
-    let source_exe = temp_dir.join("target").join("release").join(if cfg!(windows) { "ve.exe" } else { "ve" });
+      let source_exe = temp_dir.join("target").join("release").join(if cfg!(windows) { "ve.exe" } else { "ve" });
     let target_exe = install_dir.join(if cfg!(windows) { "ve.exe" } else { "ve" });
-      #[cfg(windows)]
+    
+    #[cfg(windows)]
     {
         if verbose {
-            println!("   Stopping any running VeLang processes (except current upgrade)...");
+            println!("   Preparing to replace executable...");
         }
         
-        let current_pid = std::process::id();
+        stop_other_velang_processes(verbose)?;
         
-       
-        let output = Command::new("wmic")
-            .args(&["process", "where", "name='ve.exe'", "get", "ProcessId", "/format:value"])
-            .output();
+        if target_exe.exists() {
+            let backup_exe = install_dir.join("ve_old.exe");
             
-        if let Ok(output) = output {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            for line in output_str.lines() {
-                if let Some(pid_str) = line.strip_prefix("ProcessId=") {
-                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                        if pid != current_pid && pid != 0 {
-                            let _ = Command::new("taskkill")
-                                .args(&["/F", "/PID", &pid.to_string()])
-                                .stdout(Stdio::null())
-                                .stderr(Stdio::null())
-                                .status();
-                        }
+            if backup_exe.exists() {
+                let _ = fs::remove_file(&backup_exe);
+            }
+            
+            match fs::rename(&target_exe, &backup_exe) {
+                Ok(_) => {
+                    if verbose {
+                        println!("   Moved current executable to backup");
+                    }
+                }
+                Err(e) => {
+                    if verbose {
+                        println!("   Warning: Could not backup current executable: {}", e);
                     }
                 }
             }
         }
-        
-        std::thread::sleep(std::time::Duration::from_millis(500));
     }
     
     let mut retry_count = 0;
-    const MAX_RETRIES: usize = 5;
+    const MAX_RETRIES: usize = 10;
     
     loop {
         match fs::copy(&source_exe, &target_exe) {
@@ -267,14 +264,37 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
             Err(e) if retry_count < MAX_RETRIES => {
                 retry_count += 1;
                 if verbose {
-                    println!("   Copy attempt {} failed, retrying... ({})", retry_count, e);
+                    println!("   Copy attempt {} failed, retrying in {}ms... ({})", retry_count, retry_count * 500, e);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(1000));
+                
+                std::thread::sleep(std::time::Duration::from_millis((retry_count * 500) as u64));
+                
+                #[cfg(windows)]
+                {
+                    if retry_count == 3 || retry_count == 6 {
+                        let _ = stop_other_velang_processes(false);
+                    }
+                    
+                    if retry_count == 5 {
+                        if target_exe.exists() {
+                            let temp_name = install_dir.join(format!("ve_temp_{}.exe", std::process::id()));
+                            let _ = fs::rename(&target_exe, &temp_name);
+                        }
+                    }
+                }
             }
             Err(e) => {
                 fs::remove_dir_all(&temp_dir)?;
-                return Err(anyhow!("Failed to copy executable after {} attempts: {}", MAX_RETRIES, e));
+                return Err(anyhow!("Failed to copy executable after {} attempts: {}\n\nThis usually happens when VeLang is still running. Please:\n1. Close all VeLang processes\n2. Wait a few seconds\n3. Try the upgrade again", MAX_RETRIES, e));
             }
+        }
+    }
+    
+    #[cfg(windows)]
+    {
+        let backup_exe = install_dir.join("ve_old.exe");
+        if backup_exe.exists() {
+            let _ = fs::remove_file(&backup_exe);
         }
     }
     
@@ -363,6 +383,65 @@ fn cleanup_cargo_installation(verbose: bool) -> Result<()> {
             }
             let _ = fs::remove_file(&cargo_bin);
         }
+    }
+    
+    Ok(())
+}
+
+#[cfg(windows)]
+fn stop_other_velang_processes(verbose: bool) -> Result<()> {
+    if verbose {
+        println!("   Stopping any running VeLang processes (except current upgrade)...");
+    }
+    
+    let current_pid = std::process::id();
+    
+    let ps_command = format!(
+        "Get-Process -Name 've' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {} }} | ForEach-Object {{ $_.Id }}",
+        current_pid
+    );
+    
+    let output = Command::new("powershell")
+        .args(&["-Command", &ps_command])
+        .output();
+    
+    if let Ok(output) = output {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let pids: Vec<u32> = output_str
+            .lines()
+            .filter_map(|line| line.trim().parse::<u32>().ok())
+            .collect();
+        
+        if !pids.is_empty() {
+            if verbose {
+                println!("   Found {} VeLang process(es) to terminate: {:?}", pids.len(), pids);
+            }
+            
+            for pid in pids {
+                let kill_result = Command::new("taskkill")
+                    .args(&["/F", "/PID", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                
+                if verbose {
+                    match kill_result {
+                        Ok(status) if status.success() => {
+                            println!("   Successfully terminated process {}", pid);
+                        }
+                        _ => {
+                            println!("   Could not terminate process {} (may have already exited)", pid);
+                        }
+                    }
+                }
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        } else if verbose {
+            println!("   No other VeLang processes found running");
+        }
+    } else if verbose {
+        println!("   Could not check for running processes");
     }
     
     Ok(())
