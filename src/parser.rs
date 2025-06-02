@@ -1558,7 +1558,3 @@ impl<'a> Parser<'a> {
         }
     }
 }
-
-// These functions are no longer needed with proper tokenization
-// fn find_operator, split_at_operator, determine_operator, parse_nested_expr
-// have been removed as they were part of the problematic string-based parsing
