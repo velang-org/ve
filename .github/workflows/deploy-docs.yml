@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy-docs:
-    runs-on: windows-latest
+    runs-on: windows-2019
 
     steps:
     - uses: actions/checkout@v4
@@ -20,7 +20,7 @@ jobs:
         override: true
 
     - name: Setup MSVC
-      uses: ilammy/msvc-dev-cmd@v1
+      uses: ilammy/msvc-dev-cmd@v1.13.0
       with:
         arch: x64
 
