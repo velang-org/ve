@@ -19,16 +19,24 @@ jobs:
         toolchain: stable
         override: true
 
-    - name: Build Velang compiler
-      run: cargo build
+    - name: Setup MSVC Build Tools
+      uses: microsoft/setup-msbuild@v1.0.2
 
-    - name: Setup MSVC environment and run ve
+    - name: Build Velang compiler (Release)
+      run: cargo build --release
+
+    - name: Setup MSVC environment and compile ve program
       shell: cmd
       run: |
-        call "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" ^
-        && .\target\release\ve .\docs\server.ve
-
-
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" 2>nul || ^
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat" 2>nul || ^
+        call "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat" 2>nul || ^
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\VC\Auxiliary\Build\vcvars64.bat" 2>nul || ^
+        call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" 2>nul || ^
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat" 2>nul || ^
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" 2>nul || ^
+        (echo "Could not find Visual Studio installation" && exit /b 1)
+        .\target\release\ve .\docs\server.ve
 
     - name: Start server in background
       run: Start-Process -NoNewWindow -FilePath "${{ github.workspace }}\docs\build\program.exe"
