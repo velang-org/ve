@@ -20,10 +20,14 @@ jobs:
         override: true
 
     - name: Build Velang compiler
-      run: cargo build --release
+      run: cargo build
 
     - name: Compile documentation server
-      run: .\target\release\ve .\docs\server.ve
+      shell: cmd
+      run: |
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" ^
+        && .\target\release\ve .\docs\server.ve
+
 
     - name: Start server in background
       run: Start-Process -NoNewWindow -FilePath "${{ github.workspace }}\docs\build\program.exe"
