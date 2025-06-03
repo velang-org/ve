@@ -22,11 +22,12 @@ jobs:
     - name: Build Velang compiler
       run: cargo build
 
-    - name: Compile documentation server
+    - name: Setup MSVC environment and run ve
       shell: cmd
       run: |
-        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" ^
+        call "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" ^
         && .\target\release\ve .\docs\server.ve
+
 
 
     - name: Start server in background
