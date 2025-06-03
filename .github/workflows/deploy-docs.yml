@@ -27,11 +27,8 @@ jobs:
     - name: Build Velang compiler (Release)
       run: cargo build --release
 
-    - name: Compile ve program
-      run: .\target\release\ve .\docs\server.ve
-
-    - name: Start server in background
-      run: Start-Process -NoNewWindow -FilePath "${{ github.workspace }}\docs\build\program.exe"
+    - name: Compile ve program in background
+      run: Start-Process -NoNewWindow -Wait -FilePath .\target\release\ve -ArgumentList ".\docs\server.ve"
 
     - name: Wait for server to start
       run: Start-Sleep -Seconds 5
