@@ -63,7 +63,6 @@ pub enum Token {
     #[token("any")]
     TyAny,
 
-
     #[token("byte")]
     #[token("u8")]
     TyU8,
@@ -207,10 +206,11 @@ impl<'a> Lexer<'a> {
         Token::lexer(source)
             .spanned()
             .filter_map(|(token, span)| match token {
-                Ok(token) if token != Token::Error => Some((token, Span::new(span.start as u32, span.end as u32))),
+                Ok(token) if token != Token::Error => {
+                    Some((token, Span::new(span.start as u32, span.end as u32)))
+                }
                 _ => None,
             })
             .collect()
     }
 }
-

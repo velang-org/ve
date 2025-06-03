@@ -1,20 +1,19 @@
+pub mod benchmark;
 pub mod init;
 pub(crate) mod run;
-pub mod benchmark;
 pub mod upgrade;
 
-use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-use anyhow::{anyhow, Context};
-use codespan::Files;
-use codespan_reporting::term;
-use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
-use crate::{codegen, lexer, parser, typeck};
 #[cfg(target_os = "windows")]
 use crate::utils::{prepare_windows_clang_args, process_imports, validate_ve_file};
 #[cfg(not(target_os = "windows"))]
 use crate::utils::{process_imports, validate_ve_file};
-
+use crate::{codegen, lexer, parser, typeck};
+use anyhow::{Context, anyhow};
+use clap::{Parser, Subcommand};
+use codespan::Files;
+use codespan_reporting::term;
+use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct CliError(pub String);
@@ -48,11 +47,12 @@ pub enum CliCommand {
         input: PathBuf,
         iterations: usize,
         verbose: bool,
-    },    Upgrade {
+    },
+    Upgrade {
         no_remind: bool,
         force: bool,
         verbose: bool,
-    }
+    },
 }
 
 #[derive(Parser)]
@@ -122,42 +122,64 @@ enum Command {
         iterations: usize,
         #[arg(short, long)]
         verbose: bool,
-    },    Upgrade {
+    },
+    Upgrade {
         #[arg(long, help = "Disable update reminder notifications")]
         no_remind: bool,
         #[arg(short, long, help = "Force upgrade without confirmation")]
         force: bool,
         #[arg(short, long, help = "Show verbose output during upgrade")]
         verbose: bool,
-    }
+    },
 }
 
 pub fn parse() -> anyhow::Result<CliCommand> {
     let args = Args::parse();
 
     match args.command {
-        Some(Command::Build { input, output, optimize, target_triple, verbose }) => {
-            Ok(CliCommand::Build {
-                input,
-                output,
-                optimize,
-                target_triple,
-                verbose,
-            })
-        }
-        Some(Command::Init { directory, project_name }) => {
-            Ok(CliCommand::Init { directory, project_name })
-        },
-        Some(Command::Run { input, verbose }) => {
-            Ok(CliCommand::Run { input, verbose })
-        },
-        Some(Command::Benchmark { input, iterations, verbose }) => {
-            Ok(CliCommand::Benchmark { input, iterations, verbose })
-        },        Some(Command::Upgrade { no_remind, force, verbose }) => {
-            Ok(CliCommand::Upgrade { no_remind, force, verbose })
-        }
+        Some(Command::Build {
+            input,
+            output,
+            optimize,
+            target_triple,
+            verbose,
+        }) => Ok(CliCommand::Build {
+            input,
+            output,
+            optimize,
+            target_triple,
+            verbose,
+        }),
+        Some(Command::Init {
+            directory,
+            project_name,
+        }) => Ok(CliCommand::Init {
+            directory,
+            project_name,
+        }),
+        Some(Command::Run { input, verbose }) => Ok(CliCommand::Run { input, verbose }),
+        Some(Command::Benchmark {
+            input,
+            iterations,
+            verbose,
+        }) => Ok(CliCommand::Benchmark {
+            input,
+            iterations,
+            verbose,
+        }),
+        Some(Command::Upgrade {
+            no_remind,
+            force,
+            verbose,
+        }) => Ok(CliCommand::Upgrade {
+            no_remind,
+            force,
+            verbose,
+        }),
         None => {
-            let input = args.input.ok_or_else(|| anyhow!("Input file is required"))?;
+            let input = args
+                .input
+                .ok_or_else(|| anyhow!("Input file is required"))?;
             if let Some(iterations) = args.iterations {
                 return Ok(CliCommand::Benchmark {
                     input,
@@ -183,7 +205,8 @@ pub fn process_build(
     target_triple: String,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    let build_dir = input.parent()
+    let build_dir = input
+        .parent()
         .ok_or_else(|| anyhow!("Invalid input file path"))?
         .join("build");
 
@@ -219,7 +242,9 @@ pub fn process_build(
         Ok(program) => program,
         Err((error, partial_program)) => {
             let file_id = error.labels.get(0).map(|l| l.file_id);
-            let file_path = file_id.and_then(|fid| Some(files.name(fid))).map(|n| n.to_string_lossy().to_string());
+            let file_path = file_id
+                .and_then(|fid| Some(files.name(fid)))
+                .map(|n| n.to_string_lossy().to_string());
             let module_info = file_path.as_ref().and_then(|path: &String| {
                 if let Some(_idx) = path.find("lib/std") {
                     Some("standard library".to_string())
@@ -271,10 +296,12 @@ pub fn process_build(
             if verbose {
                 if let Some(partial) = partial_program {
                     println!("\n--- PARTIAL AST (verbose mode) ---");
-                    println!("Successfully parsed {} functions, {} structs, {} enums",
-                             partial.functions.len(),
-                             partial.structs.len(),
-                             partial.enums.len());
+                    println!(
+                        "Successfully parsed {} functions, {} structs, {} enums",
+                        partial.functions.len(),
+                        partial.structs.len(),
+                        partial.enums.len()
+                    );
                     println!("Partial AST:\n{:#?}\n", partial);
                     return Err(anyhow!("Parser failed, but partial AST shown above"));
                 }
@@ -282,8 +309,15 @@ pub fn process_build(
 
             return Err(anyhow!("Parser failed"));
         }
-    };    let (imported_functions, imported_asts, imported_structs, imported_ffi_funcs, imported_ffi_vars, imported_stmts) =
-        process_imports(&mut files, &program.imports, &input)?;
+    };
+    let (
+        imported_functions,
+        imported_asts,
+        imported_structs,
+        imported_ffi_funcs,
+        imported_ffi_vars,
+        imported_stmts,
+    ) = process_imports(&mut files, &program.imports, &input)?;
     program.functions.extend(imported_asts);
     program.ffi_functions.extend(imported_ffi_funcs);
     program.ffi_variables.extend(imported_ffi_vars.clone());
@@ -293,18 +327,25 @@ pub fn process_build(
         println!("Parsed AST:\n{:#?}", program);
     }
 
-    let mut type_checker = typeck::TypeChecker::new(file_id, imported_functions.clone(), imported_structs.clone(), imported_ffi_vars.clone());
+    let mut type_checker = typeck::TypeChecker::new(
+        file_id,
+        imported_functions.clone(),
+        imported_structs.clone(),
+        imported_ffi_vars.clone(),
+    );
     match type_checker.check(&mut program) {
         Ok(()) => (),
         Err(errors) => {
             let writer = StandardStream::stderr(ColorChoice::Auto);
             let config = term::Config::default();
-            
+
             for error in &errors {
                 term::emit(&mut writer.lock(), &config, &files, &error)?;
-                
+
                 let file_id = error.labels.get(0).map(|l| l.file_id);
-                let file_path = file_id.and_then(|fid| Some(files.name(fid))).map(|n| n.to_string_lossy().to_string());
+                let file_path = file_id
+                    .and_then(|fid| Some(files.name(fid)))
+                    .map(|n| n.to_string_lossy().to_string());
                 let module_info = file_path.as_ref().and_then(|path: &String| {
                     if let Some(_idx) = path.find("lib/std") {
                         Some("standard library".to_string())
@@ -355,7 +396,13 @@ pub fn process_build(
     }
 
     let config = codegen::CodegenConfig { target_triple };
-    let mut target = codegen::Target::create(config, file_id, imported_functions, imported_structs, program.ffi_variables.clone());
+    let mut target = codegen::Target::create(
+        config,
+        file_id,
+        imported_functions,
+        imported_structs,
+        program.ffi_variables.clone(),
+    );
 
     target.compile(&program, &c_file)?;
 
@@ -377,11 +424,7 @@ pub fn process_build(
     let status = std::process::Command::new("clang")
         .args(&clang_args)
         .status()
-        .or_else(|_| {
-            std::process::Command::new("gcc")
-                .args(&clang_args)
-                .status()
-        })
+        .or_else(|_| std::process::Command::new("gcc").args(&clang_args).status())
         .map_err(|e| anyhow!("Failed to compile C code: {}", e))?;
 
     if !status.success() {

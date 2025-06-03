@@ -37,7 +37,12 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new(file_id: FileId, imported_functions: HashMap<String, (Vec<Type>, Type)>, imported_structs: Vec<ast::StructDef>, imported_ffi_vars: Vec<ast::FfiVariable>) -> Self {
+    pub fn new(
+        file_id: FileId,
+        imported_functions: HashMap<String, (Vec<Type>, Type)>,
+        imported_structs: Vec<ast::StructDef>,
+        imported_ffi_vars: Vec<ast::FfiVariable>,
+    ) -> Self {
         let mut checker = TypeChecker {
             file_id,
             errors: Vec::new(),
@@ -46,11 +51,15 @@ impl TypeChecker {
         };
 
         for struct_def in imported_structs {
-            let fields: Vec<(String, Type)> = struct_def.fields
+            let fields: Vec<(String, Type)> = struct_def
+                .fields
                 .iter()
                 .map(|f| (f.name.clone(), f.ty.clone()))
                 .collect();
-            checker.context.struct_defs.insert(struct_def.name.clone(), fields);
+            checker
+                .context
+                .struct_defs
+                .insert(struct_def.name.clone(), fields);
         }
 
         for ffi_var in imported_ffi_vars {
@@ -64,34 +73,37 @@ impl TypeChecker {
         for ffi in &program.ffi_functions {
             self.functions.insert(
                 ffi.name.clone(),
-                (ffi.params.clone(), ffi.return_type.clone())
+                (ffi.params.clone(), ffi.return_type.clone()),
             );
         }
 
         for ffi_var in &program.ffi_variables {
-            self.context.variables.insert(ffi_var.name.clone(), ffi_var.ty.clone());
+            self.context
+                .variables
+                .insert(ffi_var.name.clone(), ffi_var.ty.clone());
         }
 
         for struct_def in &program.structs {
-            let fields: Vec<(String, Type)> = struct_def.fields
+            let fields: Vec<(String, Type)> = struct_def
+                .fields
                 .iter()
                 .map(|f| (f.name.clone(), f.ty.clone()))
                 .collect();
-            self.context.struct_defs.insert(struct_def.name.clone(), fields);
+            self.context
+                .struct_defs
+                .insert(struct_def.name.clone(), fields);
         }
 
         for enum_def in &program.enums {
-            let variants: Vec<String> = enum_def.variants
-                .iter()
-                .map(|v| v.name.clone())
-                .collect();
-            self.context.enum_defs.insert(enum_def.name.clone(), variants);
-        }        for func in &program.functions {
+            let variants: Vec<String> = enum_def.variants.iter().map(|v| v.name.clone()).collect();
+            self.context
+                .enum_defs
+                .insert(enum_def.name.clone(), variants);
+        }
+        for func in &program.functions {
             let params: Vec<Type> = func.params.iter().map(|(_, t)| t.clone()).collect();
-            self.functions.insert(
-                func.name.clone(),
-                (params, func.return_type.clone())
-            );
+            self.functions
+                .insert(func.name.clone(), (params, func.return_type.clone()));
         }
 
         for stmt in &mut program.stmts {
@@ -108,12 +120,13 @@ impl TypeChecker {
         } else {
             Err(std::mem::take(&mut self.errors))
         }
-    }    fn check_function(&mut self, func: &mut ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
+    }
+    fn check_function(&mut self, func: &mut ast::Function) -> Result<(), Vec<Diagnostic<FileId>>> {
         let mut local_ctx = Context::new();
         local_ctx.current_return_type = func.return_type.clone();
         local_ctx.struct_defs = self.context.struct_defs.clone();
         local_ctx.enum_defs = self.context.enum_defs.clone();
-        
+
         local_ctx.variables = self.context.variables.clone();
 
         for (name, ty) in &func.params {
@@ -124,24 +137,24 @@ impl TypeChecker {
 
         let mut inferred_return_type: Option<Type> = None;
         let explicit_return_type = func.return_type != Type::Void;
-        
+
         if !explicit_return_type {
             self.context.inferring_return_type = true;
         }
 
         for stmt in &mut func.body {
             self.check_stmt(stmt)?;
-            
+
             if !explicit_return_type && self.context.inferred_return_type.is_some() {
                 if inferred_return_type.is_none() {
                     inferred_return_type = self.context.inferred_return_type.clone();
                     self.context.current_return_type = inferred_return_type.clone().unwrap();
                     func.return_type = inferred_return_type.clone().unwrap();
-                    
+
                     if let Some((params, _)) = self.functions.get(&func.name).cloned() {
                         self.functions.insert(
                             func.name.clone(),
-                            (params, inferred_return_type.clone().unwrap())
+                            (params, inferred_return_type.clone().unwrap()),
                         );
                     }
                 }
@@ -168,14 +181,14 @@ impl TypeChecker {
 
                 let ty = decl_ty.clone().unwrap_or(expr_ty);
                 self.context.variables.insert(name.clone(), ty);
-            },
+            }
             Stmt::Var(name, decl_ty, _) => {
                 let ty = decl_ty.clone().unwrap_or(Type::Unknown);
                 self.context.variables.insert(name.clone(), ty);
-            },
+            }
             Stmt::Expr(expr, _) => {
                 self.check_expr(expr)?;
-            },
+            }
             Stmt::Block(stmts, _) => self.check_block(stmts)?,
             Stmt::If(cond, then_branch, else_branch, _) => {
                 let cond_ty = self.check_expr(cond).unwrap_or(Type::Unknown);
@@ -185,33 +198,31 @@ impl TypeChecker {
                 if let Some(else_branch) = else_branch {
                     self.check_block(else_branch)?;
                 }
-            },
+            }
             Stmt::Return(expr, _) => {
                 let expr_ty = self.check_expr(expr).unwrap_or(Type::Unknown);
-                
-                if self.context.inferring_return_type && self.context.inferred_return_type.is_none() {
+
+                if self.context.inferring_return_type && self.context.inferred_return_type.is_none()
+                {
                     self.context.inferred_return_type = Some(expr_ty.clone());
                     self.context.current_return_type = expr_ty;
                 } else {
                     let expected_type = self.context.current_return_type.clone();
                     self.expect_type(&expr_ty, &expected_type, expr.span())?;
                 }
-            },
+            }
             Stmt::Defer(expr, span) => {
                 let expr_ty = self.check_expr(expr)?;
 
                 if expr_ty != Type::Void {
-                    self.report_error(
-                        "Defer expects void-returning expression",
-                        *span
-                    );
+                    self.report_error("Defer expects void-returning expression", *span);
                 }
-            },
+            }
             Stmt::While(cond, body, _) => {
                 let cond_ty = self.check_expr(cond)?;
                 self.expect_type(&cond_ty, &Type::Bool, cond.span())?;
                 self.check_block(body)?;
-            },
+            }
             Stmt::For(name, range, body, _) => {
                 self.check_expr(range)?;
 
@@ -220,10 +231,13 @@ impl TypeChecker {
             }
             Stmt::Match(pattern, arms, _) => {
                 let _matched_expr_ty = match pattern.as_ref() {
-                    ast::Pattern::Variable(var_name, _) => {
-                        self.context.variables.get(var_name).cloned().unwrap_or(Type::Unknown)
-                    }
-                    _ => Type::Unknown
+                    ast::Pattern::Variable(var_name, _) => self
+                        .context
+                        .variables
+                        .get(var_name)
+                        .cloned()
+                        .unwrap_or(Type::Unknown),
+                    _ => Type::Unknown,
                 };
 
                 for arm in arms {
@@ -232,7 +246,10 @@ impl TypeChecker {
                             if let Some(variants) = self.context.enum_defs.get(enum_name) {
                                 if !variants.contains(variant_name) {
                                     self.report_error(
-                                        &format!("Variant '{}' not found in enum '{}'", variant_name, enum_name),
+                                        &format!(
+                                            "Variant '{}' not found in enum '{}'",
+                                            variant_name, enum_name
+                                        ),
                                         arm.span,
                                     );
                                 }
@@ -244,12 +261,14 @@ impl TypeChecker {
                             }
                         }
                         _ => {}
-                    }                    self.check_expr(&mut arm.body.clone())?;
+                    }
+                    self.check_expr(&mut arm.body.clone())?;
                 }
             }
         }
         Ok(())
-    }    fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
+    }
+    fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, Vec<Diagnostic<FileId>>> {
         if let Expr::FieldAccess(obj, field_name, span_info) = expr {
             if let Expr::Var(name, _) = obj.as_ref() {
                 if let Some(var_type) = self.context.variables.get(name) {
@@ -259,18 +278,23 @@ impl TypeChecker {
                             enum_name.clone(),
                             field_name.clone(),
                             vec![],
-                            ast::ExprInfo { span: span_info.span, ty: enum_type.clone() }
+                            ast::ExprInfo {
+                                span: span_info.span,
+                                ty: enum_type.clone(),
+                            },
                         );
                         return Ok(enum_type);
                     }
-                }
-                else if self.context.enum_defs.contains_key(name) {
+                } else if self.context.enum_defs.contains_key(name) {
                     let enum_type = Type::Enum(name.clone());
                     *expr = Expr::EnumConstruct(
                         name.clone(),
                         field_name.clone(),
                         vec![],
-                        ast::ExprInfo { span: span_info.span, ty: enum_type.clone() }
+                        ast::ExprInfo {
+                            span: span_info.span,
+                            ty: enum_type.clone(),
+                        },
                     );
                     return Ok(enum_type);
                 }
@@ -283,7 +307,13 @@ impl TypeChecker {
             Expr::Str(_, _) => Ok(Type::String),
             Expr::F32(_, _) => Ok(Type::F32),
             Expr::Void(_) => Ok(Type::Void),
-            Expr::Var(name, ast::ExprInfo {span, ty: expr_type } ) => {
+            Expr::Var(
+                name,
+                ast::ExprInfo {
+                    span,
+                    ty: expr_type,
+                },
+            ) => {
                 let ty = match name.as_str() {
                     "true" | "false" => Type::Bool,
                     _ => match self.context.variables.get(name).cloned() {
@@ -292,14 +322,30 @@ impl TypeChecker {
                             self.report_error(&format!("Undefined variable '{}'", name), *span);
                             Type::Unknown
                         }
-                    }
+                    },
                 };
                 *expr_type = ty.clone();
                 Ok(ty)
             }
-            Expr::BinOp(left, op, right, ast::ExprInfo { span, ty: expr_type } ) => {
+            Expr::BinOp(
+                left,
+                op,
+                right,
+                ast::ExprInfo {
+                    span,
+                    ty: expr_type,
+                },
+            ) => {
                 let left_ty = self.check_expr(left)?;
-                let right_ty = self.check_expr(right)?;                let result_ty = match op {                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Pow2 | BinOp::Mod => {
+                let right_ty = self.check_expr(right)?;
+                let result_ty = match op {
+                    BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Div
+                    | BinOp::Pow
+                    | BinOp::Pow2
+                    | BinOp::Mod => {
                         if (left_ty == Type::I8 && right_ty == Type::I8)
                             || (left_ty == Type::I16 && right_ty == Type::I16)
                             || (left_ty == Type::I32 && right_ty == Type::I32)
@@ -310,9 +356,12 @@ impl TypeChecker {
                             || (left_ty == Type::U64 && right_ty == Type::U64)
                             || (left_ty == Type::F32 && right_ty == Type::F32)
                             || (left_ty == Type::F64 && right_ty == Type::F64)
-                            || (matches!(left_ty, Type::Struct(ref name) if name == "size_t") && right_ty == Type::I32)
-                            || (left_ty == Type::I32 && matches!(right_ty, Type::Struct(ref name) if name == "size_t"))
-                            || (matches!(left_ty, Type::Struct(ref name) if name == "size_t") && matches!(right_ty, Type::Struct(ref name2) if name2 == "size_t"))
+                            || (matches!(left_ty, Type::Struct(ref name) if name == "size_t")
+                                && right_ty == Type::I32)
+                            || (left_ty == Type::I32
+                                && matches!(right_ty, Type::Struct(ref name) if name == "size_t"))
+                            || (matches!(left_ty, Type::Struct(ref name) if name == "size_t")
+                                && matches!(right_ty, Type::Struct(ref name2) if name2 == "size_t"))
                             || (left_ty == Type::CSize && right_ty == Type::I32)
                             || (left_ty == Type::I32 && right_ty == Type::CSize)
                             || (left_ty == Type::CSize && right_ty == Type::CSize)
@@ -337,14 +386,19 @@ impl TypeChecker {
                                 Type::I8
                             } else if left_ty == Type::U8 || right_ty == Type::U8 {
                                 Type::U8
-                            } else if matches!(left_ty, Type::Struct(ref name) if name == "size_t") || matches!(right_ty, Type::Struct(ref name) if name == "size_t") {
+                            } else if matches!(left_ty, Type::Struct(ref name) if name == "size_t")
+                                || matches!(right_ty, Type::Struct(ref name) if name == "size_t")
+                            {
                                 Type::Struct("size_t".to_string())
                             } else if left_ty == Type::CSize || right_ty == Type::CSize {
                                 Type::CSize
                             } else {
                                 left_ty
                             }
-                        } else if left_ty == Type::String && right_ty == Type::String && matches!(op, BinOp::Add) {
+                        } else if left_ty == Type::String
+                            && right_ty == Type::String
+                            && matches!(op, BinOp::Add)
+                        {
                             Type::String
                         } else {
                             self.report_error(
@@ -353,8 +407,13 @@ impl TypeChecker {
                             );
                             Type::Unknown
                         }
-                    },
-                    BinOp::Gt | BinOp::Eq | BinOp::Lt | BinOp::NotEq | BinOp::GtEq | BinOp::LtEq => {
+                    }
+                    BinOp::Gt
+                    | BinOp::Eq
+                    | BinOp::Lt
+                    | BinOp::NotEq
+                    | BinOp::GtEq
+                    | BinOp::LtEq => {
                         if Self::is_convertible(&left_ty, &right_ty) {
                             Type::Bool
                         } else {
@@ -364,13 +423,16 @@ impl TypeChecker {
                             );
                             Type::Unknown
                         }
-                    },
+                    }
                     BinOp::And | BinOp::Or => {
                         if left_ty == Type::Bool && right_ty == Type::Bool {
                             Type::Bool
                         } else {
                             self.report_error(
-                                &format!("Logical {} requires bool operands, got {} and {}", op, left_ty, right_ty),
+                                &format!(
+                                    "Logical {} requires bool operands, got {} and {}",
+                                    op, left_ty, right_ty
+                                ),
                                 *span,
                             );
                             Type::Unknown
@@ -381,7 +443,7 @@ impl TypeChecker {
                 *expr_type = result_ty.clone();
 
                 Ok(result_ty)
-            },
+            }
             Expr::Deref(inner_expr, info) => {
                 let inner_ty = self.check_expr(inner_expr)?;
                 let result_ty = match inner_ty {
@@ -390,7 +452,7 @@ impl TypeChecker {
                     _ => {
                         self.report_error(
                             &format!("Cannot dereference type {}", inner_ty),
-                            info.span
+                            info.span,
                         );
                         Type::Unknown
                     }
@@ -398,29 +460,43 @@ impl TypeChecker {
                 info.ty = result_ty.clone();
                 Ok(result_ty)
             }
-            Expr::UnaryOp(op, operand, ast::ExprInfo { span, ty: expr_type }) => {
+            Expr::UnaryOp(
+                op,
+                operand,
+                ast::ExprInfo {
+                    span,
+                    ty: expr_type,
+                },
+            ) => {
                 let operand_ty = self.check_expr(operand)?;
-                    let result_ty = match op {
+                let result_ty = match op {
                     ast::UnOp::Neg => {
-                        if operand_ty == Type::I8 || operand_ty == Type::I16 
-                        || operand_ty == Type::I32 || operand_ty == Type::I64
-                        || operand_ty == Type::F32 || operand_ty == Type::F64 {
-                        operand_ty
+                        if operand_ty == Type::I8
+                            || operand_ty == Type::I16
+                            || operand_ty == Type::I32
+                            || operand_ty == Type::I64
+                            || operand_ty == Type::F32
+                            || operand_ty == Type::F64
+                        {
+                            operand_ty
                         } else {
-                            self.report_error(
-                                &format!("Cannot negate type {}", operand_ty),
-                                *span,
-                            );
+                            self.report_error(&format!("Cannot negate type {}", operand_ty), *span);
                             Type::Unknown
                         }
                     }
                     ast::UnOp::Plus => {
-                        if operand_ty == Type::I8 || operand_ty == Type::I16 
-                        || operand_ty == Type::I32 || operand_ty == Type::I64
-                        || operand_ty == Type::U8 || operand_ty == Type::U16 
-                        || operand_ty == Type::U32 || operand_ty == Type::U64
-                        || operand_ty == Type::F32 || operand_ty == Type::F64 {
-                        operand_ty
+                        if operand_ty == Type::I8
+                            || operand_ty == Type::I16
+                            || operand_ty == Type::I32
+                            || operand_ty == Type::I64
+                            || operand_ty == Type::U8
+                            || operand_ty == Type::U16
+                            || operand_ty == Type::U32
+                            || operand_ty == Type::U64
+                            || operand_ty == Type::F32
+                            || operand_ty == Type::F64
+                        {
+                            operand_ty
                         } else {
                             self.report_error(
                                 &format!("Cannot apply unary plus to type {}", operand_ty),
@@ -443,24 +519,42 @@ impl TypeChecker {
                 };
                 *expr_type = result_ty.clone();
                 Ok(result_ty)
-            },
-            Expr::Assign(target, value, ast::ExprInfo { span, ty: _expr_type }) => {
+            }
+            Expr::Assign(
+                target,
+                value,
+                ast::ExprInfo {
+                    span,
+                    ty: _expr_type,
+                },
+            ) => {
                 let target_ty = self.check_expr(target)?;
                 let value_ty = self.check_expr(value)?;
 
                 if !Self::is_convertible(&value_ty, &target_ty) {
                     self.report_error(
                         &format!("Cannot assign {} to {}", value_ty, target_ty),
-                        *span
+                        *span,
                     );
                 }
 
                 Ok(Type::Void)
-            },
-            Expr::Call(name, args, ast::ExprInfo { span, ty: expr_type}) => {
+            }
+            Expr::Call(
+                name,
+                args,
+                ast::ExprInfo {
+                    span,
+                    ty: expr_type,
+                },
+            ) => {
                 let mut found = self.functions.get(name).cloned();
                 if found.is_none() {
-                    found = self.functions.iter().find(|(k, _)| k.as_str() == name).map(|(_, v)| v.clone());
+                    found = self
+                        .functions
+                        .iter()
+                        .find(|(k, _)| k.as_str() == name)
+                        .map(|(_, v)| v.clone());
                 }
                 let (param_types, return_type) = match found {
                     Some(types) => types,
@@ -472,7 +566,11 @@ impl TypeChecker {
                 };
 
                 let has_ellipsis = param_types.last() == Some(&Type::Ellipsis);
-                let min_args = if has_ellipsis { param_types.len() - 1 } else { param_types.len() };
+                let min_args = if has_ellipsis {
+                    param_types.len() - 1
+                } else {
+                    param_types.len()
+                };
 
                 if args.len() < min_args || (!has_ellipsis && args.len() > min_args) {
                     self.report_error(
@@ -498,7 +596,7 @@ impl TypeChecker {
                 *expr_type = return_type.clone();
 
                 Ok(return_type.clone())
-            },
+            }
             Expr::SafeBlock(stmts, _) => {
                 let old_in_safe = self.context.in_safe;
                 self.context.in_safe = true;
@@ -507,8 +605,15 @@ impl TypeChecker {
                 self.context.in_safe = old_in_safe;
                 result?;
                 Ok(Type::Void)
-            },
-            Expr::Cast(expr, target_ty, ast::ExprInfo { span, ty: _expr_type }) => {
+            }
+            Expr::Cast(
+                expr,
+                target_ty,
+                ast::ExprInfo {
+                    span,
+                    ty: _expr_type,
+                },
+            ) => {
                 let source_ty = self.check_expr(expr)?;
 
                 match (&source_ty, &target_ty) {
@@ -529,7 +634,7 @@ impl TypeChecker {
                         if !Self::is_convertible(&source_ty, target_ty) {
                             self.report_error(
                                 &format!("Invalid cast from {} to {}", source_ty, target_ty),
-                                *span
+                                *span,
                             );
                             Ok(Type::Unknown)
                         } else {
@@ -537,7 +642,7 @@ impl TypeChecker {
                         }
                     }
                 }
-            },
+            }
             Expr::Range(start, end, _) => {
                 let start_ty = self.check_expr(start)?;
                 let end_ty = self.check_expr(end)?;
@@ -551,8 +656,15 @@ impl TypeChecker {
                 }
 
                 Ok(Type::Unknown)
-            },
-            Expr::StructInit(name, fields, ast::ExprInfo { span, ty: expr_type }) => {
+            }
+            Expr::StructInit(
+                name,
+                fields,
+                ast::ExprInfo {
+                    span,
+                    ty: expr_type,
+                },
+            ) => {
                 let struct_name = name.clone();
                 let struct_fields = match self.context.struct_defs.get(&struct_name) {
                     Some(fields) => fields.clone(),
@@ -572,16 +684,18 @@ impl TypeChecker {
                         Some((_, expected_ty)) => {
                             if !Self::is_convertible(&field_ty, expected_ty) {
                                 self.report_error(
-                                    &format!("Type mismatch for field '{}': expected {}, got {}",
-                                             field_name, expected_ty, field_ty),
-                                    field_expr.span()
+                                    &format!(
+                                        "Type mismatch for field '{}': expected {}, got {}",
+                                        field_name, expected_ty, field_ty
+                                    ),
+                                    field_expr.span(),
                                 );
                             }
                         }
                         None => {
                             self.report_error(
                                 &format!("Unknown field '{}' in struct '{}'", field_name, name),
-                                field_expr.span()
+                                field_expr.span(),
                             );
                         }
                     }
@@ -593,7 +707,7 @@ impl TypeChecker {
                     if !seen_fields.contains_key(&field_name) {
                         self.report_error(
                             &format!("Missing field '{}' in struct initialization", field_name),
-                            *span
+                            *span,
                         );
                     }
                 }
@@ -601,46 +715,55 @@ impl TypeChecker {
                 let ty = Type::Struct(name.clone());
                 *expr_type = ty.clone();
                 Ok(ty)
-            },
-            Expr::FieldAccess(obj, field_name, ast::ExprInfo { span, ty: expr_type }) => {
+            }
+            Expr::FieldAccess(
+                obj,
+                field_name,
+                ast::ExprInfo {
+                    span,
+                    ty: expr_type,
+                },
+            ) => {
                 let obj_ty = self.check_expr(obj)?;
                 match obj_ty {
-                    Type::Struct(struct_name) => {
-                        match self.context.struct_defs.get(&struct_name) {
-                            Some(fields) => {
-                                match fields.iter().find(|(name, _)| name == field_name) {
-                                    Some((_, field_ty)) => {
-                                        *expr_type = field_ty.clone();
-                                        Ok(field_ty.clone())
-                                    }
-                                    None => {
-                                        self.report_error(
-                                            &format!("No field '{}' in struct '{}'", field_name, struct_name),
-                                            *span
-                                        );
-                                        Ok(Type::Unknown)
-                                    }
-                                }
+                    Type::Struct(struct_name) => match self.context.struct_defs.get(&struct_name) {
+                        Some(fields) => match fields.iter().find(|(name, _)| name == field_name) {
+                            Some((_, field_ty)) => {
+                                *expr_type = field_ty.clone();
+                                Ok(field_ty.clone())
                             }
                             None => {
                                 self.report_error(
-                                    &format!("Unknown struct '{}'", struct_name),
-                                    *span
+                                    &format!(
+                                        "No field '{}' in struct '{}'",
+                                        field_name, struct_name
+                                    ),
+                                    *span,
                                 );
                                 Ok(Type::Unknown)
                             }
+                        },
+                        None => {
+                            self.report_error(&format!("Unknown struct '{}'", struct_name), *span);
+                            Ok(Type::Unknown)
                         }
-                    }
+                    },
                     _ => {
                         self.report_error(
                             &format!("Cannot access field '{}' on type {}", field_name, obj_ty),
-                            *span
+                            *span,
                         );
                         Ok(Type::Unknown)
                     }
                 }
-            },
-            Expr::ArrayInit(elements, ast::ExprInfo { span, ty: expr_type }) => {
+            }
+            Expr::ArrayInit(
+                elements,
+                ast::ExprInfo {
+                    span,
+                    ty: expr_type,
+                },
+            ) => {
                 if elements.is_empty() {
                     self.report_error("Cannot infer type of empty array", *span);
                     *expr_type = Type::Unknown;
@@ -653,8 +776,11 @@ impl TypeChecker {
                     let el_type = self.check_expr(element)?;
                     if !Self::is_convertible(&el_type, &first_type) {
                         self.report_error(
-                            &format!("Array element {} has type {}, but expected {}", i, el_type, first_type),
-                            element.span()
+                            &format!(
+                                "Array element {} has type {}, but expected {}",
+                                i, el_type, first_type
+                            ),
+                            element.span(),
                         );
                     }
                 }
@@ -662,16 +788,24 @@ impl TypeChecker {
                 let array_type = Type::Array(Box::new(first_type));
                 *expr_type = array_type.clone();
                 Ok(array_type)
-            },            Expr::ArrayAccess(array, index, ast::ExprInfo { span: _, ty: expr_type }) => {
+            }
+            Expr::ArrayAccess(
+                array,
+                index,
+                ast::ExprInfo {
+                    span: _,
+                    ty: expr_type,
+                },
+            ) => {
                 let array_type = self.check_expr(array)?;
                 let index_type = self.check_expr(index)?;
-                if !Self::is_convertible(&index_type, &Type::I32) 
+                if !Self::is_convertible(&index_type, &Type::I32)
                     && !matches!(index_type, Type::Struct(ref name) if name == "size_t")
                     && index_type != Type::CSize
                 {
                     self.report_error(
                         &format!("Array index must be i32 or size_t, got {}", index_type),
-                        index.span()
+                        index.span(),
                     );
                 }
 
@@ -680,26 +814,26 @@ impl TypeChecker {
                         let element_type = *element_type;
                         *expr_type = element_type.clone();
                         Ok(element_type)
-                    },
+                    }
                     Type::SizedArray(element_type, _) => {
                         let element_type = *element_type;
                         *expr_type = element_type.clone();
                         Ok(element_type)
-                    },
+                    }
                     Type::Pointer(element_type) => {
                         let element_type = *element_type;
                         *expr_type = element_type.clone();
                         Ok(element_type)
-                    },
+                    }
                     _ => {
                         self.report_error(
                             &format!("Cannot index non-array type: {}", array_type),
-                            array.span()
+                            array.span(),
                         );
                         Ok(Type::Unknown)
                     }
                 }
-            },
+            }
             Expr::TemplateStr(parts, info) => {
                 for part in parts {
                     if let ast::TemplateStrPart::Expression(expr) = part {
@@ -713,68 +847,128 @@ impl TypeChecker {
                                 if !Self::is_convertible(&index_ty, &Type::I32) {
                                     self.report_error(
                                         &format!("Array index must be i32, got {}", index_ty),
-                                        index.span()
+                                        index.span(),
                                     );
                                 }
 
-                                match array_ty {                                    Type::Array(element_type) => {
+                                match array_ty {
+                                    Type::Array(element_type) => {
                                         array_info.ty = *element_type.clone();
                                         if !Self::is_convertible(&element_type, &Type::String)
-                                            && !matches!(*element_type, Type::I8 | Type::I16 | Type::I32 | Type::I64 
-                                                | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
+                                            && !matches!(
+                                                *element_type,
+                                                Type::I8
+                                                    | Type::I16
+                                                    | Type::I32
+                                                    | Type::I64
+                                                    | Type::U8
+                                                    | Type::U16
+                                                    | Type::U32
+                                                    | Type::U64
+                                                    | Type::F32
+                                                    | Type::F64
+                                                    | Type::Bool
+                                            )
+                                        {
                                             self.report_error(
                                                 &format!("Cannot convert array element type {} to string", element_type),
                                                 array.span()
                                             );
                                         }
-                                    },
+                                    }
                                     Type::SizedArray(element_type, _) => {
                                         array_info.ty = *element_type.clone();
                                         if !Self::is_convertible(&element_type, &Type::String)
-                                            && !matches!(*element_type, Type::I8 | Type::I16 | Type::I32 | Type::I64 
-                                                | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
+                                            && !matches!(
+                                                *element_type,
+                                                Type::I8
+                                                    | Type::I16
+                                                    | Type::I32
+                                                    | Type::I64
+                                                    | Type::U8
+                                                    | Type::U16
+                                                    | Type::U32
+                                                    | Type::U64
+                                                    | Type::F32
+                                                    | Type::F64
+                                                    | Type::Bool
+                                            )
+                                        {
                                             self.report_error(
                                                 &format!("Cannot convert array element type {} to string", element_type),
                                                 array.span()
                                             );
                                         }
-                                    },
+                                    }
                                     _ => {
                                         self.report_error(
                                             &format!("Cannot index non-array type: {}", array_ty),
-                                            array.span()
+                                            array.span(),
                                         );
                                     }
                                 }
-                            },
+                            }
                             ast::Expr::Var(name, var_info) => {
                                 let ty = match name.as_str() {
                                     "true" | "false" => Type::Bool,
-                                    _ => self.context
-                                        .variables
-                                        .get(name)
-                                        .cloned()
-                                        .ok_or_else(|| {
-                                            self.report_error(&format!("Undefined variable '{}'", name), var_info.span);
+                                    _ => self.context.variables.get(name).cloned().ok_or_else(
+                                        || {
+                                            self.report_error(
+                                                &format!("Undefined variable '{}'", name),
+                                                var_info.span,
+                                            );
                                             vec![]
-                                        })?,
-                                };                                var_info.ty = ty.clone();
-                                if !matches!(ty, Type::String | Type::I8 | Type::I16 | Type::I32 | Type::I64 
-                                    | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
+                                        },
+                                    )?,
+                                };
+                                var_info.ty = ty.clone();
+                                if !matches!(
+                                    ty,
+                                    Type::String
+                                        | Type::I8
+                                        | Type::I16
+                                        | Type::I32
+                                        | Type::I64
+                                        | Type::U8
+                                        | Type::U16
+                                        | Type::U32
+                                        | Type::U64
+                                        | Type::F32
+                                        | Type::F64
+                                        | Type::Bool
+                                ) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
-                                    self.errors.push(Diagnostic::error().with_message(msg).with_labels(vec![
-                                        Label::primary(self.file_id, span)
-                                    ]));
+                                    self.errors.push(
+                                        Diagnostic::error()
+                                            .with_message(msg)
+                                            .with_labels(vec![Label::primary(self.file_id, span)]),
+                                    );
                                 }
-                            },                            _ => {
-                                if !matches!(ty, Type::String | Type::I8 | Type::I16 | Type::I32 | Type::I64 
-                                    | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::F32 | Type::F64 | Type::Bool) {
+                            }
+                            _ => {
+                                if !matches!(
+                                    ty,
+                                    Type::String
+                                        | Type::I8
+                                        | Type::I16
+                                        | Type::I32
+                                        | Type::I64
+                                        | Type::U8
+                                        | Type::U16
+                                        | Type::U32
+                                        | Type::U64
+                                        | Type::F32
+                                        | Type::F64
+                                        | Type::Bool
+                                ) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
-                                    self.errors.push(Diagnostic::error().with_message(msg).with_labels(vec![
-                                        Label::primary(self.file_id, span)
-                                    ]));
+                                    self.errors.push(
+                                        Diagnostic::error()
+                                            .with_message(msg)
+                                            .with_labels(vec![Label::primary(self.file_id, span)]),
+                                    );
                                 }
                             }
                         }
@@ -799,30 +993,33 @@ impl TypeChecker {
             }
             Expr::MatchExpr(pattern, arms, info) => {
                 let matched_ty = match pattern.as_ref() {
-                    ast::Pattern::Variable(var_name, _) => {
-                        self.context.variables.get(var_name).cloned().unwrap_or(Type::Unknown)
-                    }
-                    ast::Pattern::EnumVariant(enum_name, _, _, _) => {
-                        Type::Enum(enum_name.clone())
-                    }
-                    _ => Type::Unknown
+                    ast::Pattern::Variable(var_name, _) => self
+                        .context
+                        .variables
+                        .get(var_name)
+                        .cloned()
+                        .unwrap_or(Type::Unknown),
+                    ast::Pattern::EnumVariant(enum_name, _, _, _) => Type::Enum(enum_name.clone()),
+                    _ => Type::Unknown,
                 };
 
                 let mut arm_types = Vec::new();
                 for arm in arms.iter_mut() {
-                    if let ast::Pattern::EnumVariant(enum_name, variant_name, subpatterns, span) = &arm.pattern {
+                    if let ast::Pattern::EnumVariant(enum_name, variant_name, subpatterns, span) =
+                        &arm.pattern
+                    {
                         if let Some(variants) = self.context.enum_defs.get(enum_name) {
                             if !variants.contains(variant_name) {
                                 self.report_error(
-                                    &format!("Variant '{}' not found in enum '{}'", variant_name, enum_name),
+                                    &format!(
+                                        "Variant '{}' not found in enum '{}'",
+                                        variant_name, enum_name
+                                    ),
                                     *span,
                                 );
                             }
                         } else {
-                            self.report_error(
-                                &format!("Enum '{}' not found", enum_name),
-                                *span,
-                            );
+                            self.report_error(&format!("Enum '{}' not found", enum_name), *span);
                         }
                         for subpat in subpatterns {
                             self.check_pattern(subpat, &Type::Unknown)?;
@@ -834,7 +1031,10 @@ impl TypeChecker {
                     arm_types.push(arm_ty);
                 }
                 let result_ty = arm_types.get(0).cloned().unwrap_or(Type::Unknown);
-                if !arm_types.iter().all(|t| Self::is_convertible(t, &result_ty)) {
+                if !arm_types
+                    .iter()
+                    .all(|t| Self::is_convertible(t, &result_ty))
+                {
                     self.report_error("All match arms must return the same type", info.span);
                 }
                 info.ty = result_ty.clone();
@@ -843,13 +1043,17 @@ impl TypeChecker {
         }
     }
 
-    fn check_pattern(&mut self, pattern: &ast::Pattern, expected_ty: &Type) -> Result<(), Vec<Diagnostic<FileId>>> {
+    fn check_pattern(
+        &mut self,
+        pattern: &ast::Pattern,
+        expected_ty: &Type,
+    ) -> Result<(), Vec<Diagnostic<FileId>>> {
         match pattern {
-            ast::Pattern::Wildcard(_) => {
-                Ok(())
-            }
+            ast::Pattern::Wildcard(_) => Ok(()),
             ast::Pattern::Variable(name, _) => {
-                self.context.variables.insert(name.clone(), expected_ty.clone());
+                self.context
+                    .variables
+                    .insert(name.clone(), expected_ty.clone());
                 Ok(())
             }
             ast::Pattern::EnumVariant(enum_name, _variant_name, patterns, span) => {
@@ -860,12 +1064,13 @@ impl TypeChecker {
                         }
                         Ok(())
                     }
-                    _ => {
-                        Err(self.report_error_vec(
-                            &format!("Pattern expects enum {}, but got {}", enum_name, expected_ty),
-                            *span,
-                        ))
-                    }
+                    _ => Err(self.report_error_vec(
+                        &format!(
+                            "Pattern expects enum {}, but got {}",
+                            enum_name, expected_ty
+                        ),
+                        *span,
+                    )),
                 }
             }
             ast::Pattern::Literal(expr, span) => {
@@ -874,7 +1079,10 @@ impl TypeChecker {
                     Ok(())
                 } else {
                     Err(self.report_error_vec(
-                        &format!("Literal pattern type {} doesn't match expected type {}", literal_ty, expected_ty),
+                        &format!(
+                            "Literal pattern type {} doesn't match expected type {}",
+                            literal_ty, expected_ty
+                        ),
                         *span,
                     ))
                 }
@@ -894,7 +1102,8 @@ impl TypeChecker {
         } else {
             Ok(())
         }
-    }    fn is_convertible(from: &Type, to: &Type) -> bool {
+    }
+    fn is_convertible(from: &Type, to: &Type) -> bool {
         if from == to {
             return true;
         }
@@ -916,13 +1125,20 @@ impl TypeChecker {
             (Type::Pointer(_), Type::I32) => true,
             (Type::I32, Type::Pointer(_)) => true,
             (Type::RawPtr, Type::I32) => true,
-            (Type::I32, Type::RawPtr) => true,            (Type::Pointer(a), Type::Pointer(b)) => Self::is_convertible(a, b),
-            (Type::Array(from_elem), Type::Array(to_elem)) => Self::is_convertible(from_elem, to_elem),
-            (Type::SizedArray(from_elem, _), Type::Array(to_elem)) => Self::is_convertible(from_elem, to_elem),
-            (Type::Array(from_elem), Type::SizedArray(to_elem, _)) => Self::is_convertible(from_elem, to_elem),
+            (Type::I32, Type::RawPtr) => true,
+            (Type::Pointer(a), Type::Pointer(b)) => Self::is_convertible(a, b),
+            (Type::Array(from_elem), Type::Array(to_elem)) => {
+                Self::is_convertible(from_elem, to_elem)
+            }
+            (Type::SizedArray(from_elem, _), Type::Array(to_elem)) => {
+                Self::is_convertible(from_elem, to_elem)
+            }
+            (Type::Array(from_elem), Type::SizedArray(to_elem, _)) => {
+                Self::is_convertible(from_elem, to_elem)
+            }
             (Type::SizedArray(from_elem, from_size), Type::SizedArray(to_elem, to_size)) => {
                 from_size == to_size && Self::is_convertible(from_elem, to_elem)
-            },
+            }
             (Type::F32, Type::F32) => true,
             (Type::F32, Type::I32) => true,
             (Type::I32, Type::F32) => true,
@@ -971,4 +1187,3 @@ impl TypeChecker {
         );
     }
 }
-

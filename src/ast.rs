@@ -1,9 +1,9 @@
+use codespan::Span;
 use std::collections::HashMap;
 use std::fmt;
-use codespan::Span;
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] 
+#[allow(dead_code)]
 pub enum Type {
     I32,
     Bool,
@@ -70,8 +70,9 @@ pub struct StructDef {
     pub name: String,
     pub fields: Vec<StructField>,
     #[allow(dead_code)]
-    pub span: Span,    pub visibility: Visibility,
-    #[allow(dead_code)] 
+    pub span: Span,
+    pub visibility: Visibility,
+    #[allow(dead_code)]
     pub repr: Option<String>,
 }
 
@@ -101,10 +102,10 @@ pub struct MatchArm {
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
-    Wildcard(Span),                              // _
-    Variable(String, Span),                      // x
+    Wildcard(Span),                                  // _
+    Variable(String, Span),                          // x
     EnumVariant(String, String, Vec<Pattern>, Span), // Color.Red, Color.Rgb(r, g, b)
-    Literal(Expr, Span),                         // 42, "hello"
+    Literal(Expr, Span),                             // 42, "hello"
 }
 
 #[derive(Debug, Clone)]
@@ -120,13 +121,13 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
-    Private,   
+    Private,
     Internal,
-    Public,    
+    Public,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] 
+#[allow(dead_code)]
 pub enum Stmt {
     Let(String, Option<Type>, Expr, Span, Visibility),
     Var(String, Option<Type>, Span),
@@ -151,7 +152,7 @@ pub struct FfiFunction {
     pub name: String,
     pub params: Vec<Type>,
     pub return_type: Type,
-    pub metadata: Option<HashMap<String, String>>
+    pub metadata: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -162,7 +163,7 @@ pub struct FfiVariable {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] 
+#[allow(dead_code)]
 pub enum Expr {
     Int(i32, ExprInfo),
     Bool(bool, ExprInfo),
@@ -194,7 +195,6 @@ pub enum TemplateStrPart {
     Expression(Box<Expr>),
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModuleType {
     Standard,
@@ -207,19 +207,19 @@ pub enum ImportDeclaration {
     ImportAll {
         module_path: String,
         module_type: ModuleType,
-        alias: Option<String>
+        alias: Option<String>,
     },
     ImportSpecifiers {
         module_path: String,
         module_type: ModuleType,
-        specifiers: Vec<ImportSpecifier>
+        specifiers: Vec<ImportSpecifier>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct ImportSpecifier {
     pub name: String,
-    pub alias: Option<String>
+    pub alias: Option<String>,
 }
 
 impl Expr {
@@ -279,7 +279,10 @@ impl Expr {
 
     #[allow(dead_code)]
     pub fn is_constant(&self) -> bool {
-        matches!(self, Expr::Int(_, _) | Expr::Str(_, _) | Expr::Bool(_, _) | Expr::F32(_, _))
+        matches!(
+            self,
+            Expr::Int(_, _) | Expr::Str(_, _) | Expr::Bool(_, _) | Expr::F32(_, _)
+        )
     }
 
     #[allow(dead_code)]
@@ -320,27 +323,23 @@ pub enum BinOp {
 
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                BinOp::Add => "+",
-                BinOp::Sub => "-",
-                BinOp::Mul => "*",
-                BinOp::Div => "/",
-                BinOp::Pow => "**",
-                BinOp::Pow2 => "^",
-                BinOp::Mod => "%",
-                BinOp::Gt => ">",
-                BinOp::Eq => "==",
-                BinOp::Lt => "<",
-                BinOp::NotEq => "!=",
-                BinOp::GtEq => ">=",
-                BinOp::LtEq => "<=",
-                BinOp::And => "&&",
-                BinOp::Or => "||",
-            }
-        )
+        write!(f, "{}", match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Pow => "**",
+            BinOp::Pow2 => "^",
+            BinOp::Mod => "%",
+            BinOp::Gt => ">",
+            BinOp::Eq => "==",
+            BinOp::Lt => "<",
+            BinOp::NotEq => "!=",
+            BinOp::GtEq => ">=",
+            BinOp::LtEq => "<=",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
+        })
     }
 }
 
@@ -360,7 +359,7 @@ impl fmt::Display for Type {
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ") -> {}", ret)
-            },
+            }
             Type::Unknown => write!(f, "<?>"),
             Type::Arena => write!(f, "arena"),
             Type::Pointer(ty) => write!(f, "*{}", ty),
@@ -414,4 +413,3 @@ impl Stmt {
         }
     }
 }
-

@@ -8,7 +8,10 @@ pub fn create_project(directory: &Path, project_name: &str) -> anyhow::Result<()
     let project_path = directory.join(project_name);
 
     if project_path.exists() {
-        return Err(anyhow!("Directory '{}' already exists", project_path.display()));
+        return Err(anyhow!(
+            "Directory '{}' already exists",
+            project_path.display()
+        ));
     }
 
     fs::create_dir_all(project_path.join("src"))?;
@@ -47,8 +50,8 @@ description = "{description}"
         .replace("{version}", "0.1.0")
         .replace("{description}", "A new Velang project");
 
-    let mut file = File::create(&ve_toml_path)
-        .map_err(|e| anyhow!("Failed to create ve.toml: {}", e))?;
+    let mut file =
+        File::create(&ve_toml_path).map_err(|e| anyhow!("Failed to create ve.toml: {}", e))?;
 
     file.write_all(content.as_bytes())
         .map_err(|e| anyhow!("Failed to write to ve.toml: {}", e))?;
@@ -69,8 +72,8 @@ fn main() {
 }
 "#;
 
-    let mut file = File::create(&main_ve_path)
-        .map_err(|e| anyhow!("Failed to create src/main.ve: {}", e))?;
+    let mut file =
+        File::create(&main_ve_path).map_err(|e| anyhow!("Failed to create src/main.ve: {}", e))?;
 
     file.write_all(MAIN_VE_TEMPLATE.as_bytes())
         .map_err(|e| anyhow!("Failed to write to src/main.ve: {}", e))?;
