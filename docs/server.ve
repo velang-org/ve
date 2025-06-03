@@ -1,37 +1,53 @@
-#[header="winsock2.h", link="ws2_32"]
-foreign fn WSAStartup(ver: i32, data: rawptr) -> i32;
-#[header="winsock2.h", link="ws2_32"]
-foreign fn WSACleanup() -> i32;
-#[header="winsock2.h", link="ws2_32"]
+
+#[header="sys/socket.h"]
 foreign fn socket(af: i32, typ: i32, proto: i32) -> i32;
-#[header="winsock2.h", link="ws2_32"]
+#[header="sys/socket.h"]
 foreign fn bind(sock: i32, addr: rawptr, len: i32) -> i32;
-#[header="winsock2.h", link="ws2_32"]
+#[header="sys/socket.h"]
 foreign fn listen(sock: i32, backlog: i32) -> i32;
-#[header="winsock2.h", link="ws2_32"]
+#[header="sys/socket.h"]
 foreign fn accept(sock: i32, addr: rawptr, len: rawptr) -> i32;
-#[header="winsock2.h", link="ws2_32"]
+#[header="sys/socket.h"]
 foreign fn recv(sock: i32, buf: rawptr, len: i32, flags: i32) -> i32;
-#[header="winsock2.h", link="ws2_32"]
+#[header="sys/socket.h"]
 foreign fn send(sock: i32, buf: rawptr, len: i32, flags: i32) -> i32;
-#[header="winsock2.h", link="ws2_32"]
-foreign fn closesocket(sock: i32) -> i32;
-#[header="windows.h", link="kernel32"]
-foreign fn CreateFileA(name: string, access: i32, share: i32, sec: rawptr, disp: i32, flags: i32, temp: i32) -> i32;
-foreign fn ReadFile(h: i32, buf: rawptr, len: i32, read: rawptr, ov: rawptr) -> i32;
-foreign fn CloseHandle(h: i32) -> i32;
+#[header="unistd.h"]
+foreign fn close(fd: i32) -> i32;
+
+
+
+#[header="stdio.h"]
+foreign fn fopen(filename: string, mode: string) -> rawptr;
+#[header="stdio.h"]
+foreign fn fread(ptr: rawptr, size: i32, count: i32, stream: rawptr) -> i32;
+#[header="stdio.h"]
+foreign fn fclose(stream: rawptr) -> i32;
+#[header="stdio.h"]
+foreign fn fseek(stream: rawptr, offset: i32, whence: i32) -> i32;
+#[header="stdio.h"]
+foreign fn ftell(stream: rawptr) -> i32;
+
 foreign fn ve_arena_alloc(size: size_t) -> rawptr;
 
 fn read_file_to_string(path: string, max_len: i32) -> string {
-    let h = CreateFileA(path, -2147483648, 1, 0 as rawptr, 3, 0, 0);
-    if h == -1 { return ""; }
+    let file = fopen(path, "r");
+    if file == 0 as rawptr { return ""; }
+    
+    fseek(file, 0, 2);
+    let file_size = ftell(file);
+    fseek(file, 0, 0);
+    
+    if file_size <= 0 || file_size >= max_len {
+        fclose(file);
+        return "";
+    }
+    
     let buf = ve_arena_alloc(max_len);
-    let read = ve_arena_alloc(4);
-    let res = ReadFile(h, buf, max_len - 1, read, 0 as rawptr);
-    let read_bytes = (read[0] as i32) + (read[1] as i32) * 256 + (read[2] as i32) * 65536 + (read[3] as i32) * 16777216;
-    if res == 0 || read_bytes <= 0 { CloseHandle(h); return ""; }
-    buf[read_bytes] = 0;
-    CloseHandle(h);
+    let bytes_read = fread(buf, 1, file_size, file);
+    fclose(file);
+    
+    if bytes_read <= 0 { return ""; }
+    buf[bytes_read] = 0;
     return buf as string;
 }
 
@@ -146,8 +162,6 @@ fn route_path_dynamic(path_buf: rawptr, path_len: i32) -> string {
 }
 
 export fn serve_docs() {
-    let wsa = ve_arena_alloc(512);
-    WSAStartup(514, wsa);
     let sock = socket(2, 1, 6);
     let addr = ve_arena_alloc(16);
     addr[0] = 2;
@@ -164,10 +178,8 @@ export fn serve_docs() {
     while true {
         let client = accept(sock, 0 as rawptr, 0 as rawptr);
         let req = ve_arena_alloc(1024);
-        let req_len = recv(client, req, 1024, 0);        let path_buf = ve_arena_alloc(256);
-        let path_len = parse_path(req, req_len, path_buf);
+        let req_len = recv(client, req, 1024, 0);        let path_buf = ve_arena_alloc(256);        let path_len = parse_path(req, req_len, path_buf);
         let file_name = "";
-        let hfile = -1;
         let is_index = 0;
         if path_len == 1 && path_buf[0] == 47 {
             file_name = "docs/index.html";
@@ -202,23 +214,14 @@ export fn serve_docs() {
             let header = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
             let header_ptr = header as rawptr;
             send(client, header_ptr, strlen(header), 0);
-            send(client, html2 as rawptr, strlen(html2), 0);
-        } else if file_name != "" {
-            hfile = CreateFileA(file_name, -2147483648, 1, 0 as rawptr, 3, 0, 0);
-            if hfile != -1 {
-                let buf = ve_arena_alloc(4096);
-                let read = ve_arena_alloc(4);                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
+            send(client, html2 as rawptr, strlen(html2), 0);        } else if file_name != "" {
+            let file_content = read_file_to_string(file_name, 32768);
+            if file_content != "" {
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
                 let header_ptr = header as rawptr;
                 send(client, header_ptr, strlen(header), 0);
-                let read_result = ReadFile(hfile, buf, 4096, read, 0 as rawptr);
-                let read_bytes = (read[0] as i32) + (read[1] as i32) * 256 + (read[2] as i32) * 65536 + (read[3] as i32) * 16777216;
-                if read_result != 0 && read_bytes > 0 {
-                    send(client, buf, read_bytes, 0);                } else {
-                    let error_response = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Error</h1><p>Failed to read file</p></body></html>";
-                    let error_ptr = error_response as rawptr;
-                    send(client, error_ptr, strlen(error_response), 0);
-                }
-                CloseHandle(hfile);            } else {
+                send(client, file_content as rawptr, strlen(file_content), 0);
+            } else {
                 let error_html = read_file_to_string("docs/404.html", 4096);
                 if error_html != "" {
                     let header = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n";
@@ -242,11 +245,9 @@ export fn serve_docs() {
                 let response = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<html><body><h1>404 Not Found</h1></body></html>";
                 let response_ptr = response as rawptr;
                 send(client, response_ptr, strlen(response), 0);
-            }
-        }
-        closesocket(client);
+            }        }
+        close(client);
     }
-    WSACleanup();
 }
 
 fn strlen(s: string) -> i32 {
