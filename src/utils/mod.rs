@@ -337,43 +337,143 @@ fn resolve_library_path(module_path: &str) -> Result<PathBuf> {
 #[cfg(target_os = "windows")]
 fn get_msvc_lib_paths() -> Result<Vec<String>> {
     use std::env;
+    use std::fs;
+    
     let mut paths = Vec::new();
 
     if let Ok(vc_dir) = env::var("VCINSTALLDIR") {
-        paths.push(format!("{}\\Lib\\x64", vc_dir.trim_end_matches('\\')));
+        let lib_path = format!("{}\\Lib\\x64", vc_dir.trim_end_matches('\\'));
+        if Path::new(&lib_path).exists() {
+            paths.push(lib_path);
+        }
     }
 
     if let Ok(windows_sdk_dir) = env::var("WindowsSdkDir") {
-        let version = env::var("WindowsSDKVersion").unwrap_or("10.0.22621.0".to_string());
-        paths.push(format!(
+        let version = env::var("WindowsSDKVersion").unwrap_or_else(|_| {
+            let lib_dir = format!("{}\\Lib", windows_sdk_dir.trim_end_matches('\\'));
+            if let Ok(entries) = fs::read_dir(&lib_dir) {
+                let mut versions: Vec<String> = entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                    .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+                    .filter(|name| name.starts_with("10.0."))
+                    .collect();
+                versions.sort();
+                versions.last().unwrap_or(&"10.0.22621.0".to_string()).clone()
+            } else {
+                "10.0.22621.0".to_string()
+            }
+        });
+        
+        let um_path = format!(
             "{}\\Lib\\{}\\um\\x64",
             windows_sdk_dir.trim_end_matches('\\'),
-            version
-        ));
-        paths.push(format!(
+            version.trim_end_matches('\\')
+        );
+        let ucrt_path = format!(
             "{}\\Lib\\{}\\ucrt\\x64",
             windows_sdk_dir.trim_end_matches('\\'),
-            version
-        ));
+            version.trim_end_matches('\\')
+        );
+        
+        if Path::new(&um_path).exists() {
+            paths.push(um_path);
+        }
+        if Path::new(&ucrt_path).exists() {
+            paths.push(ucrt_path);
+        }
     }
 
     if paths.is_empty() {
-        paths.extend(vec![
-            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.40.33807\\lib\\x64".to_string(),
-            "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\ucrt\\x64".to_string(),
-            "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\um\\x64".to_string(),
-        ]);
+        let possible_vs_paths = vec![
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise",
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional", 
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools",
+            "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise",
+            "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional",
+            "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community",
+            "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools",
+        ];
+
+        for vs_path in possible_vs_paths {
+            let vc_tools_path = format!("{}\\VC\\Tools\\MSVC", vs_path);
+            if let Ok(entries) = fs::read_dir(&vc_tools_path) {
+                let mut versions: Vec<String> = entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                    .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+                    .collect();
+                versions.sort();
+                
+                if let Some(latest_version) = versions.last() {
+                    let lib_path = format!("{}\\VC\\Tools\\MSVC\\{}\\lib\\x64", vs_path, latest_version);
+                    if Path::new(&lib_path).exists() {
+                        paths.push(lib_path);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let sdk_paths = vec![
+            "C:\\Program Files (x86)\\Windows Kits\\10\\Lib",
+            "C:\\Program Files\\Windows Kits\\10\\Lib",
+        ];
+
+        for sdk_path in sdk_paths {
+            if let Ok(entries) = fs::read_dir(sdk_path) {
+                let mut versions: Vec<String> = entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                    .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+                    .filter(|name| name.starts_with("10.0."))
+                    .collect();
+                versions.sort();
+                
+                if let Some(latest_version) = versions.last() {
+                    let um_path = format!("{}\\{}\\um\\x64", sdk_path, latest_version);
+                    let ucrt_path = format!("{}\\{}\\ucrt\\x64", sdk_path, latest_version);
+                    
+                    if Path::new(&um_path).exists() {
+                        paths.push(um_path);
+                    }
+                    if Path::new(&ucrt_path).exists() {
+                        paths.push(ucrt_path);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        return Err(anyhow!(
+            "Could not find MSVC libraries. Please ensure Visual Studio Build Tools are installed.\n\
+            Install from: https://aka.ms/vs/17/release/vs_BuildTools.exe\n\
+            Or run: vcvars64.bat to set up the environment."
+        ));
     }
 
     for path in &paths {
         if !Path::new(path).exists() {
-            return Err(anyhow!(
-                "Missing library path: {}\nInstall VS Build Tools: https://aka.ms/vs/17/release/vs_BuildTools.exe",
-                path
-            ));
+            eprintln!("Warning: Library path does not exist: {}", path);
         }
     }
-    Ok(paths)
+
+    let existing_paths: Vec<String> = paths
+        .into_iter()
+        .filter(|path| Path::new(path).exists())
+        .collect();
+
+    if existing_paths.is_empty() {
+        return Err(anyhow!(
+            "No valid MSVC library paths found. Please install Visual Studio Build Tools.\n\
+            Install from: https://aka.ms/vs/17/release/vs_BuildTools.exe"
+        ));
+    }
+
+    Ok(existing_paths)
 }
 
 pub fn validate_ve_file(path: &str) -> std::result::Result<PathBuf, String> {
