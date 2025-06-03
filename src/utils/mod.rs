@@ -659,6 +659,7 @@ fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String
         }
 
         ast::Expr::Int(_, _)
+        | ast::Expr::Int64(_, _)
         | ast::Expr::F32(_, _)
         | ast::Expr::Bool(_, _)
         | ast::Expr::Str(_, _)

@@ -305,6 +305,7 @@ impl TypeChecker {
             Expr::Int(_, _) => Ok(Type::I32),
             Expr::Bool(_, _) => Ok(Type::Bool),
             Expr::Str(_, _) => Ok(Type::String),
+            Expr::Int64(_, _) => Ok(Type::I64),
             Expr::F32(_, _) => Ok(Type::F32),
             Expr::Void(_) => Ok(Type::Void),
             Expr::Var(
@@ -629,6 +630,7 @@ impl TypeChecker {
                     (Type::I32, Type::U32) => Ok(target_ty.clone()),
                     (Type::U32, Type::I32) => Ok(target_ty.clone()),
                     (Type::String, Type::I32) => Ok(target_ty.clone()),
+                    (Type::String, Type::RawPtr) => Ok(target_ty.clone()),
                     (Type::F32, Type::String) => Ok(target_ty.clone()),
                     _ => {
                         if !Self::is_convertible(&source_ty, target_ty) {
@@ -822,6 +824,11 @@ impl TypeChecker {
                     }
                     Type::Pointer(element_type) => {
                         let element_type = *element_type;
+                        *expr_type = element_type.clone();
+                        Ok(element_type)
+                    }
+                    Type::RawPtr => {
+                        let element_type = Type::U8;
                         *expr_type = element_type.clone();
                         Ok(element_type)
                     }

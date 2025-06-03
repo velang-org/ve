@@ -1102,10 +1102,17 @@ impl<'a> Parser<'a> {
         let current = self.advance().cloned();
         match current {
             Some((Token::Int(n), span)) => {
-                Ok(ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
-                    span,
-                    ty: ast::Type::I32,
-                }))
+                if let Ok(val) = n.try_into() {
+                    Ok(ast::Expr::Int(val, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::I32,
+                    }))
+                } else {
+                    Ok(ast::Expr::Int64(n, ast::ExprInfo {
+                        span,
+                        ty: ast::Type::I64,
+                    }))
+                }
             }
             Some((Token::Str(s), span)) => Ok(ast::Expr::Str(s, ast::ExprInfo {
                 span,
@@ -1128,30 +1135,23 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expr()?;
                 let span_end = self.expect(Token::RParen)?;
                 let _span = Span::new(span_start.start(), span_end.end());
-
                 Ok(expr)
             }
             Some((Token::Ident(name), span)) => {
                 if self.check(Token::LBrace) && self.can_start_struct_init() {
                     self.advance();
-
                     let mut fields = Vec::new();
                     let struct_name = name.clone();
-
                     while !self.check(Token::RBrace) {
                         let (field_name, _) = self.consume_ident()?;
                         self.expect(Token::Colon)?;
                         let expr = self.parse_expr()?;
-
                         fields.push((field_name, expr));
-
                         if !self.check(Token::RBrace) {
                             self.expect(Token::Comma)?;
                         }
                     }
-
                     let end_span = self.expect(Token::RBrace)?;
-
                     Ok(ast::Expr::StructInit(
                         struct_name.clone(),
                         fields,
@@ -1171,20 +1171,16 @@ impl<'a> Parser<'a> {
             }
             Some((Token::LBracket, span)) => {
                 let mut elements = Vec::new();
-
                 if !self.check(Token::RBracket) {
                     loop {
                         elements.push(self.parse_expr()?);
-
                         if !self.check(Token::Comma) {
                             break;
                         }
                         self.advance();
                     }
                 }
-
                 let end_span = self.expect(Token::RBracket)?;
-
                 Ok(ast::Expr::ArrayInit(elements, ast::ExprInfo {
                     span: Span::new(span.start(), end_span.end()),
                     ty: ast::Type::Unknown,

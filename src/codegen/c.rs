@@ -857,6 +857,7 @@ impl CBackend {
     fn emit_expr(&mut self, expr: &ast::Expr) -> Result<String, CompileError> {
         match expr {
             ast::Expr::Int(n, _) => Ok(n.to_string()),
+            ast::Expr::Int64(n, _) => Ok(n.to_string()),
             ast::Expr::F32(f, _) => Ok(f.to_string()),
             ast::Expr::Bool(b, _) => {
                 self.includes.borrow_mut().insert("<stdbool.h>".to_string());

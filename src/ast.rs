@@ -166,6 +166,7 @@ pub struct FfiVariable {
 #[allow(dead_code)]
 pub enum Expr {
     Int(i32, ExprInfo),
+    Int64(i64, ExprInfo),
     Bool(bool, ExprInfo),
     Str(String, ExprInfo),
     Var(String, ExprInfo),
@@ -226,6 +227,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::Int(_, info) => info.span,
+            Expr::Int64(_, info) => info.span,
             Expr::Bool(_, info) => info.span,
             Expr::Str(_, info) => info.span,
             Expr::Var(_, info) => info.span,
@@ -253,6 +255,7 @@ impl Expr {
     pub fn get_type(&self) -> Type {
         match self {
             Expr::Int(_, info) => info.ty.clone(),
+            Expr::Int64(_, info) => info.ty.clone(),
             Expr::Bool(_, info) => info.ty.clone(),
             Expr::Str(_, info) => info.ty.clone(),
             Expr::Var(_, info) => info.ty.clone(),
