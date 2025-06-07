@@ -14,6 +14,7 @@ use codespan::Files;
 use codespan_reporting::term;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use std::path::PathBuf;
+use colored::*;
 
 #[derive(Debug)]
 pub struct CliError(pub String);
@@ -212,7 +213,7 @@ pub fn process_build(
 
     if build_dir.exists() {
         if verbose {
-            println!("Cleaning build directory: {}", build_dir.display());
+            println!("{}", format!("Cleaning build directory: {}", build_dir.display()).yellow());
         }
         std::fs::remove_dir_all(&build_dir)?;
     }
@@ -230,9 +231,9 @@ pub fn process_build(
     );
 
     if verbose {
-        println!("Input file: {}", input.display());
-        println!("Output file: {}", output.display());
-        println!("Build directory: {}", build_dir.display());
+        println!("{}", format!("Input file: {}", input.display()).cyan());
+        println!("{}", format!("Output file: {}", output.display()).cyan());
+        println!("{}", format!("Build directory: {}", build_dir.display()).cyan());
     }
 
     let lexer = lexer::Lexer::new(&files, file_id);
@@ -295,15 +296,19 @@ pub fn process_build(
 
             if verbose {
                 if let Some(partial) = partial_program {
-                    println!("\n--- PARTIAL AST (verbose mode) ---");
-                    println!(
-                        "Successfully parsed {} functions, {} structs, {} enums",
+                    let ast_file = build_dir.join("partial_ast.txt");
+                    let ast_content = format!(
+                        "--- PARTIAL AST (verbose mode) ---\n\
+                         Successfully parsed {} functions, {} structs, {} enums\n\n\
+                         Partial AST:\n{:#?}\n",
                         partial.functions.len(),
                         partial.structs.len(),
-                        partial.enums.len()
+                        partial.enums.len(),
+                        partial
                     );
-                    println!("Partial AST:\n{:#?}\n", partial);
-                    return Err(anyhow!("Parser failed, but partial AST shown above"));
+                    std::fs::write(&ast_file, ast_content)?;
+                    println!("Partial AST saved to: {}", ast_file.display());
+                    return Err(anyhow!("Parser failed, but partial AST saved to file"));
                 }
             }
 
@@ -324,7 +329,10 @@ pub fn process_build(
     program.stmts.extend(imported_stmts);
 
     if verbose {
-        println!("Parsed AST:\n{:#?}", program);
+        let ast_file = build_dir.join("parsed_ast.txt");
+        let ast_content = format!("Parsed AST:\n{:#?}", program);
+        std::fs::write(&ast_file, ast_content)?;
+        println!("{}", format!("Parsed AST saved to: {}", ast_file.display()).green());
     }
 
     let mut type_checker = typeck::TypeChecker::new(
@@ -407,36 +415,46 @@ pub fn process_build(
     target.compile(&program, &c_file)?;
 
     if verbose {
-        println!("Compiling generated C code: {}", c_file.display());
+        println!("{}", format!("Compiling generated C code: {}", c_file.display()).yellow());
     }
 
     #[cfg(target_os = "windows")]
-    let clang_args = prepare_windows_clang_args(&output, optimize, &c_file)?;
+    let mut clang_args = prepare_windows_clang_args(&output, optimize, &c_file)?;
 
     #[cfg(not(target_os = "windows"))]
-    let clang_args = vec![
+    let mut clang_args = vec![
         if optimize { "-O3" } else { "-O0" }.to_string(),
         c_file.to_str().unwrap().into(),
         "-o".to_string(),
         output.to_str().unwrap().into(),
     ];
 
-    let status = std::process::Command::new("clang")
+    if verbose {
+        clang_args.push("-DVE_DEBUG_MEMORY".to_string());
+    }
+
+    let output_result = std::process::Command::new("clang")
         .args(&clang_args)
-        .status()
-        .or_else(|_| std::process::Command::new("gcc").args(&clang_args).status())
+        .output()
+        .or_else(|_| std::process::Command::new("gcc").args(&clang_args).output())
         .map_err(|e| anyhow!("Failed to compile C code: {}", e))?;
 
-    if !status.success() {
-        return Err(anyhow!("C compiler failed with status: {}", status));
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        for line in stderr.lines() {
+            if line.contains("error:") || line.contains("fatal error:") {
+                eprintln!("{}", line);
+            }
+        }
+        return Err(anyhow!("C compiler failed with status: {}", output_result.status));
     }
 
     if verbose {
-        println!("Successfully compiled to: {}", output.display());
+        println!("{}", format!("Successfully compiled to: {}", output.display()).green());
     }
 
     if verbose {
-        println!("Running the compiled program...");
+        println!("{}", "Running the compiled program...".bold().blue());
     }
 
     let status = std::process::Command::new(output.to_str().unwrap())
@@ -444,7 +462,7 @@ pub fn process_build(
         .map_err(|e| anyhow!("Failed to run program: {}", e))?;
 
     if verbose {
-        println!("Program exited with status: {}", status);
+        println!("{}", format!("Program exited with status: {}", status).magenta());
     }
 
     Ok(())

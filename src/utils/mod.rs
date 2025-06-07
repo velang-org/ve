@@ -774,9 +774,18 @@ fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String
                 }
             }
         }
-        ast::Expr::MatchExpr(_, arms, _) => {
+        ast::Expr::Match(_, arms, _) => {
             for arm in arms {
-                collect_expr_dependencies(&arm.body, dependencies);
+                match &arm.body {
+                    ast::MatchArmBody::Expr(expr) => {
+                        collect_expr_dependencies(expr, dependencies);
+                    }
+                    ast::MatchArmBody::Block(stmts) => {
+                        for stmt in stmts {
+                            collect_variable_dependencies(stmt, dependencies);
+                        }
+                    }
+                }
             }
         }
     }

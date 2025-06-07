@@ -24,6 +24,8 @@ enum ForeignItem {
     Variable(ast::FfiVariable),
 }
 
+
+
 impl<'a> Parser<'a> {
     pub fn new(lexer: Lexer<'a>) -> Self {
         let tokens_vec = lexer.tokens();
@@ -479,7 +481,7 @@ impl<'a> Parser<'a> {
         self.tokens
             .peek()
             .map(|(t, _)| (*t).clone())
-            .unwrap_or(Token::Error)
+            .unwrap()
     }
     fn peek_span(&mut self) -> Span {
         self.tokens
@@ -487,57 +489,95 @@ impl<'a> Parser<'a> {
             .map(|(_, s)| *s)
             .unwrap_or(Span::new(0, 0))
     }
-    fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let token = self.peek_token();
-        match token {
-            Token::Star => {
-                let op_span = self.peek_span();
-                self.advance();
-                let prefix_bp = self.get_prefix_bp(&token);
-                let expr = self.parse_expr_bp(prefix_bp)?;
-                Ok(ast::Expr::Deref(Box::new(expr), ast::ExprInfo {
-                    span: op_span,
-                    ty: ast::Type::Unknown,
-                }))
-            }
-            Token::Minus | Token::Plus => {
-                let (op_token, _) = self.advance().unwrap();
-                let op_token = op_token.clone();
-                let prefix_bp = self.get_prefix_bp(&op_token);
-                let expr = self.parse_expr_bp(prefix_bp)?;
-                let span = expr.span();
-                Ok(ast::Expr::UnaryOp(
-                    match op_token {
-                        Token::Minus => ast::UnOp::Neg,
-                        Token::Plus => ast::UnOp::Plus,
-                        _ => unreachable!(),
-                    },
-                    Box::new(expr),
-                    ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    },
-                ))
-            }
-            Token::Bang => {
-                let op_span = self.peek_span();
-                self.advance();
-                let prefix_bp = self.get_prefix_bp(&token);
-                let expr = self.parse_expr_bp(prefix_bp)?;
-                let span = expr.span();
-                Ok(ast::Expr::UnaryOp(
-                    ast::UnOp::Not,
-                    Box::new(expr),
-                    ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                    },
-                ))
-            }
-            _ => self.parse_atom(),
+fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+    let token = self.peek_token();
+    match token {
+        Token::Star => {
+            let op_span = self.peek_span();
+            self.advance();
+            let prefix_bp = self.get_prefix_bp(&token);
+            let expr = self.parse_expr_bp(prefix_bp)?;
+            Ok(ast::Expr::Deref(Box::new(expr), ast::ExprInfo {
+                span: op_span,
+                ty: ast::Type::Unknown,
+                is_tail: false,
+            }))
         }
+        Token::Minus | Token::Plus => {
+            let (op_token, op_span) = self.advance().unwrap();
+            let op_token = op_token.clone();
+            let op_span = *op_span;
+            let prefix_bp = self.get_prefix_bp(&op_token);
+            let expr = self.parse_expr_bp(prefix_bp)?;
+            
+            match (&op_token, &expr) {
+                (Token::Minus, ast::Expr::Int(val, _)) => {
+                    let negated = -(*val as i64);
+                    if negated >= i32::MIN as i64 && negated <= i32::MAX as i64 {
+                        Ok(ast::Expr::Int(negated as i32, ast::ExprInfo {
+                            span: op_span,
+                            ty: ast::Type::I32,
+                            is_tail: false,
+                        }))
+                    } else if negated >= i64::MIN && negated <= i64::MAX {
+                        Ok(ast::Expr::Int64(negated, ast::ExprInfo {
+                            span: op_span,
+                            ty: ast::Type::I64,
+                            is_tail: false,
+                        }))
+                    } else {
+                        self.error(&format!("Negated integer {} is out of range", negated), op_span)
+                    }
+                }
+                (Token::Minus, ast::Expr::Int64(val, _)) => {
+                    if let Some(negated) = val.checked_neg() {
+                        Ok(ast::Expr::Int64(negated, ast::ExprInfo {
+                            span: op_span,
+                            ty: ast::Type::I64,
+                            is_tail: false,
+                        }))
+                    } else {
+                        self.error(&format!("Cannot negate {} as it would overflow i64", val), op_span)
+                    }
+                }
+                _ => {
+                    let span = expr.span();
+                    Ok(ast::Expr::UnaryOp(
+                        match op_token {
+                            Token::Minus => ast::UnOp::Neg,
+                            Token::Plus => ast::UnOp::Plus,
+                            _ => unreachable!(),
+                        },
+                        Box::new(expr),
+                        ast::ExprInfo {
+                            span,
+                            ty: ast::Type::Unknown,
+                            is_tail: false,
+                        },
+                    ))
+                }
+            }
+        }
+    
+        Token::Bang => {
+            let _op_span = self.peek_span();
+            self.advance();
+            let prefix_bp = self.get_prefix_bp(&token);
+            let expr = self.parse_expr_bp(prefix_bp)?;
+            let span = expr.span();
+            Ok(ast::Expr::UnaryOp(
+                ast::UnOp::Not,
+                Box::new(expr),
+                ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                },
+            ))
+        }
+        _ => self.parse_atom(),
     }
-
+}
     fn parse_infix(
         &mut self,
         op: &Token,
@@ -555,6 +595,7 @@ impl<'a> Parser<'a> {
                     ast::ExprInfo {
                         span,
                         ty: ast::Type::Unknown,
+                        is_tail: false,
                     },
                 ))
             }
@@ -600,6 +641,7 @@ impl<'a> Parser<'a> {
                     ast::ExprInfo {
                         span,
                         ty: ast::Type::Unknown,
+                        is_tail: false,
                     },
                 ))
             }
@@ -614,6 +656,7 @@ impl<'a> Parser<'a> {
                     ast::ExprInfo {
                         span,
                         ty: ast::Type::Unknown,
+                        is_tail: false,
                     },
                 ))
             }
@@ -630,6 +673,7 @@ impl<'a> Parser<'a> {
                             ast::ExprInfo {
                                 span: Span::new(lhs.span().start(), end_span.end()),
                                 ty: ast::Type::Enum(enum_name.clone()),
+                                is_tail: false,
                             },
                         ))
                     } else {
@@ -646,11 +690,12 @@ impl<'a> Parser<'a> {
                             ast::ExprInfo {
                                 span: Span::new(method_span.start(), end_span.end()),
                                 ty: ast::Type::Unknown,
+                                is_tail: false,
                             },
                         ))
                     }
                 } else {
-                    if let ast::Expr::Var(e_num_name, _) = &lhs {
+                    if let ast::Expr::Var(_e_num_name, _) = &lhs {
                         let span = Span::new(lhs.span().start(), field_span.end());
                         Ok(ast::Expr::FieldAccess(
                             Box::new(lhs),
@@ -658,6 +703,7 @@ impl<'a> Parser<'a> {
                             ast::ExprInfo {
                                 span,
                                 ty: ast::Type::Unknown,
+                                is_tail: false,
                             },
                         ))
                     } else {
@@ -668,6 +714,7 @@ impl<'a> Parser<'a> {
                             ast::ExprInfo {
                                 span,
                                 ty: ast::Type::Unknown,
+                                is_tail: false,
                             },
                         ))
                     }
@@ -682,6 +729,7 @@ impl<'a> Parser<'a> {
                     ast::ExprInfo {
                         span,
                         ty: ast::Type::Unknown,
+                        is_tail: false,
                     },
                 ))
             }
@@ -693,6 +741,7 @@ impl<'a> Parser<'a> {
                 Ok(ast::Expr::Cast(Box::new(lhs), cast_type, ast::ExprInfo {
                     span,
                     ty: ast::Type::Unknown,
+                    is_tail: false,
                 }))
             }
             _ => {
@@ -751,12 +800,83 @@ impl<'a> Parser<'a> {
     fn parse_block(&mut self) -> Result<Vec<ast::Stmt>, Diagnostic<FileId>> {
         self.expect(Token::LBrace)?;
         let mut stmts = Vec::new();
+        
         while !self.check(Token::RBrace) {
-            stmts.push(self.parse_stmt()?);
+            if self.is_last_expr_in_block() {
+                let expr = self.parse_expr_tail()?;
+                let span = expr.span();
+                if self.check(Token::Semi) {
+                    self.advance();
+                }
+                stmts.push(ast::Stmt::Expr(expr, span));
+            } else {
+                stmts.push(self.parse_stmt()?);
+            }
+        }
+        
+        self.expect(Token::RBrace)?;
+        Ok(stmts)
+    }
+
+    fn parse_block_with_tail(&mut self, allow_tail: bool) -> Result<Vec<ast::Stmt>, Diagnostic<FileId>> {
+        self.expect(Token::LBrace)?;
+        let mut stmts = Vec::new();
+        while !self.check(Token::RBrace) {
+            if self.is_last_expr_in_block() && allow_tail {
+                let expr = self.parse_expr_tail()?;
+                let span = expr.span();
+                if self.check(Token::Semi) {
+                    let semi_span = self.peek_span();
+                    return self.error("Cannot use ';' after return expression", semi_span);
+                }
+                stmts.push(ast::Stmt::Expr(expr, span));
+            } else {
+                stmts.push(self.parse_stmt()?);
+            }
         }
         self.expect(Token::RBrace)?;
         Ok(stmts)
     }
+
+
+    fn is_last_expr_in_block(&mut self) -> bool {
+        let mut temp_tokens = self.tokens.clone();
+        let mut depth = 0;
+        let mut found_expr = false;
+        
+        while let Some((token, _)) = temp_tokens.peek() {
+            match token {
+                Token::KwLet | Token::KwIf | Token::KwReturn | Token::KwWhile | Token::KwFor => {
+                    return false;
+                }
+                Token::LBrace => {
+                    depth += 1;
+                    temp_tokens.next();
+                }
+                Token::RBrace => {
+                    if depth == 0 {
+                        return found_expr;
+                    }
+                    depth -= 1;
+                    temp_tokens.next();
+                }
+                Token::Semi => {
+                    temp_tokens.next();
+                    if let Some((Token::RBrace, _)) = temp_tokens.peek() {
+                        return found_expr;
+                    }
+                    return false;
+                }
+                _ => {
+                    found_expr = true;
+                    temp_tokens.next();
+                }
+            }
+        }
+        
+        found_expr
+    }
+
     fn consume(&mut self, expected: Token, err_msg: &str) -> Result<Span, Diagnostic<FileId>> {
         if self.check(expected.clone()) {
             let span = self.tokens.peek().map(|(_, s)| *s).unwrap();
@@ -815,9 +935,12 @@ impl<'a> Parser<'a> {
                     let size_token = self.advance().cloned();
 
                     match size_token {
-                        Some((Token::Int(size), _)) => {
+                        Some((Token::Int(size), span)) => {
                             self.expect(Token::RBracket)?;
-                            Ok(ast::Type::SizedArray(Box::new(element_type), size as usize))
+                            match size.parse::<usize>() {
+                                Ok(size_val) => Ok(ast::Type::SizedArray(Box::new(element_type), size_val)),
+                                Err(_) => self.error("Invalid array size", span)
+                            }
                         }
                         _ => {
                             let span = self.peek_span();
@@ -829,7 +952,32 @@ impl<'a> Parser<'a> {
                     Ok(ast::Type::Array(Box::new(element_type)))
                 }
             }
-            Some((Token::Ident(name), _)) => Ok(ast::Type::Struct(name)),
+            Some((Token::Ident(name), _)) => {
+                if self.check(Token::Lt) {
+                    self.advance();
+                    let mut generic_args = Vec::new();
+                    
+                    if !self.check(Token::Gt) {
+                        loop {
+                            generic_args.push(self.parse_type()?);
+                            
+                            if !self.check(Token::Comma) {
+                                break;
+                            }
+                            self.advance();
+                        }
+                    }
+                    
+                    self.expect(Token::Gt)?;
+                    Ok(ast::Type::GenericInstance(name, generic_args))
+                } else {
+                    if name.chars().next().unwrap_or('a').is_uppercase() {
+                        Ok(ast::Type::Generic(name))
+                    } else {
+                        Ok(ast::Type::Struct(name))
+                    }
+                }
+            }
             Some((_, span)) => self.error("Expected type annotation", span),
             None => self.error("Expected type annotation", Span::new(0, 0)),
         }
@@ -841,6 +989,7 @@ impl<'a> Parser<'a> {
             ast::Expr::Void(ast::ExprInfo {
                 span: ret_span,
                 ty: ast::Type::Void,
+                is_tail: false,
             })
         } else {
             self.parse_expr()?
@@ -853,11 +1002,36 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn parse_generic_params(&mut self) -> Result<Vec<String>, Diagnostic<FileId>> {
+        if !self.check(Token::Lt) {
+            return Ok(Vec::new());
+        }
+        
+        self.advance();
+        let mut generic_params = Vec::new();
+        
+        if !self.check(Token::Gt) {
+            loop {
+                let (param_name, _) = self.consume_ident()?;
+                generic_params.push(param_name);
+                
+                if !self.check(Token::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+        
+        self.expect(Token::Gt)?;
+        Ok(generic_params)
+    }
+
     fn parse_function(&mut self) -> Result<ast::Function, Diagnostic<FileId>> {
         self.consume(Token::KwFn, "Expected 'fn'")?;
         let start_span = self.previous().map(|(_, s)| *s).unwrap();
 
         let (name, _name_span) = self.consume_ident()?;
+        let generic_params = self.parse_generic_params()?;
         let params = self.parse_parameters()?;
 
         let return_type = if self.check(Token::Arrow) {
@@ -867,13 +1041,15 @@ impl<'a> Parser<'a> {
             ast::Type::Void
         };
 
-        let body = self.parse_block()?;
+        let has_tail = !matches!(return_type, ast::Type::Void);
+        let body = self.parse_block_with_tail(has_tail)?;
         let end_span = match body.last() {
             Some(last_stmt) => last_stmt.span(),
             None => start_span,
         };
         Ok(ast::Function {
             name,
+            generic_params,
             params,
             return_type,
             body,
@@ -881,6 +1057,7 @@ impl<'a> Parser<'a> {
             visibility: ast::Visibility::Private,
         })
     }
+
     fn parse_parameters(&mut self) -> Result<Vec<(String, ast::Type)>, Diagnostic<FileId>> {
         self.consume(Token::LParen, "Expected '(' after function name")?;
         let mut params = Vec::new();
@@ -945,8 +1122,6 @@ impl<'a> Parser<'a> {
             self.parse_while()
         } else if self.check(Token::KwFor) {
             self.parse_for()
-        } else if self.check(Token::KwMatch) {
-            self.parse_match()
         } else {
             let expr = self.parse_expr()?;
             let span = expr.span();
@@ -1101,35 +1276,43 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let current = self.advance().cloned();
         match current {
-            Some((Token::Int(n), span)) => {
-                if let Ok(val) = n.try_into() {
-                    Ok(ast::Expr::Int(val, ast::ExprInfo {
+            Some((Token::Int(s), span)) => {
+                match s.parse::<i32>() {
+                    Ok(val) => Ok(ast::Expr::Int(val, ast::ExprInfo {
                         span,
                         ty: ast::Type::I32,
-                    }))
-                } else {
-                    Ok(ast::Expr::Int64(n, ast::ExprInfo {
-                        span,
-                        ty: ast::Type::I64,
-                    }))
+                        is_tail: false,
+                    })),
+                    Err(_) => match s.parse::<i64>() {
+                        Ok(val) => Ok(ast::Expr::Int64(val, ast::ExprInfo {
+                            span,
+                            ty: ast::Type::I64,
+                            is_tail: false,
+                        })),
+                        Err(_) => self.error(&format!("Integer literal '{}' is out of range", s), span)
+                    }
                 }
-            }
+            },
             Some((Token::Str(s), span)) => Ok(ast::Expr::Str(s, ast::ExprInfo {
                 span,
                 ty: ast::Type::String,
+                is_tail: false,
             })),
             Some((Token::TemplateStr(s), span)) => self.parse_template_string(s, span),
             Some((Token::KwTrue, span)) => Ok(ast::Expr::Bool(true, ast::ExprInfo {
                 span,
                 ty: ast::Type::Bool,
+                is_tail: false,
             })),
             Some((Token::KwFalse, span)) => Ok(ast::Expr::Bool(false, ast::ExprInfo {
                 span,
                 ty: ast::Type::Bool,
+                is_tail: false,
             })),
             Some((Token::F32(val), span)) => Ok(ast::Expr::F32(val, ast::ExprInfo {
                 span,
                 ty: ast::Type::F32,
+                is_tail: false,
             })),
             Some((Token::LParen, span_start)) => {
                 let expr = self.parse_expr()?;
@@ -1158,6 +1341,7 @@ impl<'a> Parser<'a> {
                         ast::ExprInfo {
                             span: Span::new(span.start(), end_span.end()),
                             ty: ast::Type::Struct(struct_name),
+                            is_tail: false,
                         },
                     ))
                 } else if self.check(Token::LParen) {
@@ -1166,6 +1350,7 @@ impl<'a> Parser<'a> {
                     Ok(ast::Expr::Var(name, ast::ExprInfo {
                         span,
                         ty: ast::Type::Unknown,
+                        is_tail: false,
                     }))
                 }
             }
@@ -1184,10 +1369,10 @@ impl<'a> Parser<'a> {
                 Ok(ast::Expr::ArrayInit(elements, ast::ExprInfo {
                     span: Span::new(span.start(), end_span.end()),
                     ty: ast::Type::Unknown,
+                    is_tail: false,
                 }))
             }
-            Some((Token::KwSafe, span)) => self.parse_safe_block(span),
-            Some((Token::KwMatch, span)) => self.parse_match_expr(span),
+            Some((Token::KwMatch, span)) => self.parse_match(span),
             _ => {
                 let token = self.previous().map(|(t, _)| t.clone()).unwrap();
                 let span = self.previous().map(|(_, s)| *s).unwrap();
@@ -1220,22 +1405,11 @@ impl<'a> Parser<'a> {
         Ok(ast::Expr::Call(name, args, ast::ExprInfo {
             span: Span::new(span.start(), rparen_span.end()),
             ty: ast::Type::Unknown,
+            is_tail: false,
         }))
     }
 
-    fn parse_safe_block(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
-        self.expect(Token::LBrace)?;
-        let stmts = self.parse_block()?;
-        let end_span = self.previous().map(|(_, s)| *s).unwrap_or(start_span);
-        let span = Span::new(start_span.start(), end_span.end());
-
-        Ok(ast::Expr::SafeBlock(stmts, ast::ExprInfo {
-            span,
-            ty: ast::Type::Unknown,
-        }))
-    }
-
-    fn parse_match_expr(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+    fn parse_match(&mut self, start_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
         let expr = self.parse_pattern()?;
         self.expect(Token::LBrace)?;
 
@@ -1249,9 +1423,11 @@ impl<'a> Parser<'a> {
         }
 
         let end_span = self.expect(Token::RBrace)?;
-        Ok(ast::Expr::MatchExpr(Box::new(expr), arms, ast::ExprInfo {
+
+        Ok(ast::Expr::Match(Box::new(expr), arms, ast::ExprInfo {
             span: Span::new(start_span.start(), end_span.end()),
             ty: ast::Type::Unknown,
+            is_tail: false,
         }))
     }
     fn is_at_end(&mut self) -> bool {
@@ -1300,6 +1476,7 @@ impl<'a> Parser<'a> {
     fn parse_struct(&mut self) -> Result<ast::StructDef, Diagnostic<FileId>> {
         let start_span = self.consume(Token::KwStruct, "Expected 'struct'")?;
         let (name, _) = self.consume_ident()?;
+        let generic_params = self.parse_generic_params()?;
 
         self.expect(Token::LBrace)?;
 
@@ -1323,6 +1500,7 @@ impl<'a> Parser<'a> {
         let end_span = self.expect(Token::RBrace)?;
         Ok(ast::StructDef {
             name,
+            generic_params,
             fields,
             span: Span::new(start_span.start(), end_span.end()),
             visibility: ast::Visibility::Private,
@@ -1333,6 +1511,7 @@ impl<'a> Parser<'a> {
     fn parse_enum(&mut self) -> Result<ast::EnumDef, Diagnostic<FileId>> {
         let start_span = self.consume(Token::KwEnum, "Expected 'enum'")?;
         let (name, _) = self.consume_ident()?;
+        let generic_params = self.parse_generic_params()?;
 
         self.expect(Token::LBrace)?;
 
@@ -1374,6 +1553,7 @@ impl<'a> Parser<'a> {
         let end_span = self.expect(Token::RBrace)?;
         Ok(ast::EnumDef {
             name,
+            generic_params,
             variants,
             span: Span::new(start_span.start(), end_span.end()),
             visibility: ast::Visibility::Private,
@@ -1451,6 +1631,7 @@ impl<'a> Parser<'a> {
         Ok(ast::Expr::TemplateStr(parts, ast::ExprInfo {
             span,
             ty: ast::Type::String,
+            is_tail: false,
         }))
     }
     fn parse_interpolated_expr(
@@ -1477,35 +1658,59 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn parse_match(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
-        let start_span = self.consume(Token::KwMatch, "Expected 'match'")?;
-        let expr = self.parse_pattern()?;
-        self.expect(Token::LBrace)?;
+    fn parse_expr_tail(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let mut expr = self.parse_expr()?;
+        self.mark_as_tail(&mut expr);
+        Ok(expr)
+    }
 
-        let mut arms = Vec::new();
-        while !self.check(Token::RBrace) {
-            arms.push(self.parse_match_arm()?);
 
-            if self.check(Token::Comma) {
-                self.advance();
-            }
+    fn mark_as_tail(&self, expr: &mut ast::Expr) {
+        match expr {
+            ast::Expr::Int(_, info) => info.is_tail = true,
+            ast::Expr::Int64(_, info) => info.is_tail = true,
+            ast::Expr::Bool(_, info) => info.is_tail = true,
+            ast::Expr::Str(_, info) => info.is_tail = true,
+            ast::Expr::Var(_, info) => info.is_tail = true,
+            ast::Expr::BinOp(_, _, _, info) => info.is_tail = true,
+            ast::Expr::UnaryOp(_, _, info) => info.is_tail = true,
+            ast::Expr::Call(_, _, info) => info.is_tail = true,
+            ast::Expr::Cast(_, _, info) => info.is_tail = true,
+            ast::Expr::SafeBlock(_, info) => info.is_tail = true,
+            ast::Expr::Deref(_, info) => info.is_tail = true,
+            ast::Expr::Assign(_, _, info) => info.is_tail = true,
+            ast::Expr::Range(_, _, info) => info.is_tail = true,
+            ast::Expr::StructInit(_, _, info) => info.is_tail = true,
+            ast::Expr::FieldAccess(_, _, info) => info.is_tail = true,
+            ast::Expr::ArrayInit(_, info) => info.is_tail = true,
+            ast::Expr::ArrayAccess(_, _, info) => info.is_tail = true,
+            ast::Expr::TemplateStr(_, info) => info.is_tail = true,
+            ast::Expr::F32(_, info) => info.is_tail = true,
+            ast::Expr::FfiCall(_, _, info) => info.is_tail = true,
+            ast::Expr::EnumConstruct(_, _, _, info) => info.is_tail = true,
+            ast::Expr::Match(_, _, info) => info.is_tail = true,
+            ast::Expr::Void(info) => info.is_tail = true,
         }
-
-        let end_span = self.expect(Token::RBrace)?;
-        Ok(ast::Stmt::Match(
-            Box::new(expr),
-            arms,
-            Span::new(start_span.start(), end_span.end()),
-        ))
     }
 
     fn parse_match_arm(&mut self) -> Result<ast::MatchArm, Diagnostic<FileId>> {
         let pattern = self.parse_pattern()?;
         self.expect(Token::Arrow2)?;
-        let body = self.parse_expr()?;
+
+        let (body, body_span) = if self.check(Token::LBrace) {
+            let stmts = self.parse_block()?;
+            let span = stmts
+                .last()
+                .map(|s| s.span())
+                .unwrap_or_else(|| self.previous().map(|(_, s)| *s).unwrap());
+            (ast::MatchArmBody::Block(stmts), span)
+        } else {
+            let expr = self.parse_expr()?;
+            let span = expr.span();
+            (ast::MatchArmBody::Expr(expr), span)
+        };
 
         let pattern_span = pattern.span();
-        let body_span = body.span();
 
         Ok(ast::MatchArm {
             pattern,
@@ -1562,13 +1767,17 @@ impl<'a> Parser<'a> {
             }
             Some((Token::Int(n), span)) => {
                 self.advance();
-                Ok(ast::Pattern::Literal(
-                    ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
+                match n.parse::<i32>() {
+                    Ok(val) => Ok(ast::Pattern::Literal(
+                        ast::Expr::Int(val, ast::ExprInfo {
+                            span,
+                            ty: ast::Type::I32,
+                            is_tail: false,
+                        }),
                         span,
-                        ty: ast::Type::I32,
-                    }),
-                    span,
-                ))
+                    )),
+                    Err(_) => self.error("Integer literal out of range for pattern", span)
+                }
             }
             Some((Token::Str(s), span)) => {
                 self.advance();
@@ -1576,6 +1785,7 @@ impl<'a> Parser<'a> {
                     ast::Expr::Str(s, ast::ExprInfo {
                         span,
                         ty: ast::Type::String,
+                        is_tail: false,
                     }),
                     span,
                 ))
@@ -1586,6 +1796,7 @@ impl<'a> Parser<'a> {
                     ast::Expr::Bool(true, ast::ExprInfo {
                         span,
                         ty: ast::Type::Bool,
+                        is_tail: false,
                     }),
                     span,
                 ))
@@ -1596,6 +1807,7 @@ impl<'a> Parser<'a> {
                     ast::Expr::Bool(false, ast::ExprInfo {
                         span,
                         ty: ast::Type::Bool,
+                        is_tail: false,
                     }),
                     span,
                 ))
@@ -1604,4 +1816,5 @@ impl<'a> Parser<'a> {
             None => self.error("Expected pattern", Span::new(0, 0)),
         }
     }
+
 }
