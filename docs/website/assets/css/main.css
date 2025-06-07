@@ -1,0 +1,389 @@
+:root {
+  --bg: #ffffff;
+  --text: #111111;
+  --accent: #5d5d61;
+  --light-gray: #f0f0f0;
+  --gray: #666666;
+  --border: #e0e0e0;
+  --card-bg: #ffffff;
+}
+
+body.dark-mode {
+  --bg: #111;
+  --text: #f0f0f0;
+  --accent: #828288;
+  --light-gray: #333;
+  --gray: #aaa;
+  --border: #333;
+  --card-bg: #1a1a1a;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Montserrat", sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  font-size: 16px;
+}
+
+nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 2rem;
+  border-bottom: 1px solid var(--border);
+  background-color: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 1002;
+}
+
+body.dark-mode nav {
+  background-color: rgba(20, 20, 20, 0.95);
+}
+
+nav .logo img {
+  height: 50px;
+  object-fit: cover;
+}
+
+nav ul {
+  display: flex;
+  gap: 1.5rem;
+  list-style: none;
+}
+
+nav ul li a {
+  text-decoration: none;
+  color: var(--text);
+  font-weight: 500;
+  transition: color 0.2s ease;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+}
+
+nav ul li a:hover {
+  color: #555;
+  background-color: #f8f9fa;
+}
+
+.hamburger {
+  display: none;
+  flex-direction: column;
+  cursor: pointer;
+  padding: 0.5rem;
+  z-index: 1001;
+}
+
+.hamburger span {
+  width: 25px;
+  height: 3px;
+  background-color: var(--text);
+  margin: 3px 0;
+  transition: 0.3s;
+  border-radius: 2px;
+}
+
+.hamburger.active span:nth-child(1) {
+  transform: rotate(-45deg) translate(-5px, 6px);
+}
+
+.hamburger.active span:nth-child(2) {
+  opacity: 0;
+}
+
+.hamburger.active span:nth-child(3) {
+  transform: rotate(45deg) translate(-5px, -6px);
+}
+
+.mobile-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  background-color: var(--bg);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 3rem;
+  z-index: 1000;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+}
+
+.mobile-menu.active {
+  transform: translateX(0);
+}
+
+.mobile-menu a {
+  text-decoration: none;
+  color: var(--text);
+  font-size: 2rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.mobile-menu a:hover {
+  color: var(--accent);
+  transform: scale(1.1);
+}
+
+header {
+  width: 100%;
+  height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 4rem 2rem;
+}
+
+header h1 {
+  font-size: 8rem;
+  font-weight: 600;
+  margin-bottom: 2rem;
+}
+
+.cta-button {
+  background: transparent;
+  border: 2px solid var(--text);
+  color: var(--text);
+  padding: 0.8rem 1.6rem;
+  font-size: 1rem;
+  border-radius: 15px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.cta-button:hover {
+  scale: 1.05;
+  box-shadow: 0 4px 12px rgba(5, 5, 5, 0.1);
+}
+
+main {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+#intro {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  margin-bottom: 6rem;
+}
+
+#intro > * {
+  flex: 1 1 300px;
+}
+
+#example-code {
+  position: relative;
+  background-color: var(--card-bg);
+  border-radius: 12px;
+  padding: 2rem 1rem 1rem 1rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+  overflow-x: auto;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin-left: 100px;
+}
+
+#example-code::before {
+  content: "";
+  display: flex;
+  gap: 0.4rem;
+  position: absolute;
+  top: 0.75rem;
+  left: 1rem;
+  height: 0.75rem;
+  width: 0.75rem;
+  border-radius: 50%;
+  background-color: #ff5f56;
+  box-shadow: 1rem 0 0 #ffbd2e, 2rem 0 0 #27c93f;
+}
+
+section {
+  margin-bottom: 4rem;
+}
+
+section h2 {
+  font-size: 2rem;
+  font-weight: 500;
+  margin-bottom: 1rem;
+}
+
+.highlight {
+  background-color: var(--light-gray);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+}
+
+.features-grid {
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.feature-card {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  transition: all 0.2s ease;
+  background-color: transparent;
+}
+
+.feature-card:hover {
+  transform: translateX(8px);
+}
+
+.feature-card .icon {
+  font-size: 1.2rem;
+  color: var(--accent);
+  background: transparent;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+}
+
+.feature-text {
+  flex: 1;
+}
+
+.feature-text h3 {
+  font-size: 1.2rem;
+  margin-bottom: 0.4rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.feature-text p {
+  color: var(--gray);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+footer {
+  text-align: center;
+  padding: 2rem;
+  font-size: 0.9rem;
+  color: var(--gray);
+  border-top: 1px solid var(--border);
+  background-color: transparent;
+}
+
+body.dark-mode footer {
+  background-color: transparent;
+}
+
+footer a {
+  color: var(--text);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+footer a:hover {
+  text-decoration: underline;
+  color: var(--accent);
+}
+
+.theme-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  margin-left: 1rem;
+  color: var(--text);
+  transition: color 0.3s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--accent);
+}
+
+#get-started {
+    text-align: center;
+    padding: 2rem;
+}
+
+#get-started p {
+    margin-bottom: 2rem;
+}
+
+
+@media (max-width: 768px) {
+  nav ul {
+    display: none;
+  }
+
+  .hamburger {
+    display: flex;
+  }
+
+  header h1 {
+    font-size: 4rem;
+  }
+
+  #intro {
+    flex-direction: column;
+  }
+
+  #example-code {
+    margin-left: 0;
+  }
+
+  .feature-card {
+    gap: 1rem;
+  }
+
+  nav {
+    padding: 0 1rem;
+  }
+
+  .nav-icons {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  header h1 {
+    font-size: 3rem;
+  }
+
+  main {
+    padding: 1rem;
+  }
+
+  .feature-card {
+    flex-direction: column;
+    text-align: center;
+    gap: 1rem;
+  }
+
+  .mobile-menu a {
+    font-size: 1.5rem;
+  }
+
+  .mobile-menu {
+    gap: 2rem;
+  }
+}
