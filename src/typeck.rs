@@ -285,7 +285,104 @@ impl TypeChecker {
         }
 
         match expr {
-            Expr::Int(_, _) => Ok(Type::I32),
+            Expr::Int(value, info) => {
+                let expected_type = &self.context.current_return_type;
+                if *value >= 0 {
+                    match expected_type {
+                        Type::U8 => {
+                            if *value > u8::MAX as i32 {
+                                self.report_error(
+                                    &format!("Value {} exceeds maximum for u8 ({})", value, u8::MAX),
+                                    info.span,
+                                );
+                                info.ty = Type::Unknown;
+                                return Ok(Type::Unknown);
+                            }
+                            info.ty = Type::U8;
+                            Ok(Type::U8)
+                        }
+                        Type::U16 => {
+                            if *value > u16::MAX as i32 {
+                                self.report_error(
+                                    &format!("Value {} exceeds maximum for u16 ({})", value, u16::MAX),
+                                    info.span,
+                                );
+                                info.ty = Type::Unknown;
+                                return Ok(Type::Unknown);
+                            }
+                            info.ty = Type::U16;
+                            Ok(Type::U16)
+                        }
+                        Type::U32 => {
+                            if *value > u32::MAX as i32 {
+                                self.report_error(
+                                    &format!("Value {} exceeds maximum for u32 ({})", value, u32::MAX),
+                                    info.span,
+                                );
+                                info.ty = Type::Unknown;
+                                return Ok(Type::Unknown);
+                            }
+                            info.ty = Type::U32;
+                            Ok(Type::U32)
+                        }
+                        Type::U64 => {
+                            info.ty = Type::U64;
+                            Ok(Type::U64)
+                        }
+                        _ => {
+                            info.ty = Type::I32;
+                            Ok(Type::I32)
+                        }
+                    }
+                } else {
+                    match expected_type {
+                        Type::I8 => {
+                            if *value < i8::MIN as i32 || *value > i8::MAX as i32 {
+                                self.report_error(
+                                    &format!("Value {} is out of range for i8 ({}..{})", value, i8::MIN, i8::MAX),
+                                    info.span,
+                                );
+                                info.ty = Type::Unknown;
+                                return Ok(Type::Unknown);
+                            }
+                            info.ty = Type::I8;
+                            Ok(Type::I8)
+                        }
+                        Type::I16 => {
+                            if *value < i16::MIN as i32 || *value > i16::MAX as i32 {
+                                self.report_error(
+                                    &format!("Value {} is out of range for i16 ({}..{})", value, i16::MIN, i16::MAX),
+                                    info.span,
+                                );
+                                info.ty = Type::Unknown;
+                                return Ok(Type::Unknown);
+                            }
+                            info.ty = Type::I16;
+                            Ok(Type::I16)
+                        }
+                        Type::I32 => {
+                            info.ty = Type::I32;
+                            Ok(Type::I32)
+                        }
+                        Type::I64 => {
+                            info.ty = Type::I64;
+                            Ok(Type::I64)
+                        }
+                        Type::U8 | Type::U16 | Type::U32 | Type::U64 => {
+                            self.report_error(
+                                &format!("Cannot assign negative value {} to unsigned type {}", value, expected_type),
+                                info.span,
+                            );
+                            info.ty = Type::Unknown;
+                            Ok(Type::Unknown)
+                        }
+                        _ => {
+                            info.ty = Type::I32;
+                            Ok(Type::I32)
+                        }
+                    }
+                }
+            }
             Expr::Bool(_, _) => Ok(Type::Bool),
             Expr::Str(_, _) => Ok(Type::String),
             Expr::Int64(_, _) => Ok(Type::I64),
@@ -624,7 +721,7 @@ impl TypeChecker {
                     (Type::String, Type::RawPtr) => Ok(target_ty.clone()),
                     (Type::F32, Type::String) => Ok(target_ty.clone()),
                     _ => {
-                        if !Self::is_convertible(&source_ty, target_ty) {
+                        if !Self::is_cast_allowed(&source_ty, target_ty) {
                             self.report_error(
                                 &format!("Invalid cast from {} to {}", source_ty, target_ty),
                                 *span,
@@ -1073,6 +1170,28 @@ impl TypeChecker {
         }
     }
 
+    fn is_cast_allowed(from: &Type, to: &Type) -> bool {
+    match (from, to) {
+        (Type::Bool, Type::String) => true,
+        (Type::I32, Type::String) => true,
+        (Type::I64, Type::String) => true,
+        (Type::F32, Type::String) => true,
+        (Type::F64, Type::String) => true,
+        (Type::RawPtr, Type::Pointer(_)) => true,
+        (Type::Pointer(_), Type::RawPtr) => true,
+        (Type::Pointer(_), Type::I32) => true,
+        (Type::I32, Type::Pointer(_)) => true,
+        (Type::I32, Type::Bool) => true,
+        (Type::F32, Type::I32) => true,
+        (Type::I32, Type::F32) => true,
+        (Type::I32, Type::U32) => true,
+        (Type::U32, Type::I32) => true,
+        (Type::String, Type::I32) => true,
+        (Type::String, Type::RawPtr) => true,
+        _ => Self::is_convertible(from, to),
+    }
+}
+
     fn check_pattern(
         &mut self,
         pattern: &ast::Pattern,
@@ -1172,14 +1291,14 @@ impl TypeChecker {
             (Type::Generic(_), _) | (_, Type::Generic(_)) => true,
             (Type::I8, Type::I16 | Type::I32 | Type::I64)
             | (Type::I16, Type::I32 | Type::I64)
-            | (Type::I32, Type::I64 | Type::F32 | Type::F64 | Type::U32 | Type::Bool | Type::Pointer(_) | Type::RawPtr | Type::CSize | Type::U8)
+            | (Type::I32, Type::I64 | Type::F32 | Type::F64 | Type::U32 | Type::Bool | Type::Pointer(_) | Type::RawPtr | Type::CSize | Type::U8 | Type::U16 | Type::I8 | Type::I16)
+            | (Type::I64, Type::U32 | Type::U64 | Type::U8 | Type::U16 | Type::I8 | Type::I16 | Type::I32)
             | (Type::U8, Type::U16 | Type::U32 | Type::U64)
             | (Type::U16, Type::U32 | Type::U64)
             | (Type::U32, Type::U64 | Type::I32)
             | (Type::Bool, Type::I32)
             | (Type::F32, Type::F64 | Type::I32 | Type::I64 | Type::String)
-            | (Type::F64, Type::I32 | Type::I64)
-            | (Type::String, Type::I32 | Type::RawPtr)
+            | (Type::F64, Type::I32 | Type::I64 | Type::F32)
             | (Type::Pointer(_), Type::RawPtr | Type::I32)
             | (Type::RawPtr, Type::Pointer(_) | Type::I32)
             | (Type::CSize, Type::I32)
@@ -1200,7 +1319,6 @@ impl TypeChecker {
             _ => false,
         }
     }
-
     fn report_error(&mut self, message: &str, span: Span) {
         self.errors.push(
             Diagnostic::error()

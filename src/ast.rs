@@ -290,6 +290,34 @@ impl Expr {
         }
     }
 
+    pub fn get_info(&self) -> &ExprInfo {
+        match self {
+            Expr::Int(_, info) => info,
+            Expr::Int64(_, info) => info,
+            Expr::Bool(_, info) => info,
+            Expr::Str(_, info) => info,
+            Expr::Var(_, info) => info,
+            Expr::BinOp(_, _, _, info) => info,
+            Expr::UnaryOp(_, _, info) => info,
+            Expr::Call(_, _, info) => info,
+            Expr::Cast(_, _, info) => info,
+            Expr::SafeBlock(_, info) => info,
+            Expr::Deref(_, info) => info,
+            Expr::Assign(_, _, info) => info,
+            Expr::Range(_, _, info) => info,
+            Expr::StructInit(_, _, info) => info,
+            Expr::FieldAccess(_, _, info) => info,
+            Expr::ArrayInit(_, info) => info,
+            Expr::ArrayAccess(_, _, info) => info,
+            Expr::TemplateStr(_, info) => info,
+            Expr::F32(_, info) => info,
+            Expr::FfiCall(_, _, info) => info,
+            Expr::EnumConstruct(_, _, _, info) => info,
+            Expr::Match(_, _, info) => info,
+            Expr::Void(info) => info,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn is_constant(&self) -> bool {
         matches!(

@@ -732,8 +732,6 @@ impl CBackend {
             format!("ve_{}", func.name)
         };
 
-
-
         let mut param_strings = Vec::new();
         for (name, ty) in &func.params {
             let c_ty = self.type_to_c(ty);
@@ -745,7 +743,18 @@ impl CBackend {
         self.body
             .push_str(&format!("{} {}({}) {{\n", return_type, func_name, params));
 
-        for stmt in &func.body {
+        let mut stmts = func.body.iter().peekable();
+        while let Some(stmt) = stmts.next() {
+            let is_last = stmts.peek().is_none();
+            if is_last {
+                if let ast::Stmt::Expr(expr, _) = stmt {
+                    if expr.get_info().is_tail {
+                        let expr_code = self.emit_expr(expr)?;
+                        self.body.push_str(&format!("return {};\n", expr_code));
+                        continue;
+                    }
+                }
+            }
             self.emit_stmt(stmt)?;
         }
 
@@ -1105,6 +1114,7 @@ impl CBackend {
                 let expr_type = expr.get_type();
                 match (&expr_type, target_ty) {
                     (Type::I32, Type::String) => Ok(format!("ve_int_to_str({})", expr_code)),
+                    (Type::I64, Type::String) => Ok(format!("ve_i64_to_str({})", expr_code)),
                     (Type::F32, Type::String) => Ok(format!("ve_float_to_str({})", expr_code)),
                     (Type::F64, Type::String) => Ok(format!("ve_double_to_str({})", expr_code)),
                     (Type::Bool, Type::String) => Ok(format!("ve_bool_to_str({})", expr_code)),

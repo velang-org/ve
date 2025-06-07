@@ -481,7 +481,7 @@ impl<'a> Parser<'a> {
         self.tokens
             .peek()
             .map(|(t, _)| (*t).clone())
-            .unwrap_or(Token::Error)
+            .unwrap()
     }
     fn peek_span(&mut self) -> Span {
         self.tokens
@@ -489,60 +489,95 @@ impl<'a> Parser<'a> {
             .map(|(_, s)| *s)
             .unwrap_or(Span::new(0, 0))
     }
-    fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
-        let token = self.peek_token();
-        match token {
-            Token::Star => {
-                let op_span = self.peek_span();
-                self.advance();
-                let prefix_bp = self.get_prefix_bp(&token);
-                let expr = self.parse_expr_bp(prefix_bp)?;
-                Ok(ast::Expr::Deref(Box::new(expr), ast::ExprInfo {
-                    span: op_span,
+fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
+    let token = self.peek_token();
+    match token {
+        Token::Star => {
+            let op_span = self.peek_span();
+            self.advance();
+            let prefix_bp = self.get_prefix_bp(&token);
+            let expr = self.parse_expr_bp(prefix_bp)?;
+            Ok(ast::Expr::Deref(Box::new(expr), ast::ExprInfo {
+                span: op_span,
+                ty: ast::Type::Unknown,
+                is_tail: false,
+            }))
+        }
+        Token::Minus | Token::Plus => {
+            let (op_token, op_span) = self.advance().unwrap();
+            let op_token = op_token.clone();
+            let op_span = *op_span;
+            let prefix_bp = self.get_prefix_bp(&op_token);
+            let expr = self.parse_expr_bp(prefix_bp)?;
+            
+            match (&op_token, &expr) {
+                (Token::Minus, ast::Expr::Int(val, _)) => {
+                    let negated = -(*val as i64);
+                    if negated >= i32::MIN as i64 && negated <= i32::MAX as i64 {
+                        Ok(ast::Expr::Int(negated as i32, ast::ExprInfo {
+                            span: op_span,
+                            ty: ast::Type::I32,
+                            is_tail: false,
+                        }))
+                    } else if negated >= i64::MIN && negated <= i64::MAX {
+                        Ok(ast::Expr::Int64(negated, ast::ExprInfo {
+                            span: op_span,
+                            ty: ast::Type::I64,
+                            is_tail: false,
+                        }))
+                    } else {
+                        self.error(&format!("Negated integer {} is out of range", negated), op_span)
+                    }
+                }
+                (Token::Minus, ast::Expr::Int64(val, _)) => {
+                    if let Some(negated) = val.checked_neg() {
+                        Ok(ast::Expr::Int64(negated, ast::ExprInfo {
+                            span: op_span,
+                            ty: ast::Type::I64,
+                            is_tail: false,
+                        }))
+                    } else {
+                        self.error(&format!("Cannot negate {} as it would overflow i64", val), op_span)
+                    }
+                }
+                _ => {
+                    let span = expr.span();
+                    Ok(ast::Expr::UnaryOp(
+                        match op_token {
+                            Token::Minus => ast::UnOp::Neg,
+                            Token::Plus => ast::UnOp::Plus,
+                            _ => unreachable!(),
+                        },
+                        Box::new(expr),
+                        ast::ExprInfo {
+                            span,
+                            ty: ast::Type::Unknown,
+                            is_tail: false,
+                        },
+                    ))
+                }
+            }
+        }
+    
+        Token::Bang => {
+            let _op_span = self.peek_span();
+            self.advance();
+            let prefix_bp = self.get_prefix_bp(&token);
+            let expr = self.parse_expr_bp(prefix_bp)?;
+            let span = expr.span();
+            Ok(ast::Expr::UnaryOp(
+                ast::UnOp::Not,
+                Box::new(expr),
+                ast::ExprInfo {
+                    span,
                     ty: ast::Type::Unknown,
                     is_tail: false,
-                }))
-            }
-            Token::Minus | Token::Plus => {
-                let (op_token, _) = self.advance().unwrap();
-                let op_token = op_token.clone();
-                let prefix_bp = self.get_prefix_bp(&op_token);
-                let expr = self.parse_expr_bp(prefix_bp)?;
-                let span = expr.span();
-                Ok(ast::Expr::UnaryOp(
-                    match op_token {
-                        Token::Minus => ast::UnOp::Neg,
-                        Token::Plus => ast::UnOp::Plus,
-                        _ => unreachable!(),
-                    },
-                    Box::new(expr),
-                    ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                        is_tail: false,
-                    },
-                ))
-            }
-            Token::Bang => {
-                let _op_span = self.peek_span();
-                self.advance();
-                let prefix_bp = self.get_prefix_bp(&token);
-                let expr = self.parse_expr_bp(prefix_bp)?;
-                let span = expr.span();
-                Ok(ast::Expr::UnaryOp(
-                    ast::UnOp::Not,
-                    Box::new(expr),
-                    ast::ExprInfo {
-                        span,
-                        ty: ast::Type::Unknown,
-                        is_tail: false,
-                    },
-                ))
-            }
-            _ => self.parse_atom(),
+                },
+            ))
         }
+        _ => self.parse_atom(),
     }
-
+}
     fn parse_infix(
         &mut self,
         op: &Token,
@@ -784,28 +819,30 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block_with_tail(&mut self, allow_tail: bool) -> Result<Vec<ast::Stmt>, Diagnostic<FileId>> {
-    self.expect(Token::LBrace)?;
-    let mut stmts = Vec::new();
-    while !self.check(Token::RBrace) {
-        if self.is_last_expr_in_block() && allow_tail {
-            let expr = self.parse_expr_tail()?;
-            let span = expr.span();
-            if self.check(Token::Semi) {
-                self.advance();
+        self.expect(Token::LBrace)?;
+        let mut stmts = Vec::new();
+        while !self.check(Token::RBrace) {
+            if self.is_last_expr_in_block() && allow_tail {
+                let expr = self.parse_expr_tail()?;
+                let span = expr.span();
+                if self.check(Token::Semi) {
+                    let semi_span = self.peek_span();
+                    return self.error("Cannot use ';' after return expression", semi_span);
+                }
+                stmts.push(ast::Stmt::Expr(expr, span));
+            } else {
+                stmts.push(self.parse_stmt()?);
             }
-            stmts.push(ast::Stmt::Expr(expr, span));
-        } else {
-            stmts.push(self.parse_stmt()?);
         }
+        self.expect(Token::RBrace)?;
+        Ok(stmts)
     }
-    self.expect(Token::RBrace)?;
-    Ok(stmts)
-}
+
 
     fn is_last_expr_in_block(&mut self) -> bool {
         let mut temp_tokens = self.tokens.clone();
         let mut depth = 0;
-        let mut seen_non_stmt_keywords = false;
+        let mut found_expr = false;
         
         while let Some((token, _)) = temp_tokens.peek() {
             match token {
@@ -818,7 +855,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::RBrace => {
                     if depth == 0 {
-                        return seen_non_stmt_keywords;
+                        return found_expr;
                     }
                     depth -= 1;
                     temp_tokens.next();
@@ -826,17 +863,18 @@ impl<'a> Parser<'a> {
                 Token::Semi => {
                     temp_tokens.next();
                     if let Some((Token::RBrace, _)) = temp_tokens.peek() {
-                        return false;
+                        return found_expr;
                     }
+                    return false;
                 }
                 _ => {
-                    seen_non_stmt_keywords = true;
+                    found_expr = true;
                     temp_tokens.next();
                 }
             }
         }
         
-        false
+        found_expr
     }
 
     fn consume(&mut self, expected: Token, err_msg: &str) -> Result<Span, Diagnostic<FileId>> {
@@ -897,9 +935,12 @@ impl<'a> Parser<'a> {
                     let size_token = self.advance().cloned();
 
                     match size_token {
-                        Some((Token::Int(size), _)) => {
+                        Some((Token::Int(size), span)) => {
                             self.expect(Token::RBracket)?;
-                            Ok(ast::Type::SizedArray(Box::new(element_type), size as usize))
+                            match size.parse::<usize>() {
+                                Ok(size_val) => Ok(ast::Type::SizedArray(Box::new(element_type), size_val)),
+                                Err(_) => self.error("Invalid array size", span)
+                            }
                         }
                         _ => {
                             let span = self.peek_span();
@@ -1235,21 +1276,23 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let current = self.advance().cloned();
         match current {
-            Some((Token::Int(n), span)) => {
-                if let Ok(val) = n.try_into() {
-                    Ok(ast::Expr::Int(val, ast::ExprInfo {
+            Some((Token::Int(s), span)) => {
+                match s.parse::<i32>() {
+                    Ok(val) => Ok(ast::Expr::Int(val, ast::ExprInfo {
                         span,
                         ty: ast::Type::I32,
                         is_tail: false,
-                    }))
-                } else {
-                    Ok(ast::Expr::Int64(n, ast::ExprInfo {
-                        span,
-                        ty: ast::Type::I64,
-                        is_tail: false,
-                    }))
+                    })),
+                    Err(_) => match s.parse::<i64>() {
+                        Ok(val) => Ok(ast::Expr::Int64(val, ast::ExprInfo {
+                            span,
+                            ty: ast::Type::I64,
+                            is_tail: false,
+                        })),
+                        Err(_) => self.error(&format!("Integer literal '{}' is out of range", s), span)
+                    }
                 }
-            }
+            },
             Some((Token::Str(s), span)) => Ok(ast::Expr::Str(s, ast::ExprInfo {
                 span,
                 ty: ast::Type::String,
@@ -1724,14 +1767,17 @@ impl<'a> Parser<'a> {
             }
             Some((Token::Int(n), span)) => {
                 self.advance();
-                Ok(ast::Pattern::Literal(
-                    ast::Expr::Int(n.try_into().unwrap(), ast::ExprInfo {
+                match n.parse::<i32>() {
+                    Ok(val) => Ok(ast::Pattern::Literal(
+                        ast::Expr::Int(val, ast::ExprInfo {
+                            span,
+                            ty: ast::Type::I32,
+                            is_tail: false,
+                        }),
                         span,
-                        ty: ast::Type::I32,
-                        is_tail: false,
-                    }),
-                    span,
-                ))
+                    )),
+                    Err(_) => self.error("Integer literal out of range for pattern", span)
+                }
             }
             Some((Token::Str(s), span)) => {
                 self.advance();
@@ -1770,4 +1816,5 @@ impl<'a> Parser<'a> {
             None => self.error("Expected pattern", Span::new(0, 0)),
         }
     }
+
 }
