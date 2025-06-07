@@ -15,8 +15,6 @@ pub enum Token {
     KwElse,
     #[token("return")]
     KwReturn,
-    #[token("safe")]
-    KwSafe,
     #[token("rawptr")]
     KwRawPtr,
     #[token("defer")]

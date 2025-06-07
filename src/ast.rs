@@ -11,7 +11,6 @@ pub enum Type {
     Void,
     Function(Vec<Type>, Box<Type>),
     Unknown,
-    Arena,
     Pointer(Box<Type>),
     RawPtr,
     Struct(String),
@@ -32,6 +31,8 @@ pub enum Type {
     CInt,
     CSize,
     Ellipsis,
+    Generic(String),
+    GenericInstance(String, Vec<Type>),
 }
 
 impl Type {
@@ -49,6 +50,7 @@ impl Type {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
@@ -68,6 +70,7 @@ pub struct StructField {
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub fields: Vec<StructField>,
     #[allow(dead_code)]
     pub span: Span,
@@ -87,6 +90,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone)]
 pub struct EnumDef {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
     #[allow(dead_code)]
     pub span: Span,
@@ -96,8 +100,14 @@ pub struct EnumDef {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
-    pub body: Expr,
+    pub body: MatchArmBody,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum MatchArmBody {
+    Expr(Expr),
+    Block(Vec<Stmt>),
 }
 
 #[derive(Debug, Clone)]
@@ -138,13 +148,13 @@ pub enum Stmt {
     While(Expr, Vec<Stmt>, Span),
     For(String, Expr, Vec<Stmt>, Span),
     Block(Vec<Stmt>, Span),
-    Match(Box<Pattern>, Vec<MatchArm>, Span),
 }
 
 #[derive(Debug, Clone)]
 pub struct ExprInfo {
     pub span: Span,
     pub ty: Type,
+    pub is_tail: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,7 +196,7 @@ pub enum Expr {
     F32(f32, ExprInfo),
     FfiCall(String, Vec<Expr>, ExprInfo),
     EnumConstruct(String, String, Vec<Expr>, ExprInfo),
-    MatchExpr(Box<Pattern>, Vec<MatchArm>, ExprInfo),
+    Match(Box<Pattern>, Vec<MatchArm>, ExprInfo),
     Void(ExprInfo),
 }
 
@@ -247,7 +257,7 @@ impl Expr {
             Expr::F32(_, info) => info.span,
             Expr::FfiCall(_, _, info) => info.span,
             Expr::EnumConstruct(_, _, _, info) => info.span,
-            Expr::MatchExpr(_, _, info) => info.span,
+            Expr::Match(_, _, info) => info.span,
             Expr::Void(info) => info.span,
         }
     }
@@ -275,7 +285,7 @@ impl Expr {
             Expr::F32(_, info) => info.ty.clone(),
             Expr::FfiCall(_, _, info) => info.ty.clone(),
             Expr::EnumConstruct(_, _, _, info) => info.ty.clone(),
-            Expr::MatchExpr(_, _, info) => info.ty.clone(),
+            Expr::Match(_, _, info) => info.ty.clone(),
             Expr::Void(info) => info.ty.clone(),
         }
     }
@@ -353,6 +363,15 @@ impl fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
+            Type::Generic(name) => write!(f, "{}", name),
+            Type::GenericInstance(name, args) => {
+                write!(f, "{}<", name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ">")
+            }
             Type::Function(args, ret) => {
                 write!(f, "fn(")?;
                 for (i, arg) in args.iter().enumerate() {
@@ -364,7 +383,6 @@ impl fmt::Display for Type {
                 write!(f, ") -> {}", ret)
             }
             Type::Unknown => write!(f, "<?>"),
-            Type::Arena => write!(f, "arena"),
             Type::Pointer(ty) => write!(f, "*{}", ty),
             Type::RawPtr => write!(f, "*void"),
             Type::Struct(name) => write!(f, "{}", name),
@@ -412,7 +430,6 @@ impl Stmt {
             Stmt::While(_, _, span) => *span,
             Stmt::For(_, _, _, span) => *span,
             Stmt::Block(_, span) => *span,
-            Stmt::Match(_, _, span) => *span,
         }
     }
 }

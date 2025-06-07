@@ -20,7 +20,7 @@ pub struct CBackend {
     ffi_functions: HashSet<String>,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
     imported_structs: Vec<ast::StructDef>,
-    enum_defs: HashMap<String, Vec<ast::EnumVariant>>,
+    enum_defs: HashMap<String, ast::EnumDef>,
     memory_analysis: MemoryAnalysis,
 }
 
@@ -129,16 +129,12 @@ impl CBackend {
         output_path: &Path,
     ) -> Result<(), CompileError> {
         self.analyze_memory_requirements(program);
-
         self.emit_header();
-
         self.generate_ffi_declarations(program)?;
-
         let imported_structs = self.imported_structs.clone();
         for struct_def in &imported_structs {
             self.emit_struct(struct_def)?;
         }
-
         for struct_def in &program.structs {
             let fields: Vec<(String, Type)> = struct_def
                 .fields
@@ -147,39 +143,138 @@ impl CBackend {
                 .collect();
             self.struct_defs.insert(struct_def.name.clone(), fields);
         }
-
         for enum_def in &program.enums {
-            self.enum_defs
-                .insert(enum_def.name.clone(), enum_def.variants.clone());
+            self.enum_defs.insert(enum_def.name.clone(), enum_def.clone());
         }
-
         for struct_def in &program.structs {
             self.emit_struct(struct_def)?;
         }
-
         for enum_def in &program.enums {
             self.emit_enum(enum_def)?;
+        }
+        use crate::ast::Expr;
+        fn collect_generic_enum_instances(expr: &Expr, out: &mut Vec<Type>) {
+            match expr {
+                Expr::EnumConstruct(_, _, _, info) => {
+                    if let Type::GenericInstance(_, _) = &info.ty {
+                        out.push(info.ty.clone());
+                    }
+                }
+                Expr::Call(_, args, info) => {
+                    if let Type::GenericInstance(_, _) = &info.ty {
+                        out.push(info.ty.clone());
+                    }
+                    for arg in args { collect_generic_enum_instances(arg, out); }
+                }
+                Expr::Match(_, arms, info) => {
+                    if let Type::GenericInstance(_, _) = &info.ty {
+                        out.push(info.ty.clone());
+                    }
+                    for arm in arms {
+                        match &arm.body {
+                            crate::ast::MatchArmBody::Expr(e) => collect_generic_enum_instances(e, out),
+                            crate::ast::MatchArmBody::Block(stmts) => {
+                                for s in stmts {
+                                    if let crate::ast::Stmt::Expr(e, _) = s {
+                                        collect_generic_enum_instances(e, out);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Expr::SafeBlock(stmts, _) => {
+                    for s in stmts {
+                        if let crate::ast::Stmt::Expr(e, _) = s {
+                            collect_generic_enum_instances(e, out);
+                        }
+                    }
+                }
+                Expr::TemplateStr(parts, _) => {
+                    for part in parts {
+                        if let crate::ast::TemplateStrPart::Expression(e) = part {
+                            collect_generic_enum_instances(e, out);
+                        }
+                    }
+                }
+                Expr::BinOp(l, _, r, _) => {
+                    collect_generic_enum_instances(l, out);
+                    collect_generic_enum_instances(r, out);
+                }
+                Expr::UnaryOp(_, e, _) => collect_generic_enum_instances(e, out),
+                Expr::StructInit(_, fields, _) => {
+                    for (_, e) in fields { collect_generic_enum_instances(e, out); }
+                }
+                Expr::ArrayInit(elems, _) => {
+                    for e in elems { collect_generic_enum_instances(e, out); }
+                }
+                Expr::ArrayAccess(a, b, _) => {
+                    collect_generic_enum_instances(a, out);
+                    collect_generic_enum_instances(b, out);
+                }
+                Expr::Cast(e, _, _) => collect_generic_enum_instances(e, out),
+                Expr::Assign(a, b, _) => {
+                    collect_generic_enum_instances(a, out);
+                    collect_generic_enum_instances(b, out);
+                }
+                Expr::Deref(e, _) => collect_generic_enum_instances(e, out),
+                Expr::Range(a, b, _) => {
+                    collect_generic_enum_instances(a, out);
+                    collect_generic_enum_instances(b, out);
+                }
+                Expr::FieldAccess(e, _, _) => collect_generic_enum_instances(e, out),
+                _ => {}
+            }
+        }
+        let mut generic_enum_instances = Vec::new();
+        
+        for func in &program.functions {
+            if let Type::GenericInstance(_, _) = &func.return_type {
+                generic_enum_instances.push(func.return_type.clone());
+            }
+            for stmt in &func.body {
+                if let crate::ast::Stmt::Expr(e, _) = stmt {
+                    collect_generic_enum_instances(e, &mut generic_enum_instances);
+                }
+                if let crate::ast::Stmt::Let(_, Some(ty), _, _, _) = stmt {
+                    if let Type::GenericInstance(_, _) = ty {
+                        generic_enum_instances.push(ty.clone());
+                    }
+                }
+            }
+        }
+        
+        for stmt in &program.stmts {
+            if let crate::ast::Stmt::Expr(e, _) = stmt {
+                collect_generic_enum_instances(e, &mut generic_enum_instances);
+            }
+            if let crate::ast::Stmt::Let(_, Some(ty), _, _, _) = stmt {
+                if let Type::GenericInstance(_, _) = ty {
+                    generic_enum_instances.push(ty.clone());
+                }
+            }
+        }
+        generic_enum_instances.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
+        generic_enum_instances.dedup();
+
+        for ty in &generic_enum_instances {
+            if let Type::GenericInstance(name, args) = ty {
+                if let Some(enum_def) = program.enums.iter().find(|e| &e.name == name) {
+                    self.emit_generic_enum_instance(enum_def, args)?;
+                }
+            }
         }
 
         self.functions_map = program
             .functions
             .iter()
             .map(|f| (f.name.clone(), f.return_type.clone()))
-            .chain(
-                self.imported_functions
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.1.clone())),
-            )
             .collect();
-
         for ffi in &program.ffi_functions {
-            self.functions_map
-                .insert(ffi.name.clone(), ffi.return_type.clone());
+            self.functions_map.insert(ffi.name.clone(), ffi.return_type.clone());
         }
-
         self.emit_globals(program)?;
         self.emit_functions(program)?;
-
         let imported_structs = self.imported_structs.clone();
         let all_structs: Vec<&ast::StructDef> = program
             .structs
@@ -187,7 +282,6 @@ impl CBackend {
             .chain(imported_structs.iter())
             .collect();
         self.generate_struct_to_str_functions(all_structs);
-
         self.emit_main_if_missing(program)?;
         self.write_output(output_path)?;
         Ok(())
@@ -586,6 +680,7 @@ impl CBackend {
                 }
             }
 
+            self.body.push_str("#ifdef VE_DEBUG_MEMORY\n    ve_arena_stats();\n#endif\n");
             self.body.push_str("    ve_arena_cleanup();\n");
             self.body.push_str("    return 0;\n}\n");
         }
@@ -604,6 +699,9 @@ impl CBackend {
             } else {
                 format!("ve_{}", func.name)
             };
+            
+
+            
             let params = func
                 .params
                 .iter()
@@ -634,6 +732,8 @@ impl CBackend {
             format!("ve_{}", func.name)
         };
 
+
+
         let mut param_strings = Vec::new();
         for (name, ty) in &func.params {
             let c_ty = self.type_to_c(ty);
@@ -656,6 +756,7 @@ impl CBackend {
                 .is_some_and(|s| matches!(s, ast::Stmt::Return(..)));
 
             if !last_is_return {
+                self.body.push_str("#ifdef VE_DEBUG_MEMORY\n    ve_arena_stats();\n#endif\n");
                 self.body.push_str("    ve_arena_cleanup();\n");
                 self.body.push_str("    return 0;\n");
             }
@@ -670,7 +771,7 @@ impl CBackend {
     fn emit_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
         match stmt {
             ast::Stmt::Let(name, ty, expr, _, _) => {
-                if let ast::Expr::MatchExpr(pattern, arms, info) = expr {
+                if let ast::Expr::Match(pattern, arms, info) = expr {
                     let var_type = ty.clone().unwrap_or_else(|| info.ty.clone());
                     let c_ty = self.type_to_c(&var_type);
                     let temp_var = format!("_match_result_{}", info.span.start());
@@ -807,48 +908,6 @@ impl CBackend {
 
                 self.body.push('\n');
             }
-            ast::Stmt::Match(pattern, arms, _) => {
-                let matched_var = match pattern.as_ref() {
-                    ast::Pattern::Variable(var_name, _) => var_name.clone(),
-                    _ => {
-                        return Err(CompileError::CodegenError {
-                            message: "Only variable patterns supported in match".to_string(),
-                            span: None,
-                            file_id: self.file_id,
-                        });
-                    }
-                };
-
-                self.body
-                    .push_str(&format!("switch ({}.tag) {{\n", matched_var));
-
-                for arm in arms {
-                    match &arm.pattern {
-                        ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
-                            let case_value = format!("ve_{}_{}", enum_name, variant_name);
-                            self.body.push_str(&format!("case {}: {{\n", case_value));
-
-                            let body_code = self.emit_expr(&arm.body)?;
-                            if !body_code.ends_with(';') {
-                                self.body.push_str(&format!("{};\n", body_code));
-                            } else {
-                                self.body.push_str(&format!("{}\n", body_code));
-                            }
-
-                            self.body.push_str("break;\n}\n");
-                        }
-                        _ => {
-                            return Err(CompileError::CodegenError {
-                                message: "Unsupported pattern in match".to_string(),
-                                span: Some(arm.span),
-                                file_id: self.file_id,
-                            });
-                        }
-                    }
-                }
-
-                self.body.push_str("}\n");
-            }
             _ => unimplemented!(),
         }
         Ok(())
@@ -962,28 +1021,15 @@ impl CBackend {
                     .get(name)
                     .cloned()
                     .unwrap_or(Type::Unknown);
-
                 match var_type {
-                    Type::I32 => Ok(name.clone()),
+                    Type::I32 | Type::String | Type::Pointer(_) | Type::RawPtr | Type::Struct(_)| 
+                    Type::Array(_) | Type::SizedArray(_, _) | Type::F32 | Type::F64 | Type::I8 | 
+                    Type::I16 | Type::I64 | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Unknown 
+                    => Ok(name.clone()),
                     Type::Bool => {
                         self.includes.borrow_mut().insert("<stdbool.h>".to_string());
                         Ok(name.clone())
                     }
-                    Type::String => Ok(name.clone()),
-                    Type::Pointer(_) | Type::RawPtr => Ok(name.clone()),
-                    Type::Struct(_) => Ok(name.clone()),
-                    Type::Array(_) => Ok(name.clone()),
-                    Type::SizedArray(_, _) => Ok(name.clone()),
-                    Type::F32 => Ok(name.clone()),
-                    Type::F64 => Ok(name.clone()),
-                    Type::I8 => Ok(name.clone()),
-                    Type::I16 => Ok(name.clone()),
-                    Type::I64 => Ok(name.clone()),
-                    Type::U8 => Ok(name.clone()),
-                    Type::U16 => Ok(name.clone()),
-                    Type::U32 => Ok(name.clone()),
-                    Type::U64 => Ok(name.clone()),
-                    Type::Unknown => Ok(name.clone()),
                     _ => Err(CompileError::CodegenError {
                         message: format!("Cannot print type (in var) {:?}", var_type),
                         span: Some(info.span),
@@ -1063,20 +1109,18 @@ impl CBackend {
                     (Type::F64, Type::String) => Ok(format!("ve_double_to_str({})", expr_code)),
                     (Type::Bool, Type::String) => Ok(format!("ve_bool_to_str({})", expr_code)),
                     (Type::RawPtr, Type::String) => Ok(format!("(const char*)({})", expr_code)),
-                    (Type::Pointer(inner), Type::String) if **inner == Type::U8 => {
-                        Ok(format!("(const char*)({})", expr_code))
+                    (Type::Pointer(inner), Type::String) => {
+                        if matches!(**inner, Type::U8) {
+                            Ok(format!("(const char*)({})", expr_code))
+                        } else {
+                            Ok(format!("ve_ptr_to_str({})", expr_code))
+                        }
                     }
-                    (Type::Pointer(_), Type::String) => Ok(format!("ve_ptr_to_str({})", expr_code)),
                     (Type::String, Type::I32) => {
                         self.includes.borrow_mut().insert("<stdlib.h>".to_string());
                         Ok(format!("atoi({})", expr_code))
                     }
-                    (Type::RawPtr, Type::Pointer(inner_ty)) => {
-                        Ok(format!("({}*)({})", self.type_to_c(inner_ty), expr_code))
-                    }
-                    (_, Type::Pointer(inner_ty)) => {
-                        Ok(format!("({}*)({})", self.type_to_c(inner_ty), expr_code))
-                    }
+                    (_, Type::Pointer(inner_ty)) => Ok(format!("({}*)({})", self.type_to_c(inner_ty), expr_code)),
                     (_, Type::RawPtr) => Ok(format!("(void*)({})", expr_code)),
                     _ => Ok(format!("({})({})", self.type_to_c(target_ty), expr_code)),
                 }
@@ -1235,13 +1279,17 @@ impl CBackend {
                 }
             }
 
-            ast::Expr::EnumConstruct(enum_name, variant_name, args, _) => {
+            ast::Expr::EnumConstruct(enum_name, variant_name, args, info) => {
                 let mut args_code = Vec::new();
                 for arg in args {
                     args_code.push(self.emit_expr(arg)?);
                 }
 
-                let prefixed_enum = format!("ve_{}", enum_name);
+                let enum_type_name = match &info.ty {
+                    Type::GenericInstance(_, _) => self.type_to_c_name(&info.ty),
+                    _ => enum_name.clone()
+                };
+                let prefixed_enum = format!("ve_{}", enum_type_name);
                 if args_code.is_empty() {
                     Ok(format!("{}_{}_new()", prefixed_enum, variant_name))
                 } else {
@@ -1254,64 +1302,151 @@ impl CBackend {
                 }
             }
 
-            ast::Expr::MatchExpr(pattern, arms, _) => {
-                let matched_var = match pattern.as_ref() {
-                    ast::Pattern::Variable(var_name, _) => var_name.clone(),
+        ast::Expr::Match(pattern, arms, info) => {
+            let matched_var = match pattern.as_ref() {
+                ast::Pattern::Variable(var_name, _) => var_name.clone(),
+                _ => {
+                    return Err(CompileError::CodegenError {
+                        message: "Only variable patterns supported in match".to_string(),
+                        span: None,
+                        file_id: self.file_id,
+                    });
+                }
+            };
+
+            let matched_type = self.variables.borrow().get(&matched_var).cloned().unwrap_or(Type::Unknown);
+
+            let switch_expr = match matched_type {
+                Type::Enum(_) | Type::GenericInstance(_, _) => format!("{}.tag", matched_var),
+                _ => matched_var.clone(),
+            };
+
+            let mut code = String::new();
+            code.push_str(&format!("switch ({}) {{\n", switch_expr));
+
+            for arm in arms {
+                match &arm.pattern {
+                    ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
+                        let case_value = if let Some(matched_type) = self.variables.borrow().get(&matched_var) {
+                            match matched_type {
+                                Type::GenericInstance(_, _) => {
+                                    format!("ve_{}_{}", self.type_to_c_name(matched_type), variant_name)
+                                }
+                                _ => format!("ve_{}_{}", enum_name, variant_name)
+                            }
+                        } else {
+                            format!("ve_{}_{}", enum_name, variant_name)
+                        };
+                        code.push_str(&format!("case {}: {{\n", case_value));
+
+                        for (i, pattern) in patterns.iter().enumerate() {
+                            if let ast::Pattern::Variable(var_name, _) = pattern {
+                                let mut field_type = "int".to_string();
+                                if let Some(matched_type) = self.variables.borrow().get(&matched_var) {
+                                    if let Type::GenericInstance(enum_name, args) = matched_type {
+                                        if let Some(enum_def) = self.enum_defs.get(enum_name) {
+                                            enum_def.variants.iter().find(|v| v.name == *variant_name).map(|variant| {
+                                                if let Some(data_types) = &variant.data {
+                                                    if let Some(ty) = data_types.get(i) {
+                                                        if let Type::Generic(param_name) = ty {
+                                                            if let Some(generic_idx) = enum_def.generic_params.iter().position(|p| p == param_name) {
+                                                                if let Some(concrete_type) = args.get(generic_idx) {
+                                                                    field_type = self.type_to_c(concrete_type);
+                                                                }
+                                                            }
+                                                        } else {
+                                                            field_type = self.type_to_c(ty);
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                                code.push_str(&format!(
+                                    "    {} {} = {}.data.{}.field{};\n",
+                                    field_type,
+                                    var_name,
+                                    matched_var,
+                                    variant_name.to_lowercase(),
+                                    i
+                                ));
+                            }
+                        }
+
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        
+                        if info.is_tail {
+                            code.push_str(&format!("    return {};\n", body_code));
+                        } else {
+                            code.push_str(&format!("    {};\n", body_code));
+                            code.push_str("    break;\n");
+                        }
+                        code.push_str("}\n");
+                    }
+                    ast::Pattern::Literal(expr, _) => {
+                        let literal_code = self.emit_expr(expr)?;
+                        code.push_str(&format!("case {}: {{\n", literal_code));
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        if info.is_tail {
+                            code.push_str(&format!("    return {};\n", body_code));
+                        } else {
+                            code.push_str(&format!("    {};\n", body_code));
+                            code.push_str("    break;\n");
+                        }
+                        code.push_str("}\n");
+                    }
+                    ast::Pattern::Wildcard(_) => {
+                        code.push_str("default: {\n");
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        if info.is_tail {
+                            code.push_str(&format!("    return {};\n", body_code));
+                        } else {
+                            code.push_str(&format!("    {};\n", body_code));
+                            code.push_str("    break;\n");
+                        }
+                        code.push_str("}\n");
+                    }
                     _ => {
                         return Err(CompileError::CodegenError {
-                            message: "Only variable patterns supported in match".to_string(),
-                            span: None,
+                            message: "Unsupported pattern in match".to_string(),
+                            span: Some(arm.span),
                             file_id: self.file_id,
                         });
                     }
-                };
-
-                let mut code = String::new();
-                code.push_str(&format!("switch ({}.tag) {{\n", matched_var));
-
-                for arm in arms {
-                    match &arm.pattern {
-                        ast::Pattern::EnumVariant(enum_name, variant_name, _, _) => {
-                            let case_value = format!("ve_{}_{}", enum_name, variant_name);
-                            code.push_str(&format!("case {}: {{\n", case_value));
-
-                            let body_code = self.emit_expr(&arm.body)?;
-                            if !body_code.ends_with(';') {
-                                code.push_str(&format!("{};\n", body_code));
-                            } else {
-                                code.push_str(&format!("{}\n", body_code));
-                            }
-
-                            code.push_str("break;\n}\n");
-                        }
-                        _ => {
-                            return Err(CompileError::CodegenError {
-                                message: "Unsupported pattern in match".to_string(),
-                                span: Some(arm.span),
-                                file_id: self.file_id,
-                            });
-                        }
-                    }
                 }
-                code.push_str("}\n");
-                Ok(code)
             }
+            code.push_str("}\n");
+            Ok(code)
         }
-    }
-
-    #[allow(dead_code)]
-    fn unify_types(&self, t1: &Type, t2: &Type, span: Span) -> Result<Type, CompileError> {
-        match (t1, t2) {
-            (Type::I32, Type::I32) => Ok(Type::I32),
-            (Type::Bool, Type::Bool) => Ok(Type::Bool),
-            (Type::Unknown, t) | (t, Type::Unknown) => Ok(t.clone()),
-            (Type::Any, t) | (t, Type::Any) => Ok(t.clone()),
-            _ => Err(CompileError::TypeError {
-                message: format!("Type mismatch: {:?} vs {:?}", t1, t2),
-                span: Some(span),
-                file_id: self.file_id,
-            }),
-        }
+                }
     }
 
     fn emit_stmt_to_string(&mut self, stmt: &ast::Stmt) -> Result<String, CompileError> {
@@ -1321,8 +1456,72 @@ impl CBackend {
         Ok(result)
     }
 
+    fn type_to_c_name(&self, ty: &Type) -> String {
+        match ty {
+            Type::I32 => "i32",
+            Type::Bool => "bool",
+            Type::String => "string",
+            Type::Void => "void",
+            Type::F32 => "f32",
+            Type::F64 => "f64",
+            Type::I8 => "i8",
+            Type::I16 => "i16",
+            Type::I64 => "i64",
+            Type::U8 => "u8",
+            Type::U16 => "u16",
+            Type::U32 => "u32",
+            Type::U64 => "u64",
+            Type::Struct(name) | Type::Enum(name) | Type::Generic(name) => name.as_str(),
+            Type::GenericInstance(name, args) => {
+                let mut s = name.clone();
+                for arg in args {
+                    s.push('_');
+                    s.push_str(&self.type_to_c_name(arg));
+                }
+                return s;
+            }
+            _ => "unknown",
+        }.to_string()
+    }
+
+    fn type_to_c(&self, ty: &Type) -> String {
+        match ty {
+            Type::GenericInstance(_, _) | Type::Struct(_) | Type::Enum(_) => format!("ve_{}", self.type_to_c_name(ty)),
+            Type::I32 => "int".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::String => "const char*".to_string(),
+            Type::Void => "void".to_string(),
+            Type::Ellipsis => "...".to_string(),
+            Type::Function(args, ret) => {
+                let args_str = args.iter().map(|t| self.type_to_c(t)).collect::<Vec<_>>().join(", ");
+                let ret_str = self.type_to_c(ret);
+                format!("{}(*)({})", ret_str, args_str)
+            }
+            Type::Pointer(inner) | Type::Array(inner) | Type::SizedArray(inner, _) => {
+                format!("{}*", self.type_to_c(inner))
+            }
+            Type::F32 => "float".to_string(),
+            Type::I8 => "ve_i8".to_string(),
+            Type::I16 => "ve_i16".to_string(),
+            Type::I64 => "ve_i64".to_string(),
+            Type::U8 => "ve_u8".to_string(),
+            Type::U16 => "ve_u16".to_string(),
+            Type::U32 => "ve_u32".to_string(),
+            Type::U64 => "ve_u64".to_string(),
+            Type::F64 => "double".to_string(),
+            Type::CChar => "char".to_string(),
+            Type::CInt => "int".to_string(),
+            Type::CSize => "ve_size_t".to_string(),
+            Type::RawPtr => "void*".to_string(),
+            Type::Any => "void*".to_string(),
+            Type::Unknown | Type::Generic(_) | _ => "void*".to_string(),
+        }
+    }
+
     fn type_to_c_ffi(&self, ty: &Type) -> String {
         match ty {
+            Type::GenericInstance(_, _) => format!("ve_{}", self.type_to_c_name(ty)),
+            Type::Struct(_) | Type::Enum(_) => format!("ve_{}", self.type_to_c_name(ty)),
             Type::I32 => "int".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "const char*".to_string(),
@@ -1338,11 +1537,8 @@ impl CBackend {
                 let ret_str = self.type_to_c_ffi(ret);
                 format!("{}(*)({})", ret_str, args_str)
             }
-            Type::Arena => "struct ArenaAllocator*".to_string(),
             Type::Pointer(inner) => format!("{}*", self.type_to_c_ffi(inner)),
             Type::RawPtr => "void*".to_string(),
-            Type::Struct(name) => name.to_string(),
-            Type::Enum(name) => name.to_string(),
             Type::Array(inner) => format!("{}*", self.type_to_c_ffi(inner)),
             Type::SizedArray(inner, _) => format!("{}*", self.type_to_c_ffi(inner)),
             Type::Any => "void*".to_string(),
@@ -1358,46 +1554,8 @@ impl CBackend {
             Type::CChar => "char".to_string(),
             Type::CInt => "int".to_string(),
             Type::CSize => "size_t".to_string(),
-        }
-    }
-
-    fn type_to_c(&self, ty: &Type) -> String {
-        match ty {
-            Type::I32 => "int".to_string(),
-            Type::Bool => "bool".to_string(),
-            Type::String => "const char*".to_string(),
-            Type::Void => "void".to_string(),
-            Type::Ellipsis => "...".to_string(),
-            Type::Unknown => "void*".to_string(),
-            Type::Function(args, ret) => {
-                let args_str = args
-                    .iter()
-                    .map(|t| self.type_to_c(t))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let ret_str = self.type_to_c(ret);
-                format!("{}(*)({})", ret_str, args_str)
-            }
-            Type::Arena => "struct ArenaAllocator*".to_string(),
-            Type::Pointer(inner) => format!("{}*", self.type_to_c(inner)),
-            Type::RawPtr => "void*".to_string(),
-            Type::Struct(name) => format!("ve_{}", name),
-            Type::Enum(name) => format!("ve_{}", name),
-            Type::Array(inner) => format!("{}*", self.type_to_c(inner)),
-            Type::SizedArray(inner, _) => format!("{}*", self.type_to_c(inner)),
-            Type::Any => "void*".to_string(),
-            Type::F32 => "float".to_string(),
-            Type::I8 => "ve_i8".to_string(),
-            Type::I16 => "ve_i16".to_string(),
-            Type::I64 => "ve_i64".to_string(),
-            Type::U8 => "ve_u8".to_string(),
-            Type::U16 => "ve_u16".to_string(),
-            Type::U32 => "ve_u32".to_string(),
-            Type::U64 => "ve_u64".to_string(),
-            Type::F64 => "double".to_string(),
-            Type::CChar => "char".to_string(),
-            Type::CInt => "int".to_string(),
-            Type::CSize => "ve_size_t".to_string(),
+            Type::Generic(_) => "void*".to_string(),
+            _ => "void*".to_string(),
         }
     }
 
@@ -1431,6 +1589,8 @@ impl CBackend {
                 eprintln!("Warning: Unknown type in conversion to string. Check type inference.");
                 "[unknown]".to_string()
             }
+            Type::Generic(name) => format!("[generic: {}]", name),
+            Type::GenericInstance(name, _) => format!("[generic instance: {}]", name),
             _ => {
                 eprintln!("Warning: Cannot convert type {:?} to string", ty);
                 "[unsupported type]".to_string()
@@ -1455,6 +1615,10 @@ impl CBackend {
 
     fn emit_enum(&mut self, enum_def: &ast::EnumDef) -> Result<(), CompileError> {
         let enum_name = format!("ve_{}", enum_def.name);
+
+        if !enum_def.generic_params.is_empty() {
+            return Ok(());
+        }
 
         self.header.push_str(&format!("typedef enum {{\n"));
         for (i, variant) in enum_def.variants.iter().enumerate() {
@@ -1553,40 +1717,183 @@ impl CBackend {
         Ok(())
     }
 
+    fn emit_generic_enum_instance(
+        &mut self,
+        enum_def: &ast::EnumDef,
+        args: &[Type],
+    ) -> Result<(), CompileError> {
+        let mut name = format!("ve_{}", enum_def.name);
+        for arg in args {
+            name.push('_');
+            name.push_str(&self.type_to_c_name(arg));
+        }
+
+        self.header.push_str(&format!("typedef enum {{\n"));
+        for (i, variant) in enum_def.variants.iter().enumerate() {
+            self.header
+                .push_str(&format!("    {}_{} = {},\n", name, variant.name, i));
+        }
+        self.header.push_str(&format!("}} {}_Tag;\n\n", name));
+
+        self.header.push_str(&format!("typedef struct {} {{\n", name));
+        self.header.push_str(&format!("    {}_Tag tag;\n", name));
+        self.header.push_str("    union {\n");
+        for variant in &enum_def.variants {
+            if let Some(data_types) = &variant.data {
+                if !data_types.is_empty() {
+                    self.header.push_str("        struct {\n");
+                    for (i, ty) in data_types.iter().enumerate() {
+                        let concrete_ty = if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
+                            &args[idx]
+                        } else {
+                            ty
+                        };
+                        let c_type = self.type_to_c(concrete_ty);
+                        self.header.push_str(&format!("            {} field{};\n", c_type, i));
+                    }
+                    self.header.push_str(&format!("        }} {};\n", variant.name.to_lowercase()));
+                }
+            }
+        }
+        self.header.push_str("    } data;\n");
+        self.header.push_str(&format!("}} {};\n\n", name));
+
+        for variant in &enum_def.variants {
+            if let Some(data_types) = &variant.data {
+                if !data_types.is_empty() {
+                    let mut params = Vec::new();
+                    for (i, ty) in data_types.iter().enumerate() {
+                        let concrete_ty = if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
+                            &args[idx]
+                        } else {
+                            ty
+                        };
+                        params.push(format!("{} field{}", self.type_to_c(concrete_ty), i));
+                    }
+                    self.header.push_str(&format!(
+                        "static {} {}_{}_new({}) {{\n",
+                        name,
+                        name,
+                        variant.name,
+                        params.join(", ")
+                    ));
+                    self.header.push_str(&format!("    {} result;\n", name));
+                    self.header.push_str(&format!("    result.tag = {}_{};\n", name, variant.name));
+                    for (i, _) in data_types.iter().enumerate() {
+                        self.header.push_str(&format!(
+                            "    result.data.{}.field{} = field{};\n",
+                            variant.name.to_lowercase(),
+                                                       i,
+                            i
+                        ));
+                    }
+                    self.header.push_str("    return result;\n");
+                    self.header.push_str("}\n\n");
+                } else {
+                    self.header.push_str(&format!(
+                        "static {} {}_{}_new() {{\n",
+                        name, name, variant.name
+                    ));
+                    self.header.push_str(&format!("    {} result;\n", name));
+                    self.header.push_str(&format!("    result.tag = {}_{};\n", name, variant.name));
+                    self.header.push_str("    return result;\n");
+                    self.header.push_str("}\n\n");
+                }
+            } else {
+                self.header.push_str(&format!(
+                    "static {} {}_{}_new() {{\n",
+                    name, name, variant.name
+                ));
+                self.header.push_str(&format!("    {} result;\n", name));
+                self.header.push_str(&format!("    result.tag = {}_{};\n", name, variant.name));
+                self.header.push_str("    return result;\n");
+                self.header.push_str("}\n\n");
+            }
+        }
+        Ok(())
+    }
+
     fn emit_match_switch_with_result(
         &mut self,
-        temp_var: &str,
+        matched_var: &str,
         result_var: &str,
         arms: &[ast::MatchArm],
         code: &mut String,
     ) -> Result<(), CompileError> {
-        code.push_str(&format!("switch ({}.tag) {{\n", temp_var));
+        let matched_type = self.variables.borrow().get(matched_var).cloned();
+        let (enum_name, is_generic, tag_prefix) = if let Some(Type::GenericInstance(name, args)) = &matched_type {
+            (name.clone(), true, format!("ve_{}", self.type_to_c_name(&matched_type.as_ref().unwrap())))
+        } else {
+            ("".to_string(), false, "".to_string())
+        };
+
+        code.push_str(&format!("switch ({}.tag) {{\n", matched_var));
 
         for arm in arms {
             match &arm.pattern {
-                ast::Pattern::EnumVariant(enum_name, variant_name, patterns, _) => {
-                    code.push_str(&format!("    case ve_{}_{}: {{\n", enum_name, variant_name));
+                ast::Pattern::EnumVariant(enum_name_arm, variant_name, patterns, _) => {
+                    let case_value = if is_generic {
+                        format!("{}_{}", tag_prefix, variant_name)
+                    } else {
+                        format!("ve_{}_{}", enum_name_arm, variant_name)
+                    };
+                    code.push_str(&format!("    case {}: {{\n", case_value));
 
                     for (i, pattern) in patterns.iter().enumerate() {
                         if let ast::Pattern::Variable(var_name, _) = pattern {
+                            let mut field_type = "int".to_string();
+                            if let Some(Type::GenericInstance(enum_name, args)) = &matched_type {
+                                if let Some(enum_def) = self.enum_defs.get(enum_name) {
+                                    enum_def.variants.iter().find(|v| v.name == *variant_name).map(|variant| {
+                                        if let Some(data_types) = &variant.data {
+                                            if let Some(ty) = data_types.get(i) {
+                                                field_type = self.type_to_c(if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
+                                                    &args[idx]
+                                                } else {
+                                                    ty
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+                            }
                             code.push_str(&format!(
-                                "        int {} = {}.data.{}.field{};\n",
+                                "    {} {} = {}.data.{}.field{};\n",
+                                field_type,
                                 var_name,
-                                temp_var,
+                                matched_var,
                                 variant_name.to_lowercase(),
                                 i
                             ));
                         }
                     }
 
-                    let body_code = self.emit_expr(&arm.body)?;
-                    code.push_str(&format!("        {} = {};\n", result_var, body_code));
-                    code.push_str("        break;\n");
-                    code.push_str("    }\n");
+                    let body_code = match &arm.body {
+                        ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                        ast::MatchArmBody::Block(stmts) => {
+                            let mut block_code = String::new();
+                            for stmt in stmts {
+                                block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                            }
+                            block_code
+                        }
+                    };
+                    code.push_str(&format!("    {} = {};\n", result_var, body_code));
+                    code.push_str("    break;\n");
+                    code.push_str("}\n");
                 }
                 ast::Pattern::Wildcard(_) => {
                     code.push_str("    default: {\n");
-                    let body_code = self.emit_expr(&arm.body)?;
+                    let body_code = match &arm.body {
+                        ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                        ast::MatchArmBody::Block(stmts) => {
+                            let mut block_code = String::new();
+                            for stmt in stmts {
+                                block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                            }
+                            block_code
+                        }
+                    };
                     code.push_str(&format!("        {} = {};\n", result_var, body_code));
                     code.push_str("        break;\n");
                     code.push_str("    }\n");
@@ -1597,9 +1904,18 @@ impl CBackend {
                     let c_type = self.type_to_c(&expr_type);
                     code.push_str(&format!(
                         "        {} {} = {};\n",
-                        c_type, var_name, temp_var
+                        c_type, var_name, matched_var
                     ));
-                    let body_code = self.emit_expr(&arm.body)?;
+                    let body_code = match &arm.body {
+                        ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                        ast::MatchArmBody::Block(stmts) => {
+                            let mut block_code = String::new();
+                            for stmt in stmts {
+                                block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                            }
+                            block_code
+                        }
+                    };
                     code.push_str(&format!("        {} = {};\n", result_var, body_code));
                     code.push_str("        break;\n");
                     code.push_str("    }\n");
@@ -1614,22 +1930,22 @@ impl CBackend {
             }
         }
 
-        code.push_str("    }\n");
+        code.push_str("}\n");
         Ok(())
     }
 
     fn analyze_memory_requirements(&mut self, program: &ast::Program) {
-        self.memory_analysis.total_functions = program.functions.len();
-        for func in &program.functions {
-            let depth = self.analyze_function_memory(&func.body);
-            self.memory_analysis.max_function_depth =
-                self.memory_analysis.max_function_depth.max(depth);
+            self.memory_analysis.total_functions = program.functions.len();
+            for func in &program.functions {
+                let depth = self.analyze_function_memory(&func.body);
+                self.memory_analysis.max_function_depth =
+                    self.memory_analysis.max_function_depth.max(depth);
+            }
+            for stmt in &program.stmts {
+                self.analyze_stmt_memory(stmt);
+            }
+            self.calculate_arena_size();
         }
-        for stmt in &program.stmts {
-            self.analyze_stmt_memory(stmt);
-        }
-        self.calculate_arena_size();
-    }
 
     fn analyze_function_memory(&mut self, stmts: &[ast::Stmt]) -> usize {
         let mut depth = 0;
@@ -1654,6 +1970,7 @@ impl CBackend {
                     max_depth = max_depth.max(self.analyze_stmt_memory(stmt));
                 }
                 max_depth + 1
+           
             }
             ast::Stmt::While(_, body, _) | ast::Stmt::For(_, _, body, _) => {
                 let mut max_depth = 0;
@@ -1695,7 +2012,7 @@ impl CBackend {
                 for elem in elements {
                     self.analyze_expr_memory(elem);
                 }
-                1
+                                1
             }
             ast::Expr::StructInit(name, fields, _) => {
                 if let Some(struct_fields) = self.struct_defs.get(name) {
@@ -1751,7 +2068,7 @@ impl CBackend {
             Type::String => 256,
             Type::Pointer(_) | Type::RawPtr => 8,
             Type::Array(_) => 1024,
-            Type::SizedArray(_, size) => size * 8,
+            Type::SizedArray(inner, size) => size * 8,
             Type::Struct(name) => {
                 if let Some(fields) = self.struct_defs.get(name) {
                     fields.iter().map(|(_, ty)| self.get_type_size(ty)).sum()
@@ -1759,6 +2076,8 @@ impl CBackend {
                     64
                 }
             }
+            Type::Generic(_) => 8,
+            Type::GenericInstance(_, _) => 8,
             _ => 8,
         }
     }
