@@ -1,4 +1,4 @@
-![VeiLang](https://img.shields.io/static/v1?label=&message=VeiLang&color=2b7489&logo=asciidoc&logoColor=white)
+![Veil Lang](https://img.shields.io/static/v1?label=&message=Veil%20Lang&color=blue&logo=veil&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ⚠️ Experimental Status
