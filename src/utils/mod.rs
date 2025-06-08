@@ -118,6 +118,25 @@ pub fn process_imports(
                     })?;
                     analyze_and_mark_dependencies(&mut program);
 
+                    let (
+                        nested_functions,
+                        nested_asts,
+                        nested_structs,
+                        nested_ffi_funcs,
+                        nested_ffi_vars,
+                        nested_stmts,
+                    ) = process_imports(files, &program.imports, &path)?;
+                    
+                    program.functions.extend(nested_asts);
+                    program.ffi_functions.extend(nested_ffi_funcs);
+                    program.ffi_variables.extend(nested_ffi_vars);
+                    program.structs.extend(nested_structs);
+                    program.stmts.extend(nested_stmts);
+                    
+                    for (name, (params, return_type)) in nested_functions {
+                        map.insert(name, (params, return_type));
+                    }
+
                     for function in program.functions.iter().filter(|f| {
                         matches!(
                             f.visibility,
@@ -222,6 +241,25 @@ pub fn process_imports(
                         .map_err(|e| anyhow!("Parsing error: {:?}", e))?;
 
                     analyze_and_mark_dependencies(&mut program);
+
+                    let (
+                        nested_functions,
+                        nested_asts,
+                        nested_structs,
+                        nested_ffi_funcs,
+                        nested_ffi_vars,
+                        nested_stmts,
+                    ) = process_imports(files, &program.imports, &path)?;
+                    
+                    program.functions.extend(nested_asts);
+                    program.ffi_functions.extend(nested_ffi_funcs);
+                    program.ffi_variables.extend(nested_ffi_vars);
+                    program.structs.extend(nested_structs);
+                    program.stmts.extend(nested_stmts);
+                    
+                    for (name, (params, return_type)) in nested_functions {
+                        map.insert(name, (params, return_type));
+                    }
 
                     for specifier in specifiers {
                         let item_name = &specifier.name;
@@ -593,7 +631,7 @@ fn get_lib_path() -> Result<PathBuf> {
         \n\
         Please reinstall VeLang or ensure the standard library is properly installed.\n\
         You can install VeLang using the installation script from:\n\
-        https://github.com/velang-org/ve",
+        https://github.com/veil-lang/veil",
         attempted_paths.join("\n")
     ))
 }

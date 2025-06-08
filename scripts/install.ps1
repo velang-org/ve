@@ -103,7 +103,7 @@ if (-not $Branch) {
 }
 
 try {
-    git clone -b $Branch https://github.com/velang-org/ve.git --quiet 2>$null
+    git clone -b $Branch https://github.com/veil-lang/veil.git --quiet 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw "Git clone failed"
     }

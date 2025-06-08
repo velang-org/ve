@@ -205,6 +205,8 @@ pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow
         imported_functions,
         imported_structs,
         imported_ffi_vars,
+        false,
+        None,
     );
     target.compile(&program, &c_file)?;
     let codegen_time = codegen_start.elapsed();

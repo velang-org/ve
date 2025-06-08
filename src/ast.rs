@@ -60,6 +60,14 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone)]
+pub struct Test {
+    pub name: String,
+    pub stmts: Vec<Stmt>,
+    #[allow(dead_code)]
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct StructField {
     pub name: String,
     pub ty: Type,
@@ -127,6 +135,7 @@ pub struct Program {
     pub enums: Vec<EnumDef>,
     pub ffi_functions: Vec<FfiFunction>,
     pub ffi_variables: Vec<FfiVariable>,
+    pub tests: Vec<Test>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

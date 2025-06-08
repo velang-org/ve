@@ -2,6 +2,7 @@ pub mod benchmark;
 pub mod init;
 pub(crate) mod run;
 pub mod upgrade;
+pub mod test;
 
 #[cfg(target_os = "windows")]
 use crate::utils::{prepare_windows_clang_args, process_imports, validate_ve_file};
@@ -54,6 +55,11 @@ pub enum CliCommand {
         force: bool,
         verbose: bool,
     },
+    Test {
+        input: PathBuf,
+        test_name: Option<String>,
+        verbose: bool,
+    }
 }
 
 #[derive(Parser)]
@@ -132,6 +138,14 @@ enum Command {
         #[arg(short, long, help = "Show verbose output during upgrade")]
         verbose: bool,
     },
+    Test {
+       #[arg(value_parser = validate_ve_file)]
+       input: PathBuf,
+       #[arg(short, long)]
+       test_name: Option<String>,
+       #[arg(short, long)]
+       verbose: bool,
+    }
 }
 
 pub fn parse() -> anyhow::Result<CliCommand> {
@@ -177,6 +191,15 @@ pub fn parse() -> anyhow::Result<CliCommand> {
             force,
             verbose,
         }),
+        Some(Command::Test {
+            input,
+            test_name,
+            verbose,
+        }) => Ok(CliCommand::Test {
+            input,
+            test_name,
+            verbose,
+        }),
         None => {
             let input = args
                 .input
@@ -205,7 +228,9 @@ pub fn process_build(
     optimize: bool,
     target_triple: String,
     verbose: bool,
-) -> anyhow::Result<()> {
+    is_test: bool,
+    test_name: Option<String>,
+) -> anyhow::Result<PathBuf> {
     let build_dir = input
         .parent()
         .ok_or_else(|| anyhow!("Invalid input file path"))?
@@ -239,17 +264,14 @@ pub fn process_build(
     let lexer = lexer::Lexer::new(&files, file_id);
     let mut parser = parser::Parser::new(lexer);
 
-    let mut program = match parser.parse_with_partial(verbose) {
+    let mut program = match parser.parse() {
         Ok(program) => program,
-        Err((error, partial_program)) => {
-            let file_id = error.labels.get(0).map(|l| l.file_id);
-            let file_path = file_id
-                .and_then(|fid| Some(files.name(fid)))
-                .map(|n| n.to_string_lossy().to_string());
+        Err(error) => {
+            let file_path = Some(files.name(file_id).to_string_lossy().to_string());
             let module_info = file_path.as_ref().and_then(|path: &String| {
                 if let Some(_idx) = path.find("lib/std") {
                     Some("standard library".to_string())
-                } else if let Some(lib_start) = path.find("lib/") {
+                } else if let Some(lib_start) = path.find("lib/") {     
                     let rest = &path[lib_start + 4..];
                     if let Some(end) = rest.find('/') {
                         let lib_name = &rest[..end];
@@ -274,13 +296,14 @@ pub fn process_build(
             let config = term::Config::default();
             term::emit(&mut writer.lock(), &config, &files, &error)?;
 
-            let location = if let Some(path) = file_path {
-                match module_info {
-                    Some(module) => format!("in file '{}' ({})", path, module),
-                    None => format!("in file '{}'", path),
+            let location = match file_path {
+                Some(ref path) => {
+                    match module_info {
+                        Some(ref module) => format!("in file '{}' ({})", path, module),
+                        None => format!("in file '{}'", path),
+                    }
                 }
-            } else {
-                "in unknown location".to_string()
+                None => "in unknown location".to_string(),
             };
 
             eprintln!("\nParser error {}: {}", location, error.message);
@@ -295,21 +318,11 @@ pub fn process_build(
             }
 
             if verbose {
-                if let Some(partial) = partial_program {
-                    let ast_file = build_dir.join("partial_ast.txt");
-                    let ast_content = format!(
-                        "--- PARTIAL AST (verbose mode) ---\n\
-                         Successfully parsed {} functions, {} structs, {} enums\n\n\
-                         Partial AST:\n{:#?}\n",
-                        partial.functions.len(),
-                        partial.structs.len(),
-                        partial.enums.len(),
-                        partial
-                    );
-                    std::fs::write(&ast_file, ast_content)?;
-                    println!("Partial AST saved to: {}", ast_file.display());
-                    return Err(anyhow!("Parser failed, but partial AST saved to file"));
-                }
+                let ast_file = build_dir.join("partial_ast.txt");
+                let ast_content = "Partial AST (parser failed): Debug info not available".to_string();
+                std::fs::write(&ast_file, ast_content)?;
+                println!("Partial AST saved to: {}", ast_file.display());
+                return Err(anyhow!("Parser failed, but partial AST saved to file"));
             }
 
             return Err(anyhow!("Parser failed"));
@@ -351,9 +364,7 @@ pub fn process_build(
                 term::emit(&mut writer.lock(), &config, &files, &error)?;
 
                 let file_id = error.labels.get(0).map(|l| l.file_id);
-                let file_path = file_id
-                    .and_then(|fid| Some(files.name(fid)))
-                    .map(|n| n.to_string_lossy().to_string());
+                let file_path = file_id.map(|fid| files.name(fid).to_string_lossy().to_string());
                 let module_info = file_path.as_ref().and_then(|path: &String| {
                     if let Some(_idx) = path.find("lib/std") {
                         Some("standard library".to_string())
@@ -378,13 +389,14 @@ pub fn process_build(
                     }
                 });
 
-                let location = if let Some(path) = file_path {
-                    match module_info {
-                        Some(module) => format!("in file '{}' ({})", path, module),
-                        None => format!("in file '{}'", path),
+                let location = match file_path {
+                    Some(ref path) => {
+                        match module_info {
+                            Some(ref module) => format!("in file '{}' ({})", path, module),
+                            None => format!("in file '{}'", path),
+                        }
                     }
-                } else {
-                    "in unknown location".to_string()
+                    None => "in unknown location".to_string(),
                 };
 
                 eprintln!("\nType checker error {}: {}", location, error.message);
@@ -410,6 +422,8 @@ pub fn process_build(
         imported_functions,
         imported_structs,
         program.ffi_variables.clone(),
+        is_test,
+        test_name.map(|s| s.to_string()),
     );
 
     target.compile(&program, &c_file)?;
@@ -453,6 +467,10 @@ pub fn process_build(
         println!("{}", format!("Successfully compiled to: {}", output.display()).green());
     }
 
+    if is_test {
+        return Ok(output);
+    }
+
     if verbose {
         println!("{}", "Running the compiled program...".bold().blue());
     }
@@ -465,5 +483,5 @@ pub fn process_build(
         println!("{}", format!("Program exited with status: {}", status).magenta());
     }
 
-    Ok(())
+    Ok(output)
 }

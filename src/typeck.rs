@@ -124,6 +124,10 @@ impl TypeChecker {
             self.check_function(func)?;
         }
 
+        for test in &mut program.tests {
+            self.check_test(test)?;
+        }
+
         if self.errors.is_empty() {
             Ok(())
         } else {
@@ -169,6 +173,25 @@ impl TypeChecker {
                     }
                 }
             }
+        }
+
+        self.context = original_ctx;
+
+        Ok(())
+    }
+
+    fn check_test(&mut self, test: &mut ast::Test) -> Result<(), Vec<Diagnostic<FileId>>> {
+        let mut local_ctx = Context::new();
+        local_ctx.current_return_type = Type::Void;
+        local_ctx.struct_defs = self.context.struct_defs.clone();
+        local_ctx.enum_defs = self.context.enum_defs.clone();
+        local_ctx.enum_def_map = self.context.enum_def_map.clone();
+        local_ctx.variables = self.context.variables.clone();
+
+        let original_ctx = std::mem::replace(&mut self.context, local_ctx);
+
+        for stmt in &mut test.stmts {
+            self.check_stmt(stmt)?;
         }
 
         self.context = original_ctx;

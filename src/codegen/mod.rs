@@ -23,6 +23,8 @@ impl Target {
         >,
         imported_structs: Vec<crate::ast::StructDef>,
         imported_ffi_vars: Vec<crate::ast::FfiVariable>,
+        is_test_mode: bool,
+        test_name: Option<String>,
     ) -> Self {
         Target::Native(c::CBackend::new(
             config,
@@ -30,6 +32,8 @@ impl Target {
             imported_return_types,
             imported_structs,
             imported_ffi_vars,
+            is_test_mode,
+            test_name,
         ))
     }
 

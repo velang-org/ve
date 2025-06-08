@@ -128,7 +128,7 @@ ve example.ve
 ### Getting Help
 
 - **Discord**: [https://dsc.gg/velang](https://dsc.gg/velang)
-- **GitHub Issues**: [https://github.com/velang-org/ve/issues](https://github.com/velang-org/ve/issues)
+- **GitHub Issues**: [https://github.com/veil-lang/veil/issues](https://github.com/veil-lang/veil/issues)
 - **Documentation**: Check the main repository README
 
 ## Uninstallation

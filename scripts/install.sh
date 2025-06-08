@@ -50,7 +50,7 @@ fi
 
 # Clone repository
 print_msg "info" "Cloning VeLang repository (branch: $BRANCH)..."
-if ! git clone -b "$BRANCH" --quiet https://github.com/velang-org/ve.git "$TEMP_DIR" 2>/dev/null; then
+if ! git clone -b "$BRANCH" --quiet https://github.com/veil-lang/veil.git "$TEMP_DIR" 2>/dev/null; then
     print_msg "error" "Failed to clone repository from branch '$BRANCH'"
     exit 1
 fi

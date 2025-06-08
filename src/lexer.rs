@@ -5,6 +5,10 @@ use logos::Logos;
 pub enum Token {
     #[token("fn")]
     KwFn,
+
+    #[token("test")]
+    KwTest,
+
     #[token("let")]
     KwLet,
     #[token("var")]

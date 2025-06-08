@@ -25,7 +25,13 @@ fn main() -> Result<()> {
             optimize,
             target_triple,
             verbose,
-        }) => cli::process_build(input, output, optimize, target_triple, verbose),
+        }) => {
+            cli::process_build(input, output, optimize, target_triple, verbose, false, None)?;
+            Ok(())
+        },
+        Ok(cli::CliCommand::Test { input, test_name, verbose }) => {
+            cli::test::run_test(input, test_name, verbose)
+        }
         Ok(cli::CliCommand::Init {
             directory,
             project_name,

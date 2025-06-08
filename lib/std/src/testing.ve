@@ -1,0 +1,7 @@
+import "std/core"; 
+
+export fn assert(cond: bool, msg: string) -> void {
+    if (!cond) {
+        panic(msg);
+    }
+}

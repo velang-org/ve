@@ -1,4 +1,4 @@
-![Ve Language](https://img.shields.io/static/v1?label=&message=Velang&color=2b7489&logo=asciidoc&logoColor=white)
+![VeiLang](https://img.shields.io/static/v1?label=&message=VeiLang&color=2b7489&logo=asciidoc&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ⚠️ Experimental Status
@@ -29,7 +29,7 @@ Requirements:
 - Git
 
 ```bash
-git clone https://github.com/velang-org/ve
+git clone https://github.com/veil-lang/veil
 cd ve
 cargo install --path .
 ```

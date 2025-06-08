@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const REPO_URL: &str = "https://github.com/velang-org/ve.git";
+const REPO_URL: &str = "https://github.com/veil-lang/veil.git";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Serialize, Deserialize)]

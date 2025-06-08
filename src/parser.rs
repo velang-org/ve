@@ -4,7 +4,7 @@ use super::{
 };
 use codespan::{FileId, Files, Span};
 use codespan_reporting::diagnostic::Diagnostic;
-use std::collections::HashMap;
+use std::{collections::HashMap};
 use std::iter::Peekable;
 use std::slice::Iter;
 
@@ -48,6 +48,7 @@ impl<'a> Parser<'a> {
             enums: Vec::new(),
             ffi_functions: Vec::new(),
             ffi_variables: Vec::new(),
+            tests: Vec::new(),
         };
 
         while !self.is_at_end() {
@@ -68,7 +69,8 @@ impl<'a> Parser<'a> {
                     let mut func = self.parse_function()?;
                     func.visibility = ast::Visibility::Public;
                     program.functions.push(func);
-                } else if self.check(Token::LBrace) {
+                } 
+                else if self.check(Token::LBrace) {
                     self.parse_export_block(&mut program)?;
                 } else {
                     let span = self.peek_span();
@@ -94,7 +96,11 @@ impl<'a> Parser<'a> {
                     ForeignItem::Function(f) => program.ffi_functions.push(f),
                     ForeignItem::Variable(v) => program.ffi_variables.push(v),
                 }
-            } else {
+            } else if self.check(Token::KwTest) {
+                program.tests.push(self.parse_test()?);
+            }
+            
+            else {
                 program.stmts.push(self.parse_stmt()?);
             }
         }
@@ -102,93 +108,7 @@ impl<'a> Parser<'a> {
         Ok(program)
     }
 
-    pub fn parse_with_partial(
-        &mut self,
-        verbose: bool,
-    ) -> Result<ast::Program, (Diagnostic<FileId>, Option<ast::Program>)> {
-        let mut program = ast::Program {
-            imports: Vec::new(),
-            stmts: Vec::new(),
-            functions: Vec::new(),
-            structs: Vec::new(),
-            enums: Vec::new(),
-            ffi_functions: Vec::new(),
-            ffi_variables: Vec::new(),
-        };
 
-        while !self.is_at_end() {
-            let current_program = if verbose { Some(program.clone()) } else { None };
-
-            let result = if self.check(Token::KwImport) {
-                self.parse_import()
-                    .map(|import| program.imports.push(import))
-            } else if self.check(Token::KwExport) {
-                self.advance();
-                if self.check(Token::KwStruct) {
-                    self.parse_struct().map(|mut struct_def| {
-                        struct_def.visibility = ast::Visibility::Public;
-                        program.structs.push(struct_def);
-                    })
-                } else if self.check(Token::KwEnum) {
-                    self.parse_enum().map(|mut enum_def| {
-                        enum_def.visibility = ast::Visibility::Public;
-                        program.enums.push(enum_def);
-                    })
-                } else if self.check(Token::KwFn) {
-                    self.parse_function().map(|mut func| {
-                        func.visibility = ast::Visibility::Public;
-                        program.functions.push(func);
-                    })
-                } else if self.check(Token::LBrace) {
-                    self.parse_export_block(&mut program)
-                } else {
-                    let span = self.peek_span();
-                    self.error("Expected 'fn', 'struct', or '{' after 'export'", span)
-                }
-            } else if self.check(Token::KwFn) {
-                self.parse_function()
-                    .map(|func| program.functions.push(func))
-            } else if self.check(Token::KwStruct) {
-                self.parse_struct()
-                    .map(|struct_def| program.structs.push(struct_def))
-            } else if self.check(Token::KwEnum) {
-                self.parse_enum()
-                    .map(|enum_def| program.enums.push(enum_def))
-            } else if self.check(Token::Hash) {
-                self.advance();
-                self.parse_metadata()
-                    .and_then(|metadata| {
-                        self.expect(Token::Foreign)?;
-                        self.parse_ffi(metadata)
-                    })
-                    .map(|item| match item {
-                        ForeignItem::Function(f) => program.ffi_functions.push(f),
-                        ForeignItem::Variable(v) => program.ffi_variables.push(v),
-                    })
-            } else if self.check(Token::Foreign) {
-                self.advance();
-                self.parse_ffi(None).map(|item| match item {
-                    ForeignItem::Function(f) => program.ffi_functions.push(f),
-                    ForeignItem::Variable(v) => program.ffi_variables.push(v),
-                })
-            } else {
-                self.parse_stmt().map(|stmt| program.stmts.push(stmt))
-            };
-
-            match result {
-                Ok(_) => continue,
-                Err(error) => {
-                    if verbose {
-                        return Err((error, current_program));
-                    } else {
-                        return Err((error, None));
-                    }
-                }
-            }
-        }
-
-        Ok(program)
-    }
 
     fn parse_metadata(&mut self) -> Result<Option<HashMap<String, String>>, Diagnostic<FileId>> {
         self.expect(Token::LBracket)?;
@@ -1025,6 +945,26 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         self.expect(Token::Gt)?;
         Ok(generic_params)
     }
+
+    fn parse_test(&mut self) -> Result<ast::Test, Diagnostic<FileId>> {
+        self.consume(Token::KwTest, "Expected 'test'")?;
+        let start_span = self.previous().map(|(_, s)| *s).unwrap();
+
+        let (name, _name_span) = self.consume_ident()?;
+
+        let body = self.parse_block_with_tail(false)?;
+        let end_span = match body.last() {
+            Some(last_stmt) => last_stmt.span(),
+            None => start_span,
+        };
+        
+        Ok(ast::Test {
+            name,
+            stmts: body,
+            span: Span::new(start_span.start(), end_span.end()),
+        })
+    }
+
 
     fn parse_function(&mut self) -> Result<ast::Function, Diagnostic<FileId>> {
         self.consume(Token::KwFn, "Expected 'fn'")?;
