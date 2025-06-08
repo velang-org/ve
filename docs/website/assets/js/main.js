@@ -92,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.body.addEventListener('mousedown', e => {
     const target = e.target;
-    if (target.matches('h1, h2, h3, h4, h5, h6, a, button, .icon')) {
+    if (target.matches('.icon') && !target.closest('a, button')) {
       e.preventDefault();
     }
   });
