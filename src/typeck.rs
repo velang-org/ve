@@ -990,6 +990,7 @@ impl TypeChecker {
                                                     | Type::F32
                                                     | Type::F64
                                                     | Type::Bool
+                                                    | Type::Generic(_)
                                             )
                                         {
                                             self.report_error(
@@ -1014,6 +1015,7 @@ impl TypeChecker {
                                                     | Type::F32
                                                     | Type::F64
                                                     | Type::Bool
+                                                    | Type::Generic(_)
                                             )
                                         {
                                             self.report_error(
@@ -1057,6 +1059,7 @@ impl TypeChecker {
                                         | Type::F32
                                         | Type::F64
                                         | Type::Bool
+                                        | Type::Generic(_)
                                 ) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
@@ -1082,6 +1085,7 @@ impl TypeChecker {
                                         | Type::F32
                                         | Type::F64
                                         | Type::Bool
+                                        | Type::Generic(_)
                                 ) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
@@ -1200,6 +1204,7 @@ impl TypeChecker {
         (Type::I64, Type::String) => true,
         (Type::F32, Type::String) => true,
         (Type::F64, Type::String) => true,
+        (Type::Generic(_), Type::String) => true,
         (Type::RawPtr, Type::Pointer(_)) => true,
         (Type::Pointer(_), Type::RawPtr) => true,
         (Type::Pointer(_), Type::I32) => true,

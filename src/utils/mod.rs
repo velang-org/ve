@@ -15,6 +15,8 @@ pub fn prepare_windows_clang_args(
     let msvc_lib_paths = get_msvc_lib_paths()?;
     let mut clang_args = vec![
         if optimize { "-O3" } else { "-O0" }.to_string(),
+        "-pipe".to_string(),
+        "-fno-exceptions".to_string(),
         c_file.to_str().unwrap().into(),
         "-o".to_string(),
         output.to_str().unwrap().into(),
@@ -33,6 +35,7 @@ pub fn prepare_windows_clang_args(
 
     Ok(clang_args)
 }
+
 
 pub fn process_imports(
     files: &mut Files<String>,

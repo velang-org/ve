@@ -6,16 +6,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
-pub fn run_test(input: PathBuf, test_name: Option<String>, verbose: bool) -> anyhow::Result<()> {
-    let executable_path = process_build(
-        input.clone(),
-        "build/program.exe".into(),
-        false,
-        "x86_64-pc-windows-msvc".into(),
-        verbose,
-        true,
-        test_name.clone(),
-    )?;
+pub fn run_test(input: PathBuf, test_name: Option<String>, verbose: bool, list: bool) -> anyhow::Result<()> {
+
+    if list {
+        return list_tests(input);
+    }
 
     let content = std::fs::read_to_string(&input)
         .with_context(|| format!("Failed to read test file: {}", input.display()))?;
@@ -40,6 +35,16 @@ pub fn run_test(input: PathBuf, test_name: Option<String>, verbose: bool) -> any
     } else {
         available_tests
     };
+
+    let executable_path = process_build(
+        input.clone(),
+        "build/program.exe".into(),
+        false,
+        "x86_64-pc-windows-msvc".into(),
+        verbose,
+        true,
+        None, 
+    )?;
 
     run_tests_with_formatting(&executable_path, &tests_to_run, verbose)
 }
@@ -86,9 +91,9 @@ fn run_tests_with_formatting(
         io::stdout().flush().unwrap();
         
         let test_start = Instant::now();
-        
-        let result = Command::new(executable_path)
-            .arg(test_name) 
+          // Run the test - każdy test ma swoje własne main()
+        let result = Command::new(&executable_path)
+            .arg(&test_name)
             .output()
             .with_context(|| format!("Failed to run test: {}", test_name))?;
         
@@ -148,6 +153,27 @@ fn run_tests_with_formatting(
         );
     }
 
+    
+    Ok(())
+}
+
+
+pub fn list_tests(input: PathBuf) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(&input)
+        .with_context(|| format!("Failed to read test file: {}", input.display()))?;
+    
+    let available_tests = parse_test_names(&content);
+    
+    if available_tests.is_empty() {
+        println!("{}", "No tests found in the file.".yellow());
+        return Ok(());
+    }
+
+    println!("{}", "Available tests:".bold().blue());
+    for (i, test_name) in available_tests.iter().enumerate() {
+        println!("  {}. {}", i + 1, test_name.green());
+    }
+    println!("\nTotal: {} test{}", available_tests.len(), if available_tests.len() == 1 { "" } else { "s" });
     
     Ok(())
 }

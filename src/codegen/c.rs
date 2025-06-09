@@ -1,6 +1,7 @@
-use crate::ast::Type;
+use crate::ast::{AstTransformer, GenericCallTransformer, Type};
 use crate::{
     ast,
+    ast::AstVisitor,
     codegen::{CodegenConfig, CompileError},
 };
 use codespan::{FileId, Span};
@@ -16,7 +17,7 @@ pub struct CBackend {
     includes: RefCell<BTreeSet<String>>,
     variables: RefCell<HashMap<String, Type>>,
     functions_map: HashMap<String, Type>,
-    imported_functions: HashMap<String, (Vec<Type>, Type)>,
+    functions_map_ast: Option<HashMap<String, ast::Function>>,
     ffi_functions: HashSet<String>,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
     imported_structs: Vec<ast::StructDef>,
@@ -40,7 +41,6 @@ impl CBackend {
     pub fn new(
         config: CodegenConfig,
         file_id: FileId,
-        imported_functions: HashMap<String, (Vec<Type>, Type)>,
         imported_structs: Vec<ast::StructDef>,
         imported_ffi_vars: Vec<ast::FfiVariable>,
         is_test_mode: bool,
@@ -51,10 +51,10 @@ impl CBackend {
             header: String::new(),
             body: String::new(),
             file_id,
+            functions_map_ast: None,
             includes: RefCell::new(BTreeSet::new()),
             variables: RefCell::new(HashMap::new()),
             functions_map: HashMap::new(),
-            imported_functions,
             ffi_functions: HashSet::new(),
             struct_defs: HashMap::new(),
             imported_structs,
@@ -129,14 +129,17 @@ impl CBackend {
             self.header.push_str("}\n\n");
         }
     }
+
     pub fn compile(
         &mut self,
-        program: &ast::Program,
+        mut program: &ast::Program,
         output_path: &Path,
     ) -> Result<(), CompileError> {
-        self.analyze_memory_requirements(program);
+        let program = self.monomorphize_generics(program)?; 
+
+        self.analyze_memory_requirements(&program);
         self.emit_header();
-        self.generate_ffi_declarations(program)?;
+        self.generate_ffi_declarations(&program)?;
         let imported_structs = self.imported_structs.clone();
         for struct_def in &imported_structs {
             self.emit_struct(struct_def)?;
@@ -279,9 +282,18 @@ impl CBackend {
         for ffi in &program.ffi_functions {
             self.functions_map.insert(ffi.name.clone(), ffi.return_type.clone());
         }
-        self.emit_globals(program)?;
-        self.emit_functions(program)?;
-        self.emit_tests(program)?;
+
+        self.functions_map_ast = Some(
+            program.functions.iter().map(|f| (f.name.clone(), f.clone())).collect()
+        );
+
+        self.emit_globals(&program)?;
+
+        self.emit_functions(&program)?;
+
+        if self.is_test_mode {
+            self.emit_tests(&program)?;
+        }
         let imported_structs = self.imported_structs.clone();
         let all_structs: Vec<&ast::StructDef> = program
             .structs
@@ -289,11 +301,228 @@ impl CBackend {
             .chain(imported_structs.iter())
             .collect();
         self.generate_struct_to_str_functions(all_structs);
-        self.emit_main_if_missing(program)?;
+        self.emit_main_if_missing(&program)?;
         self.write_output(output_path)?;
         Ok(())
     }
+    
+    fn monomorphize_generics(
+        &self,
+        program: &ast::Program
+    ) -> Result<ast::Program, CompileError> {
+        let all_generic_functions: Vec<_> = program.functions
+            .iter()
+            .filter(|f| !f.generic_params.is_empty())
+            .collect();
 
+        let mut collector = ast::GenericCallCollector::with_functions(&program.functions);
+        collector.visit_program(program);
+
+        let mut new_functions = program.functions
+            .iter()
+            .filter(|f| f.generic_params.is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut transformer = GenericCallTransformer::new();
+
+        let generic_func_map: std::collections::HashMap<_, _> = all_generic_functions
+            .iter()
+            .map(|f| (f.name.clone(), *f))
+            .collect();
+
+
+        let mut seen: HashSet<(String, Vec<Type>)> = HashSet::new();
+
+        for (func_name, type_args) in &collector.generic_calls {
+            if !seen.insert((func_name.clone(), type_args.clone())) {
+                continue; 
+            }
+
+
+
+            if let Some(gen_func) = generic_func_map.get(func_name) {
+                let mono_func = self.instantiate_generic_function(gen_func, type_args)?;
+                let mono_name = mono_func.name.clone();
+                
+
+
+                transformer.add_mapping(func_name.clone(), type_args.clone(), mono_name);
+                new_functions.push(mono_func);
+            }
+        }
+    
+
+        let transformed_program = transformer.transform_program(ast::Program {
+            functions: new_functions.clone(),
+            ..program.clone()
+        });
+
+        Ok(transformed_program)
+    }
+
+    fn instantiate_generic_function(
+        &self,
+        generic_func: &ast::Function,
+        type_args: &[ast::Type],
+    ) -> Result<ast::Function, CompileError> {
+        let mut type_map = std::collections::HashMap::new();
+        
+        for (i, param) in generic_func.generic_params.iter().enumerate() {
+            if let Some(ty) = type_args.get(i) {
+                type_map.insert(param.clone(), ty.clone());
+            }
+        }
+        
+        let mangled_name = format!("{}_{}", 
+            generic_func.name,
+            type_args.iter()
+                .map(|t| format!("{:?}", t).replace(' ', "_"))
+                .collect::<Vec<_>>()
+                .join("_")
+        );
+        
+        let substituted_params = generic_func.params.iter()
+            .map(|(name, ty)| {
+                let new_type = self.substitute_type(ty, &type_map)?;
+                Ok::<(String, ast::Type), CompileError>((name.clone(), new_type))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        let substituted_return_type = self.substitute_type(&generic_func.return_type, &type_map)?;
+        
+        let substituted_body = generic_func.body.iter()
+            .map(|stmt| self.substitute_stmt(stmt, &type_map))
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        Ok(ast::Function {
+            name: mangled_name,
+            generic_params: Vec::new(),
+            params: substituted_params,
+            return_type: substituted_return_type,
+            body: substituted_body,
+            span: generic_func.span.clone(),
+            visibility: generic_func.visibility.clone(),
+        })
+    }
+
+    fn substitute_type(&self, ty: &ast::Type, type_map: &std::collections::HashMap<String, ast::Type>) -> Result<ast::Type, CompileError> {
+        match ty {
+            ast::Type::Generic(name) => {
+                type_map.get(name).cloned().ok_or_else(|| CompileError::CodegenError {
+                    message: format!("Unresolved generic type parameter: {}", name),
+                    span: None,
+                    file_id: self.file_id,
+                })
+            }
+            ast::Type::Array(inner) => {
+                Ok(ast::Type::Array(Box::new(self.substitute_type(inner, type_map)?)))
+            }
+            ast::Type::SizedArray(inner, size) => {
+                Ok(ast::Type::SizedArray(Box::new(self.substitute_type(inner, type_map)?), *size))
+            }
+            ast::Type::GenericInstance(name, args) => {
+                let mut substituted_args = Vec::new();
+                for arg in args {
+                    substituted_args.push(self.substitute_type(arg, type_map)?);
+                }
+                Ok(ast::Type::GenericInstance(name.clone(), substituted_args))
+            }
+            _ => {
+                Ok(ty.clone())
+            }
+        }
+    }
+
+    fn substitute_stmt(&self, stmt: &ast::Stmt, type_map: &std::collections::HashMap<String, ast::Type>) -> Result<ast::Stmt, CompileError> {
+        match stmt {
+            ast::Stmt::Let(name, ty_opt, expr, span, visibility) => {
+                let new_ty = if let Some(ty) = ty_opt.as_ref() {
+                    Some(self.substitute_type(ty, type_map)?)
+                } else {
+                    None
+                };
+                let new_expr = self.substitute_expr(expr, type_map)?;
+                Ok(ast::Stmt::Let(name.clone(), new_ty, new_expr, span.clone(), visibility.clone()))
+            }
+            ast::Stmt::Expr(expr, span) => {
+                Ok(ast::Stmt::Expr(self.substitute_expr(expr, type_map)?, span.clone()))
+            }
+            ast::Stmt::Return(expr, span) => {
+                let new_expr = self.substitute_expr(expr, type_map)?;
+                Ok(ast::Stmt::Return(new_expr, span.clone()))
+            }
+            _ => Ok(stmt.clone()),
+        }
+    }
+
+    fn substitute_expr(&self, expr: &ast::Expr, type_map: &std::collections::HashMap<String, ast::Type>) -> Result<ast::Expr, CompileError> {
+        match expr {
+            ast::Expr::Call(name, args, info) => {
+                let new_args = args.iter()
+                    .map(|arg| self.substitute_expr(arg, type_map))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let new_info = ast::ExprInfo {
+                    span: info.span,
+                    ty: self.substitute_type(&info.ty, type_map)?,
+                    is_tail: info.is_tail,
+                };
+                Ok(ast::Expr::Call(name.clone(), new_args, new_info))
+            }
+            ast::Expr::BinOp(left, op, right, info) => {
+                let new_info = ast::ExprInfo {
+                    span: info.span,
+                    ty: self.substitute_type(&info.ty, type_map)?,
+                    is_tail: info.is_tail,
+                };
+                Ok(ast::Expr::BinOp(
+                    Box::new(self.substitute_expr(left, type_map)?),
+                    op.clone(),
+                    Box::new(self.substitute_expr(right, type_map)?),
+                    new_info
+                ))
+            }
+            ast::Expr::Var(name, info) => {
+                let new_info = ast::ExprInfo {
+                    span: info.span,
+                    ty: self.substitute_type(&info.ty, type_map)?,
+                    is_tail: info.is_tail,
+                };
+                Ok(ast::Expr::Var(name.clone(), new_info))
+            }
+            ast::Expr::TemplateStr(parts, info) => {
+                let new_parts = parts.iter()
+                    .map(|part| match part {
+                        ast::TemplateStrPart::Literal(text) => Ok::<ast::TemplateStrPart, CompileError>(ast::TemplateStrPart::Literal(text.clone())),
+                        ast::TemplateStrPart::Expression(expr) => {
+                            Ok(ast::TemplateStrPart::Expression(Box::new(self.substitute_expr(expr, type_map)?)))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let new_info = ast::ExprInfo {
+                    span: info.span,
+                    ty: self.substitute_type(&info.ty, type_map)?,
+                    is_tail: info.is_tail,
+                };
+                Ok(ast::Expr::TemplateStr(new_parts, new_info))
+            }
+            _ => {
+                let new_info = ast::ExprInfo {
+                    span: expr.get_info().span,
+                    ty: self.substitute_type(&expr.get_info().ty, type_map)?,
+                    is_tail: expr.get_info().is_tail,
+                };
+                match expr {
+                    ast::Expr::Int(value, _) => Ok(ast::Expr::Int(*value, new_info)),
+                    ast::Expr::Int64(value, _) => Ok(ast::Expr::Int64(*value, new_info)),
+                    ast::Expr::Bool(value, _) => Ok(ast::Expr::Bool(*value, new_info)),
+                    ast::Expr::Str(value, _) => Ok(ast::Expr::Str(value.clone(), new_info)),
+                    ast::Expr::F32(value, _) => Ok(ast::Expr::F32(*value, new_info)),
+                    ast::Expr::Void(_) => Ok(ast::Expr::Void(new_info)),
+                    _ => Ok(expr.clone()),
+                }
+            }
+        }
+    }
 
     fn emit_tests(&mut self, program: &ast::Program) -> Result<(), CompileError> {
         if self.is_test_mode {
@@ -366,7 +595,7 @@ impl CBackend {
     }
     fn emit_header(&mut self) {
         self.header.push_str(&format!(
-            "// Generated by Veil Compiler (target: {})\n",
+            "// Generated by Velang Compiler (target: {})\n",
             self.config.target_triple
         ));
         self.header
@@ -428,6 +657,11 @@ impl CBackend {
 
         let thread_local_keyword = if cfg!(target_os = "windows") && cfg!(target_env = "msvc") {
             "__declspec(thread)"
+        } else if cfg!(any(target_env = "gnu", target_env = "musl"))
+            || cfg!(target_os = "linux")
+            || cfg!(target_os = "macos")
+        {
+            "__thread"
         } else {
             "_Thread_local"
         };
@@ -536,8 +770,6 @@ impl CBackend {
             .push_str("static char* ve_int_to_str(int num) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(12);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header.push_str("    sprintf(buffer, \"%d\", num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -545,8 +777,6 @@ impl CBackend {
             .push_str("static char* ve_float_to_str(float num) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(32);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header.push_str("    sprintf(buffer, \"%g\", num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -555,8 +785,6 @@ impl CBackend {
             .push_str("static char* ve_double_to_str(double num) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(32);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header.push_str("    sprintf(buffer, \"%g\", num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -564,8 +792,6 @@ impl CBackend {
             .push_str("static char* ve_i8_to_str(ve_i8 num) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(8);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header
             .push_str("    sprintf(buffer, \"%d\", (int)num);\n");
         self.header.push_str("    return buffer;\n");
@@ -576,8 +802,6 @@ impl CBackend {
         self.header
             .push_str("    char* buffer = ve_arena_alloc(8);\n");
         self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
-        self.header
             .push_str("    sprintf(buffer, \"%d\", (int)num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -586,8 +810,6 @@ impl CBackend {
             .push_str("static char* ve_i64_to_str(ve_i64 num) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(24);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header
             .push_str("    sprintf(buffer, \"%lld\", num);\n");
         self.header.push_str("    return buffer;\n");
@@ -598,8 +820,6 @@ impl CBackend {
         self.header
             .push_str("    char* buffer = ve_arena_alloc(8);\n");
         self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
-        self.header
             .push_str("    sprintf(buffer, \"%u\", (unsigned int)num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -609,8 +829,6 @@ impl CBackend {
         self.header
             .push_str("    char* buffer = ve_arena_alloc(8);\n");
         self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
-        self.header
             .push_str("    sprintf(buffer, \"%u\", (unsigned int)num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -619,8 +837,6 @@ impl CBackend {
             .push_str("static char* ve_u32_to_str(ve_u32 num) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(16);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header.push_str("    sprintf(buffer, \"%u\", num);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -629,8 +845,6 @@ impl CBackend {
             .push_str("static char* ve_u64_to_str(ve_u64 num) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(24);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header
             .push_str("    sprintf(buffer, \"%llu\", num);\n");
         self.header.push_str("    return buffer;\n");
@@ -652,8 +866,6 @@ impl CBackend {
             .push_str("static char* ve_ptr_to_str(void* ptr) {\n");
         self.header
             .push_str("    char* buffer = ve_arena_alloc(20);\n");
-        self.header
-            .push_str("    if (!buffer) return \"<alloc_failed>\";\n");
         self.header.push_str("    sprintf(buffer, \"%p\", ptr);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
@@ -727,59 +939,18 @@ impl CBackend {
     }
 
     fn emit_main_if_missing(&mut self, program: &ast::Program) -> Result<(), CompileError> {
-        if self.is_test_mode {
-            self.body.push_str("int main(int argc, char *argv[]) {\n");
-            self.body.push_str("    if (argc > 1) {\n");
-            for test in &program.tests {
-                let c_test_name = format!("ve_test_{}", test.name);
-                self.body.push_str(&format!("        if (strcmp(argv[1], \"{}\") == 0) {{\n", test.name));
-                self.body.push_str(&format!("            {}();\n", c_test_name));
-                self.body.push_str("            return 0;\n");
-                self.body.push_str("        }\n");
-            }
-            if let Some(test_name) = &self.test_name {
-                let c_test_name = format!("ve_test_{}", test_name);
-                self.body.push_str(&format!("        {}();\n", c_test_name));
-            } else {
-                 for test in &program.tests {
-                    let c_test_name = format!("ve_test_{}", test.name);
-                    self.body.push_str(&format!("        {}();\n", c_test_name));
-                }
-            }
-            self.body.push_str("    } else {\n");
-            if let Some(test_name) = &self.test_name {
-                let c_test_name = format!("ve_test_{}", test_name);
-                self.body.push_str(&format!("        {}();\n", c_test_name));
-            } else {
-                for test in &program.tests {
-                    let c_test_name = format!("ve_test_{}", test.name);
-                    self.body.push_str(&format!("        {}();\n", c_test_name));
-                }
-            }
-            self.body.push_str("    }\n");
-            self.body.push_str("    ve_arena_cleanup();\n");
-            self.body.push_str("    return 0;\n");
-            self.body.push_str("}\n");
-        } else if !program.functions.iter().any(|f| f.name == "main") && !program.stmts.is_empty() {
-            self.body.push_str("\nint main() {\n");
+        if !program.functions.iter().any(|f| f.name == "main") {
+            self.body.push_str("\nint main(int argc, char* argv[]) {\n");
 
             if self.is_test_mode {
-                if let Some(ref specific_test) = self.test_name {
-                    if let Some(_test) = program.tests.iter().find(|t| t.name == *specific_test) {
-                        let func_name = format!("ve_test_{}", specific_test);
-                        self.body.push_str(&format!("    {}();\n", func_name));
-                    } else {
-                        return Err(CompileError::CodegenError {
-                            message: format!("Test '{}' not found", specific_test),
-                            span: None,
-                            file_id: self.file_id,
-                        });
-                    }
-                } else {
-                    for test in &program.tests {
-                        let func_name = format!("ve_test_{}", test.name);
-                        self.body.push_str(&format!("    {}();\n", func_name));
-                    }
+                self.body.push_str("    const char* test_to_run = argc > 1 ? argv[1] : NULL;\n");
+                self.body.push_str("    \n");
+                
+                for test in &program.tests {
+                    let func_name = format!("ve_test_{}", test.name);
+                    self.body.push_str(&format!("    if (test_to_run == NULL || strcmp(test_to_run, \"{}\") == 0) {{\n", test.name));
+                    self.body.push_str(&format!("        {}();\n", func_name));
+                    self.body.push_str("    }\n");
                 }
                 
                 self.body.push_str("    printf(\"\\n\");\n");
@@ -802,13 +973,13 @@ impl CBackend {
 
             self.body.push_str("#ifdef VE_DEBUG_MEMORY\n    ve_arena_stats();\n#endif\n");
             self.body.push_str("    ve_arena_cleanup();\n");
-            self.body.push_str("    return 0;\n");
-            self.body.push_str("}\n");
+            self.body.push_str("    return 0;\n}\n");
         }
         Ok(())
     }
 
     fn emit_functions(&mut self, program: &ast::Program) -> Result<(), CompileError> {
+        
         for func in &program.functions {
             let return_type = if func.name == "main" {
                 "int".to_string()
@@ -821,8 +992,7 @@ impl CBackend {
                 format!("ve_{}", func.name)
             };
             
-
-            
+        
             let params = func
                 .params
                 .iter()
@@ -832,14 +1002,17 @@ impl CBackend {
             self.body
                 .push_str(&format!("{} {}({});\n", return_type, func_name, params));
         }
+        
 
+        
         for func in &program.functions {
             self.emit_function(func)?;
         }
-
+        
+    
         Ok(())
     }
-
+    
     fn emit_function(&mut self, func: &ast::Function) -> Result<(), CompileError> {
         let return_type = if func.name == "main" {
             "int".to_string()
@@ -853,12 +1026,20 @@ impl CBackend {
             format!("ve_{}", func.name)
         };
 
+        let is_generic = !func.generic_params.is_empty();
         let mut param_strings = Vec::new();
+        
         for (name, ty) in &func.params {
-            let c_ty = self.type_to_c(ty);
+            let c_ty = if is_generic && matches!(ty, Type::Generic(_)) {
+                "void*".to_string()
+            } else {
+                self.type_to_c(ty)
+            };
+            
             param_strings.push(format!("{} {}", c_ty, name));
             self.variables.borrow_mut().insert(name.clone(), ty.clone());
         }
+        
         let params = param_strings.join(", ");
 
         self.body
@@ -886,6 +1067,7 @@ impl CBackend {
                 .is_some_and(|s| matches!(s, ast::Stmt::Return(..)));
 
             if !last_is_return {
+                self.body.push_str("#ifdef VE_DEBUG_MEMORY\n    ve_arena_stats();\n#endif\n");
                 self.body.push_str("    ve_arena_cleanup();\n");
                 self.body.push_str("    return 0;\n");
             }
@@ -896,7 +1078,7 @@ impl CBackend {
         self.body.push_str("}\n\n");
         Ok(())
     }
-
+    
     fn emit_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
         match stmt {
             ast::Stmt::Let(name, ty, expr, _, _) => {
@@ -1153,7 +1335,8 @@ impl CBackend {
                 match var_type {
                     Type::I32 | Type::String | Type::Pointer(_) | Type::RawPtr | Type::Struct(_)| 
                     Type::Array(_) | Type::SizedArray(_, _) | Type::F32 | Type::F64 | Type::I8 | 
-                    Type::I16 | Type::I64 | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Unknown 
+                    Type::I16 | Type::I64 | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Unknown |
+                    Type::Generic(_) 
                     => Ok(name.clone()),
                     Type::Bool => {
                         self.includes.borrow_mut().insert("<stdbool.h>".to_string());
@@ -1167,36 +1350,17 @@ impl CBackend {
                 }
             }
             ast::Expr::Call(name, args, _expr_info) => {
-                let mut args_code = Vec::new();
-
-                let param_types = self
-                    .imported_functions
-                    .get(name)
-                    .map(|(params, _)| params.clone());
-
-                for (i, arg) in args.iter().enumerate() {
-                    let value = self.emit_expr(arg)?;
-                    let arg_type = arg.get_type();
-
-                    let expected_type =
-                        param_types.as_ref().and_then(|types| types.get(i)).cloned();
-
-                    if let Some(expected) = expected_type {
-                        if expected == Type::String && arg_type != Type::String {
-                            args_code.push(self.convert_to_c_str(&value, &arg_type));
-                        } else {
-                            args_code.push(value);
-                        }
-                    } else {
-                        args_code.push(value);
-                    }
-                }
                 let final_name = if self.ffi_functions.contains(name) {
                     name.clone()
                 } else {
                     format!("ve_{}", name)
                 };
-
+                
+                let mut args_code = Vec::new();
+                for arg in args {
+                    args_code.push(self.emit_expr(arg)?);
+                }
+                
                 Ok(format!("{}({})", final_name, args_code.join(", ")))
             }
             ast::Expr::Void(_) => Ok("".to_string()),
@@ -1645,6 +1809,7 @@ impl CBackend {
             Type::RawPtr => "void*".to_string(),
             Type::Any => "void*".to_string(),
             Type::Unknown | Type::Generic(_) => "void*".to_string(),
+            
         }
     }
 
@@ -1718,8 +1883,7 @@ impl CBackend {
                 eprintln!("Warning: Unknown type in conversion to string. Check type inference.");
                 "[unknown]".to_string()
             }
-            Type::Generic(name) => format!("[generic: {}]", name),
-            Type::GenericInstance(name, _) => format!("[generic instance: {}]", name),
+            Type::GenericInstance(name, _) => format!("ve_ptr_to_str({})", code),
             _ => {
                 eprintln!("Warning: Cannot convert type {:?} to string", ty);
                 "[unsupported type]".to_string()
@@ -1771,8 +1935,7 @@ impl CBackend {
                         self.header
                             .push_str(&format!("            {} field{};\n", c_type, i));
                     }
-                    self.header
-                        .push_str(&format!("        }} {};\n", variant.name.to_lowercase()));
+                    self.header.push_str(&format!("        }} {};\n", variant.name.to_lowercase()));
                 }
             }
         }
@@ -1832,8 +1995,7 @@ impl CBackend {
                     "static {} {}_{}_new() {{\n",
                     enum_name, enum_name, variant.name
                 ));
-                self.header
-                    .push_str(&format!("    {} result;\n", enum_name));
+                self.header.push_str(&format!("    {} result;\n", enum_name));
                 self.header.push_str(&format!(
                     "    result.tag = {}_{};\n",
                     enum_name, variant.name
@@ -1950,7 +2112,7 @@ impl CBackend {
         code: &mut String,
     ) -> Result<(), CompileError> {
         let matched_type = self.variables.borrow().get(matched_var).cloned();
-        let (_enum_name, is_generic, tag_prefix) = if let Some(Type::GenericInstance(name, _args)) = &matched_type {
+        let (enum_name, is_generic, tag_prefix) = if let Some(Type::GenericInstance(name, args)) = &matched_type {
             (name.clone(), true, format!("ve_{}", self.type_to_c_name(&matched_type.as_ref().unwrap())))
         } else {
             ("".to_string(), false, "".to_string())
@@ -2074,8 +2236,8 @@ impl CBackend {
                 self.analyze_stmt_memory(stmt);
             }
             self.calculate_arena_size();
-        }
-
+    }
+    
     fn analyze_function_memory(&mut self, stmts: &[ast::Stmt]) -> usize {
         let mut depth = 0;
         for stmt in stmts {
@@ -2197,7 +2359,7 @@ impl CBackend {
             Type::String => 256,
             Type::Pointer(_) | Type::RawPtr => 8,
             Type::Array(_) => 1024,
-            Type::SizedArray(_inner, size) => size * 8,
+            Type::SizedArray(inner, size) => size * 8,
             Type::Struct(name) => {
                 if let Some(fields) = self.struct_defs.get(name) {
                     fields.iter().map(|(_, ty)| self.get_type_size(ty)).sum()
@@ -2234,4 +2396,5 @@ impl CBackend {
             self.memory_analysis.estimated_arena_size = 64 * 1024 * 1024;
         }
     }
+
 }

@@ -59,6 +59,7 @@ pub enum CliCommand {
         input: PathBuf,
         test_name: Option<String>,
         verbose: bool,
+        list: bool,
     }
 }
 
@@ -145,6 +146,8 @@ enum Command {
        test_name: Option<String>,
        #[arg(short, long)]
        verbose: bool,
+       #[arg(long, help = "List available tests")]
+       list: bool,
     }
 }
 
@@ -195,10 +198,12 @@ pub fn parse() -> anyhow::Result<CliCommand> {
             input,
             test_name,
             verbose,
+            list,
         }) => Ok(CliCommand::Test {
             input,
             test_name,
             verbose,
+            list,
         }),
         None => {
             let input = args
