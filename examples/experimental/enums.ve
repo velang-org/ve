@@ -8,9 +8,9 @@ enum Color {
 
 
 fn main() {
-    let test = Color.Red;
+    let colour = Color.Red;
 
-    let value = match test {
+    let value = match colour {
         Color.Red => "red",
         Color.Green => "green",
         Color.Blue => "blue",

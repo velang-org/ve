@@ -804,7 +804,8 @@ fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String
         | ast::Expr::F32(_, _)
         | ast::Expr::Bool(_, _)
         | ast::Expr::Str(_, _)
-        | ast::Expr::Void(_) => {}
+        | ast::Expr::Void(_)
+        | ast::Expr::None(_) => {}
         ast::Expr::SafeBlock(stmts, _) => {
             collect_variable_dependencies_from_block(stmts, dependencies);
         }
@@ -826,6 +827,17 @@ fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String
                             collect_variable_dependencies(stmt, dependencies);
                         }
                     }
+                }
+            }
+        }
+        ast::Expr::If(condition, then_branch, else_branch, _) => {
+            collect_expr_dependencies(condition, dependencies);
+            for stmt in then_branch {
+                collect_variable_dependencies(stmt, dependencies);
+            }
+            if let Some(else_stmts) = else_branch {
+                for stmt in else_stmts {
+                    collect_variable_dependencies(stmt, dependencies);
                 }
             }
         }

@@ -8,6 +8,7 @@ struct Context {
     variables: HashMap<String, Type>,
     current_return_type: Type,
     in_safe: bool,
+    in_loop: bool,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
     enum_defs: HashMap<String, Vec<String>>,
     enum_def_map: HashMap<String, ast::EnumDef>,
@@ -21,6 +22,7 @@ impl Context {
             variables: HashMap::new(),
             current_return_type: Type::Void,
             in_safe: false,
+            in_loop: false,
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             enum_def_map: HashMap::new(),
@@ -210,17 +212,40 @@ impl TypeChecker {
                     return Ok(());
                 }
 
-                if let Some(decl_ty) = decl_ty {
-                    if !Self::is_convertible(&expr_ty, decl_ty) {
+                let final_ty = if let Some(decl_ty) = decl_ty {
+                    if expr_ty == Type::NoneType {
+                        match decl_ty {
+                            Type::Optional(_) => decl_ty.clone(),
+                            _ => {
+                                self.report_error(
+                                    &format!("Cannot assign None to non-optional type {}", decl_ty),
+                                    expr.span(),
+                                );
+                                decl_ty.clone()
+                            }
+                        }
+                    } else if !Self::is_convertible(&expr_ty, decl_ty) {
                         self.report_error(
                             &format!("Cannot convert {} to {}", expr_ty, decl_ty),
                             expr.span(),
                         );
+                        decl_ty.clone()
+                    } else {
+                        decl_ty.clone()
                     }
-                }
+                } else {
+                    if expr_ty == Type::NoneType {
+                        self.report_error(
+                            "Cannot infer type from None literal - specify type annotation",
+                            expr.span(),
+                        );
+                        Type::Unknown
+                    } else {
+                        expr_ty
+                    }
+                };
 
-                let ty = decl_ty.clone().unwrap_or(expr_ty);
-                self.context.variables.insert(name.clone(), ty);
+                self.context.variables.insert(name.clone(), final_ty);
             }
             Stmt::Var(name, decl_ty, _) => {
                 let ty = decl_ty.clone().unwrap_or(Type::Unknown);
@@ -261,13 +286,27 @@ impl TypeChecker {
             Stmt::While(cond, body, _) => {
                 let cond_ty = self.check_expr(cond)?;
                 self.expect_type(&cond_ty, &Type::Bool, cond.span())?;
+                self.context.in_loop = true;
                 self.check_block(body)?;
+                self.context.in_loop = false;
             }
             Stmt::For(name, range, body, _) => {
                 self.check_expr(range)?;
 
                 self.context.variables.insert(name.clone(), Type::I32);
+                self.context.in_loop = true;
                 self.check_block(body)?;
+                self.context.in_loop = false;
+            }
+            Stmt::Break(span) => {
+                if !self.context.in_loop {
+                    self.report_error("Break statement outside of loop", *span);
+                }
+            }
+            Stmt::Continue(span) => {
+                if !self.context.in_loop {
+                    self.report_error("Continue statement outside of loop", *span);
+                }
             }
         }
         Ok(())
@@ -744,7 +783,7 @@ impl TypeChecker {
                     (Type::String, Type::RawPtr) => Ok(target_ty.clone()),
                     (Type::F32, Type::String) => Ok(target_ty.clone()),
                     _ => {
-                        if !Self::is_cast_allowed(&source_ty, target_ty) {
+                        if !self.is_cast_allowed(&source_ty, target_ty) {
                             self.report_error(
                                 &format!("Invalid cast from {} to {}", source_ty, target_ty),
                                 *span,
@@ -991,6 +1030,7 @@ impl TypeChecker {
                                                     | Type::F64
                                                     | Type::Bool
                                                     | Type::Generic(_)
+                                                    | Type::Optional(_)  
                                             )
                                         {
                                             self.report_error(
@@ -1016,6 +1056,7 @@ impl TypeChecker {
                                                     | Type::F64
                                                     | Type::Bool
                                                     | Type::Generic(_)
+                                                    | Type::Optional(_) 
                                             )
                                         {
                                             self.report_error(
@@ -1060,6 +1101,7 @@ impl TypeChecker {
                                         | Type::F64
                                         | Type::Bool
                                         | Type::Generic(_)
+                                        | Type::Optional(_)  
                                 ) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
@@ -1086,6 +1128,7 @@ impl TypeChecker {
                                         | Type::F64
                                         | Type::Bool
                                         | Type::Generic(_)
+                                        | Type::Optional(_) 
                                 ) {
                                     let msg = format!("Cannot convert type {:?} to string", ty);
                                     let span = expr.span();
@@ -1194,10 +1237,66 @@ impl TypeChecker {
                 info.ty = result_ty.clone();
                 Ok(result_ty)
             }
+            Expr::If(condition, then_branch, else_branch, info) => {
+                let condition_ty = self.check_expr(condition)?;
+                if !Self::is_convertible(&condition_ty, &Type::Bool) {
+                    self.report_error("If condition must be boolean", info.span);
+                }
+
+                let original_variables = self.context.variables.clone();
+                
+                for stmt in then_branch.iter_mut() {
+                    self.check_stmt(stmt)?;
+                }
+                let then_ty = if let Some(last_stmt) = then_branch.last() {
+                    match last_stmt {
+                        ast::Stmt::Expr(expr, _) => expr.get_type(),
+                        _ => Type::Void,
+                    }
+                } else {
+                    Type::Void
+                };
+
+                let else_ty = if let Some(else_stmts) = else_branch {
+                    self.context.variables = original_variables.clone();
+                    for stmt in else_stmts.iter_mut() {
+                        self.check_stmt(stmt)?;
+                    }
+                    if let Some(last_stmt) = else_stmts.last() {
+                        match last_stmt {
+                            ast::Stmt::Expr(expr, _) => expr.get_type(),
+                            _ => Type::Void,
+                        }
+                    } else {
+                        Type::Void
+                    }
+                } else {
+                    Type::Void
+                };
+
+                self.context.variables = original_variables;
+
+                let result_ty = if Self::is_convertible(&then_ty, &else_ty) {
+                    then_ty
+                } else if Self::is_convertible(&else_ty, &then_ty) {
+                    else_ty
+                } else if then_ty == Type::Void && else_ty == Type::Void {
+                    Type::Void
+                } else {
+                    then_ty
+                };
+
+                info.ty = result_ty.clone();
+                Ok(result_ty)
+            }
+            Expr::None(info) => {
+                info.ty = Type::NoneType;
+                Ok(Type::NoneType)
+            }
         }
     }
 
-    fn is_cast_allowed(from: &Type, to: &Type) -> bool {
+    fn is_cast_allowed(&self, from: &Type, to: &Type) -> bool {
     match (from, to) {
         (Type::Bool, Type::String) => true,
         (Type::I32, Type::String) => true,
@@ -1214,8 +1313,17 @@ impl TypeChecker {
         (Type::I32, Type::F32) => true,
         (Type::I32, Type::U32) => true,
         (Type::U32, Type::I32) => true,
+        (Type::U8, Type::I32) => true,
         (Type::String, Type::I32) => true,
         (Type::String, Type::RawPtr) => true,
+        (Type::RawPtr, Type::String) => true,
+        (Type::Enum(enum_name), Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::I8 | Type::I16 | Type::I32 | Type::I64) => {
+            if let Some(enum_def) = self.context.enum_def_map.get(enum_name) {
+                enum_def.variants.iter().any(|v| v.value.is_some())
+            } else {
+                false
+            }
+        },
         _ => Self::is_convertible(from, to),
     }
 }
@@ -1321,7 +1429,7 @@ impl TypeChecker {
             | (Type::I16, Type::I32 | Type::I64)
             | (Type::I32, Type::I64 | Type::F32 | Type::F64 | Type::U32 | Type::Bool | Type::Pointer(_) | Type::RawPtr | Type::CSize | Type::U8 | Type::U16 | Type::I8 | Type::I16)
             | (Type::I64, Type::U32 | Type::U64 | Type::U8 | Type::U16 | Type::I8 | Type::I16 | Type::I32)
-            | (Type::U8, Type::U16 | Type::U32 | Type::U64)
+            | (Type::U8, Type::U16 | Type::U32 | Type::U64 | Type::I32)
             | (Type::U16, Type::U32 | Type::U64)
             | (Type::U32, Type::U64 | Type::I32)
             | (Type::Bool, Type::I32)
@@ -1343,6 +1451,15 @@ impl TypeChecker {
             (Type::Function(a1, r1), Type::Function(a2, r2)) =>
                 a1.len() == a2.len() && a1.iter().zip(a2).all(|(a, b)| Self::is_convertible(a, b)) && Self::is_convertible(r1, r2),
             (Type::Enum(n1), Type::Enum(n2)) => n1 == n2,
+            (Type::Optional(inner1), Type::Optional(inner2)) => Self::is_convertible(inner1, inner2),
+            (Type::Optional(inner), to) => Self::is_convertible(inner, to),
+            (from, Type::Optional(inner)) => {
+                if from == &Type::NoneType {
+                    true
+                } else {
+                    Self::is_convertible(from, inner)
+                }
+            }
             (Type::Unknown, _) | (_, Type::Unknown) => true,
             _ => false,
         }

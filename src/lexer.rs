@@ -45,6 +45,8 @@ pub enum Token {
     KwTrue,
     #[token("false")]
     KwFalse,
+    #[token("None")]
+    KwNone,
     #[token(".")]
     Dot,
     #[token("...")]
@@ -171,6 +173,8 @@ pub enum Token {
     Hash,
     #[token("!")]
     Bang,
+    #[token("?")]
+    Question,
 
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse().ok())]
     F32(f32),
@@ -189,6 +193,11 @@ pub enum Token {
 
     #[regex(r"[0-9]+", |lex| lex.slice().to_string())]
     Int(String),
+
+    #[token("break")]
+    KwBreak,
+    #[token("continue")]
+    KwContinue,
 }
 
 pub struct Lexer<'a> {

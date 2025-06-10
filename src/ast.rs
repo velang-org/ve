@@ -33,6 +33,8 @@ pub enum Type {
     Ellipsis,
     Generic(String),
     GenericInstance(String, Vec<Type>),
+    Optional(Box<Type>),
+    NoneType,
 }
 
 impl Type {
@@ -91,6 +93,7 @@ pub struct StructDef {
 pub struct EnumVariant {
     pub name: String,
     pub data: Option<Vec<Type>>,
+    pub value: Option<i32>,  // For explicit values like Red = 1
     #[allow(dead_code)]
     pub span: Span,
 }
@@ -156,6 +159,8 @@ pub enum Stmt {
     Defer(Expr, Span),
     While(Expr, Vec<Stmt>, Span),
     For(String, Expr, Vec<Stmt>, Span),
+    Break(Span),
+    Continue(Span),
     Block(Vec<Stmt>, Span),
 }
 
@@ -206,7 +211,9 @@ pub enum Expr {
     FfiCall(String, Vec<Expr>, ExprInfo),
     EnumConstruct(String, String, Vec<Expr>, ExprInfo),
     Match(Box<Pattern>, Vec<MatchArm>, ExprInfo),
+    If(Box<Expr>, Vec<Stmt>, Option<Vec<Stmt>>, ExprInfo),
     Void(ExprInfo),
+    None(ExprInfo),
 }
 
 #[derive(Debug, Clone)]
@@ -267,7 +274,9 @@ impl Expr {
             Expr::FfiCall(_, _, info) => info.span,
             Expr::EnumConstruct(_, _, _, info) => info.span,
             Expr::Match(_, _, info) => info.span,
+            Expr::If(_, _, _, info) => info.span,
             Expr::Void(info) => info.span,
+            Expr::None(info) => info.span,
         }
     }
 
@@ -295,7 +304,9 @@ impl Expr {
             Expr::FfiCall(_, _, info) => info.ty.clone(),
             Expr::EnumConstruct(_, _, _, info) => info.ty.clone(),
             Expr::Match(_, _, info) => info.ty.clone(),
+            Expr::If(_, _, _, info) => info.ty.clone(),
             Expr::Void(info) => info.ty.clone(),
+            Expr::None(info) => info.ty.clone(),
         }
     }
 
@@ -323,7 +334,9 @@ impl Expr {
             Expr::FfiCall(_, _, info) => info,
             Expr::EnumConstruct(_, _, _, info) => info,
             Expr::Match(_, _, info) => info,
+            Expr::If(_, _, _, info) => info,
             Expr::Void(info) => info,
+            Expr::None(info) => info,
         }
     }
 
@@ -331,7 +344,7 @@ impl Expr {
     pub fn is_constant(&self) -> bool {
         matches!(
             self,
-            Expr::Int(_, _) | Expr::Str(_, _) | Expr::Bool(_, _) | Expr::F32(_, _)
+            Expr::Int(_, _) | Expr::Str(_, _) | Expr::Bool(_, _) | Expr::F32(_, _) | Expr::None(_)
         )
     }
 
@@ -440,6 +453,8 @@ impl fmt::Display for Type {
             Type::CInt => write!(f, "int"),
             Type::CSize => write!(f, "size_t"),
             Type::Ellipsis => write!(f, "..."),
+            Type::Optional(ty) => write!(f, "{}?", ty),
+            Type::NoneType => write!(f, "None"),
         }
     }
 }
@@ -466,6 +481,8 @@ impl Stmt {
             Stmt::Defer(_, span) => *span,
             Stmt::While(_, _, span) => *span,
             Stmt::For(_, _, _, span) => *span,
+            Stmt::Break(span) => *span,
+            Stmt::Continue(span) => *span,
             Stmt::Block(_, span) => *span,
         }
     }
@@ -577,7 +594,7 @@ pub trait AstVisitor {
                 }
                 self.visit_type(ret);
             }
-            Type::Pointer(inner) | Type::Array(inner) | Type::SizedArray(inner, _) => {
+            Type::Pointer(inner) | Type::Array(inner) | Type::SizedArray(inner, _) | Type::Optional(inner) => {
                 self.visit_type(inner);
             }
             Type::GenericInstance(_, args) => {
@@ -634,6 +651,8 @@ pub trait AstVisitor {
                     self.visit_stmt(stmt);
                 }
             }
+            Stmt::Break(_) => {}
+            Stmt::Continue(_) => {}
             Stmt::Block(stmts, _) => {
                 for stmt in stmts {
                     self.visit_stmt(stmt);
@@ -650,7 +669,8 @@ pub trait AstVisitor {
             | Expr::Str(_, _)
             | Expr::Var(_, _)
             | Expr::F32(_, _)
-            | Expr::Void(_) => {}
+            | Expr::Void(_)
+            | Expr::None(_) => {}
 
             Expr::BinOp(left, _, right, _) => {
                 self.visit_expr(left);
@@ -725,6 +745,17 @@ pub trait AstVisitor {
                 self.visit_pattern(pattern);
                 for arm in arms {
                     self.visit_match_arm(arm);
+                }
+            }
+            Expr::If(condition, then_branch, else_branch, _) => {
+                self.visit_expr(condition);
+                for stmt in then_branch {
+                    self.visit_stmt(stmt);
+                }
+                if let Some(else_stmts) = else_branch {
+                    for stmt in else_stmts {
+                        self.visit_stmt(stmt);
+                    }
                 }
             }
         }
@@ -823,7 +854,8 @@ impl AstVisitor for GenericCallCollector {
             | Expr::Str(_, _)
             | Expr::Var(_, _)
             | Expr::F32(_, _)
-            | Expr::Void(_) => {}
+            | Expr::Void(_)
+            | Expr::None(_) => {}
             Expr::BinOp(left, _, right, _) => {
                 self.visit_expr(left);
                 self.visit_expr(right);
@@ -897,6 +929,17 @@ impl AstVisitor for GenericCallCollector {
                 self.visit_pattern(pattern);
                 for arm in arms {
                     self.visit_match_arm(arm);
+                }
+            }
+            Expr::If(condition, then_branch, else_branch, _) => {
+                self.visit_expr(condition);
+                for stmt in then_branch {
+                    self.visit_stmt(stmt);
+                }
+                if let Some(else_stmts) = else_branch {
+                    for stmt in else_stmts {
+                        self.visit_stmt(stmt);
+                    }
                 }
             }
         }
@@ -1012,6 +1055,8 @@ pub trait AstTransformer {
                     span,
                 )
             }
+            Stmt::Break(span) => Stmt::Break(span),
+            Stmt::Continue(span) => Stmt::Continue(span),
             Stmt::Block(stmts, span) => {
                 Stmt::Block(stmts.into_iter().map(|s| self.transform_stmt(s)).collect(), span)
             }
@@ -1027,6 +1072,7 @@ pub trait AstTransformer {
             Expr::Var(name, info) => Expr::Var(name, info),
             Expr::F32(f, info) => Expr::F32(f, info),
             Expr::Void(info) => Expr::Void(info),
+            Expr::None(info) => Expr::None(info),
             
             Expr::BinOp(left, op, right, info) => {
                 Expr::BinOp(
@@ -1113,6 +1159,14 @@ pub trait AstTransformer {
                 Expr::Match(
                     pattern,
                     arms.into_iter().map(|arm| self.transform_match_arm(arm)).collect(),
+                    info,
+                )
+            }
+            Expr::If(condition, then_branch, else_branch, info) => {
+                Expr::If(
+                    Box::new(self.transform_expr(*condition)),
+                    then_branch.into_iter().map(|s| self.transform_stmt(s)).collect(),
+                    else_branch.map(|stmts| stmts.into_iter().map(|s| self.transform_stmt(s)).collect()),
                     info,
                 )
             }

@@ -17,7 +17,7 @@ impl Target {
     pub fn create(
         config: CodegenConfig,
         file_id: FileId,
-        imported_return_types: std::collections::HashMap<
+        _imported_return_types: std::collections::HashMap<
             String,
             (Vec<crate::ast::Type>, crate::ast::Type),
         >,
