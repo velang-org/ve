@@ -640,18 +640,36 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
                     }
                 }
             }
-            Token::DotDot => {
-                let rhs = self.parse_expr_bp(rbp)?;
-                let span = Span::new(lhs.span().start(), rhs.span().end());
-                Ok(ast::Expr::Range(
-                    Box::new(lhs),
-                    Box::new(rhs),
-                    ast::ExprInfo {
+            Token::DotDot | Token::DotDotEq | Token::DotDotGt | Token::DotDotLt => {
+                let range_type = match *op {
+                    Token::DotDot => ast::RangeType::Exclusive,
+                    Token::DotDotEq => ast::RangeType::Inclusive,
+                    Token::DotDotGt => ast::RangeType::InfiniteUp,
+                    Token::DotDotLt => ast::RangeType::InfiniteDown,
+                    _ => unreachable!(),
+                };
+                
+                if matches!(*op, Token::DotDotGt | Token::DotDotLt) {
+                    let span = Span::new(lhs.span().start(), lhs.span().end());
+                    Ok(ast::Expr::InfiniteRange(range_type, ast::ExprInfo {
                         span,
                         ty: ast::Type::Unknown,
                         is_tail: false,
-                    },
-                ))
+                    }))
+                } else {
+                    let rhs = self.parse_expr_bp(rbp)?;
+                    let span = Span::new(lhs.span().start(), rhs.span().end());
+                    Ok(ast::Expr::Range(
+                        Box::new(lhs),
+                        Box::new(rhs),
+                        range_type,
+                        ast::ExprInfo {
+                            span,
+                            ty: ast::Type::Unknown,
+                            is_tail: false,
+                        },
+                    ))
+                }
             }
             Token::KwAs => {
                 let cast_type = self.parse_type()?;
@@ -708,7 +726,7 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             Token::Plus | Token::Minus => Some((9, 10)),
             Token::Star | Token::Slash | Token::Percent => Some((11, 12)),
             Token::DoubleStar | Token::Caret => Some((13, 14)),
-            Token::DotDot => Some((15, 16)),
+            Token::DotDot | Token::DotDotEq | Token::DotDotGt | Token::DotDotLt => Some((15, 16)),
             Token::KwAs => Some((17, 18)),
             Token::Dot => Some((19, 20)),
             Token::LBracket => Some((21, 22)),
@@ -1120,11 +1138,20 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
     fn parse_for(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
         self.consume(Token::KwFor, "Expected 'for'")?;
         let for_span = self.previous().map(|(_, s)| *s).unwrap();
+        let first_expr = self.parse_expr()?;
+        
+        let (ident, range_expr) = if let ast::Expr::Var(var_name, _) = &first_expr {
+            if self.check(Token::KwIn) {
+                self.consume(Token::KwIn, "Expected 'in' after loop variable")?;
+                let range_expr = self.parse_expr()?;
+                (var_name.clone(), range_expr)
+            } else {
+                (String::new(), first_expr)
+            }
+        } else {
+            (String::new(), first_expr)
+        };
 
-        let (ident, _) = self.consume_ident()?;
-        self.consume(Token::KwIn, "Expected 'in' after loop variable")?;
-
-        let range_expr = self.parse_expr()?;
         let body = self.parse_block()?;
 
         Ok(ast::Stmt::For(
@@ -1354,6 +1381,30 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
                 ty: ast::Type::NoneType,
                 is_tail: false,
             })),
+            Some((Token::DotDot, span)) => Ok(ast::Expr::InfiniteRange(
+                ast::RangeType::InfiniteRandom,
+                ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                }
+            )),
+            Some((Token::DotDotGt, span)) => Ok(ast::Expr::InfiniteRange(
+                ast::RangeType::InfiniteUp,
+                ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                }
+            )),
+            Some((Token::DotDotLt, span)) => Ok(ast::Expr::InfiniteRange(
+                ast::RangeType::InfiniteDown,
+                ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                }
+            )),
             Some((Token::LParen, span_start)) => {
                 let expr = self.parse_expr()?;
                 let span_end = self.expect(Token::RParen)?;
@@ -1415,6 +1466,30 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             Some((Token::KwMatch, span)) => self.parse_match(span),
             Some((Token::KwIf, span)) => self.parse_if_expr(span),
             Some((Token::KwLoop, span)) => self.parse_loop_expr(span),
+            Some((Token::DotDot, span)) => Ok(ast::Expr::InfiniteRange(
+                ast::RangeType::InfiniteRandom,
+                ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                }
+            )),
+            Some((Token::DotDotGt, span)) => Ok(ast::Expr::InfiniteRange(
+                ast::RangeType::InfiniteUp,
+                ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                }
+            )),
+            Some((Token::DotDotLt, span)) => Ok(ast::Expr::InfiniteRange(
+                ast::RangeType::InfiniteDown,
+                ast::ExprInfo {
+                    span,
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                }
+            )),
             _ => {
                 let token = self.previous().map(|(t, _)| t.clone()).unwrap();
                 let span = self.previous().map(|(_, s)| *s).unwrap();
@@ -1736,7 +1811,8 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             ast::Expr::SafeBlock(_, info) => info.is_tail = true,
             ast::Expr::Deref(_, info) => info.is_tail = true,
             ast::Expr::Assign(_, _, info) => info.is_tail = true,
-            ast::Expr::Range(_, _, info) => info.is_tail = true,
+            ast::Expr::Range(_, _, _, info) => info.is_tail = true,
+            ast::Expr::InfiniteRange(_, info) => info.is_tail = true,
             ast::Expr::StructInit(_, _, info) => info.is_tail = true,
             ast::Expr::FieldAccess(_, _, info) => info.is_tail = true,
             ast::Expr::ArrayInit(_, info) => info.is_tail = true,
@@ -1872,8 +1948,16 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
                     span,
                 ))
             }
-            Some((_, span)) => self.error("Expected pattern", span),
-            None => self.error("Expected pattern", Span::new(0, 0)),
+            Some((Token::KwNone, span)) => Ok(ast::Pattern::Literal(ast::Expr::None(ast::ExprInfo {
+                span,
+                ty: ast::Type::NoneType,
+                is_tail: false,
+            }), span)),
+            _ => {
+                let (_, span) = self.advance().unwrap();
+                let span = *span;
+                self.error("Expected pattern", span)
+            }
         }
     }
 

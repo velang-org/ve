@@ -232,7 +232,7 @@ impl CBackend {
                     collect_generic_enum_instances(b, out);
                 }
                 Expr::Deref(e, _) => collect_generic_enum_instances(e, out),
-                Expr::Range(a, b, _) => {
+                Expr::Range(a, b, _, _) => {
                     collect_generic_enum_instances(a, out);
                     collect_generic_enum_instances(b, out);
                 }
@@ -609,6 +609,7 @@ impl CBackend {
         self.header.push_str("#include <stdbool.h>\n");
         self.header.push_str("#include <math.h>\n");
         self.header.push_str("#include <stdint.h>\n");
+        self.header.push_str("#include <time.h>\n");
 
         for include in self.includes.borrow().iter() {
             self.header.push_str(&format!("#include {}\n", include));
@@ -1212,19 +1213,185 @@ impl CBackend {
                 self.body.push_str("}\n");
             }
             ast::Stmt::For(var_name, range, body, _) => {
-                let range_code = self.emit_expr(range)?;
-                let parts: Vec<&str> = range_code.split("..").collect();
-                let start = parts[0].trim();
-                let end = parts[1].trim();
-                self.body.push_str(&format!(
-                    "for (int {var} = {start}; {var} < {end}; {var}++) {{\n",
-                    var = var_name
-                ));
+                if let ast::Expr::Range(start_expr, end_expr, range_type, _) = range {
+                    let start_code = self.emit_expr(start_expr)?;
+                    let end_code = self.emit_expr(end_expr)?;
+                    
+                    let loop_var = if var_name.is_empty() {
+                        "_unused_var"
+                    } else {
+                        var_name
+                    };
+                    
+                    let is_reversed = if let (ast::Expr::Int(start_val, _), ast::Expr::Int(end_val, _)) = (start_expr.as_ref(), end_expr.as_ref()) {
+                        start_val > end_val
+                    } else {
+                        false
+                    };
+                    
+                    if is_reversed {
+                        let condition = match range_type {
+                            ast::RangeType::Exclusive => format!("{} > {}", loop_var, end_code),
+                            ast::RangeType::Inclusive => format!("{} >= {}", loop_var, end_code),
+                            _ => return Err(CompileError::CodegenError {
+                                message: format!("Unsupported range type for reversed range: {:?}", range_type),
+                                span: None,
+                                file_id: self.file_id,
+                            }),
+                        };
+                        
+                        self.body.push_str(&format!(
+                            "for (int {var} = {start}; {condition}; {var}--) {{\n",
+                            var = loop_var,
+                            start = start_code,
+                            condition = condition
+                        ));
+                    } else {
+                        let condition = match range_type {
+                            ast::RangeType::Exclusive => format!("{} < {}", loop_var, end_code),
+                            ast::RangeType::Inclusive => format!("{} <= {}", loop_var, end_code),
+                            _ => return Err(CompileError::CodegenError {
+                                message: format!("Unsupported range type for normal range: {:?}", range_type),
+                                span: None,
+                                file_id: self.file_id,
+                            }),
+                        };
+                        
+                        self.body.push_str(&format!(
+                            "for (int {var} = {start}; {condition}; {var}++) {{\n",
+                            var = loop_var,
+                            start = start_code,
+                            condition = condition
+                        ));
+                    }
+                } else if let ast::Expr::InfiniteRange(range_type, _) = range {
+                    let loop_var = if var_name.is_empty() {
+                        "_unused_var"
+                    } else {
+                        var_name
+                    };
+                    
+                    self.includes.borrow_mut().insert("<stdlib.h>".to_string());
+                    self.includes.borrow_mut().insert("<time.h>".to_string());
+                    
+                    let unique_id = format!("{}_{}", loop_var, self.body.len());
+                    
+                    match range_type {
+                        ast::RangeType::InfiniteRandom => {
+                            self.body.push_str(&format!(
+                                "{{\n\
+                                 static int seeded_{} = 0;\n\
+                                 if (!seeded_{}) {{\n\
+                                     srand(time(NULL) + {});\n\
+                                     seeded_{} = 1;\n\
+                                 }}\n\
+                                 for (int k = 0; k < 3; k++) rand();\n\
+                                 long long {var};\n\
+                                 int scale = rand() % 4;\n\
+                                 switch(scale) {{\n\
+                                     case 0: {var} = rand() % 1000; break; \n\
+                                     case 1: {var} = rand() % 1000000; break; \n\
+                                     case 2: {var} = ((long long)rand() << 16) | rand(); break; \n\
+                                     case 3: {var} = ((long long)rand() << 32) | ((long long)rand() << 16) | rand(); break; \n\
+                                 }}\n\
+                                 if (rand() % 2) {var} = -{var};  \n\
+                                 int direction_{var} = (rand() % 2) ? 1 : -1;\n\
+                                 for (;;) {{\n",
+                                unique_id, unique_id, unique_id.len() * 17, unique_id, var = loop_var
+                            ));
+                        }
+                        ast::RangeType::InfiniteUp => {
+                            self.body.push_str(&format!(
+                                "{{\n\
+                                 static int seeded_{} = 0;\n\
+                                 if (!seeded_{}) {{\n\
+                                     srand(time(NULL) + {}); \n\
+                                     seeded_{} = 1;\n\
+                                 }}\n\
+                                 for (int k = 0; k < 7; k++) rand(); \n\
+                                 long long {var};\n\
+                                 int scale = rand() % 4; \n\
+                                 switch(scale) {{\n\
+                                     case 0: {var} = rand() % 1000; break;  0\n\
+                                     case 1: {var} = rand() % 1000000; break;\n\
+                                     case 2: {var} = ((long long)rand() << 16) | rand(); break; \n\
+                                     case 3: {var} = ((long long)rand() << 32) | ((long long)rand() << 16) | rand(); break;\n\
+                                 }}\n\
+                                 for (;;) {{\n",
+                                unique_id, unique_id, unique_id.len() * 31, unique_id, var = loop_var
+                            ));
+                        }
+                        ast::RangeType::InfiniteDown => {
+                            self.body.push_str(&format!(
+                                "{{\n\
+                                 static int seeded_{} = 0;\n\
+                                 if (!seeded_{}) {{\n\
+                                     srand(time(NULL) + {}); \n\
+                                     seeded_{} = 1;\n\
+                                 }}\n\
+                                 for (int k = 0; k < 11; k++) rand(); \n\
+                                 long long {var};\n\
+                                 int scale = rand() % 4;  \n\
+                                 switch(scale) {{\n\
+                                     case 0: {var} = -(rand() % 1000); break; \n\
+                                     case 1: {var} = -(rand() % 1000000); break; \n\
+                                     case 2: {var} = -(((long long)rand() << 16) | rand()); break; \n\
+                                     case 3: {var} = -(((long long)rand() << 32) | ((long long)rand() << 16) | rand()); break; \n\
+                                 }}\n\
+                                 for (;;) {{\n",
+                                unique_id, unique_id, unique_id.len() * 43, unique_id, var = loop_var
+                            ));
+                        }
+                        _ => return Err(CompileError::CodegenError {
+                            message: format!("Invalid infinite range type: {:?}", range_type),
+                            span: None,
+                            file_id: self.file_id,
+                        }),
+                    }
+                } else {
+                    let range_code = self.emit_expr(range)?;
+                    let loop_var = if var_name.is_empty() {
+                        "_unused_var"
+                    } else {
+                        var_name
+                    };
+                    
+                    self.body.push_str(&format!(
+                        "/* Unsupported range type: {} */\n",
+                        range_code
+                    ));
+                }
 
                 for stmt in body {
                     self.emit_stmt(stmt)?;
                 }
+                
+                if let ast::Expr::InfiniteRange(range_type, _) = range {
+                    let loop_var = if var_name.is_empty() {
+                        "_unused_var"
+                    } else {
+                        var_name
+                    };
+                    
+                    match range_type {
+                        ast::RangeType::InfiniteRandom => {
+                            self.body.push_str(&format!("    {} += direction_{};\n", loop_var, loop_var));
+                        }
+                        ast::RangeType::InfiniteUp => {
+                            self.body.push_str(&format!("    {}++;\n", loop_var));
+                        }
+                        ast::RangeType::InfiniteDown => {
+                            self.body.push_str(&format!("    {}--;\n", loop_var));
+                        }
+                        _ => {}
+                    }
+                }
+                
                 self.body.push_str("}\n");
+                
+                if let ast::Expr::InfiniteRange(_, _) = range {
+                    self.body.push_str("}\n");
+                }
             }
             ast::Stmt::Break(expr, _) => {
                 let in_loop_expr = self.current_loop_result.is_some() && self.current_loop_break.is_some();
@@ -1469,10 +1636,28 @@ impl CBackend {
                     _ => Ok(format!("({})({})", self.type_to_c(target_ty), expr_code)),
                 }
             }
-            ast::Expr::Range(start, end, _) => {
+            ast::Expr::Range(start, end, range_type, _) => {
                 let start_code = self.emit_expr(start)?;
                 let end_code = self.emit_expr(end)?;
-                Ok(format!("{} .. {}", start_code, end_code))
+                match range_type {
+                    ast::RangeType::Inclusive => Ok(format!("{}..={}", start_code, end_code)),
+                    ast::RangeType::Exclusive => Ok(format!("{}..{}", start_code, end_code)),
+                    ast::RangeType::InfiniteUp => Ok(format!("{}..>", start_code)),
+                    ast::RangeType::InfiniteDown => Ok(format!("{}..<", start_code)),
+                    ast::RangeType::InfiniteRandom => Ok(format!("{}..", start_code)),
+                }
+            }
+            ast::Expr::InfiniteRange(range_type, _) => {
+                match range_type {
+                    ast::RangeType::InfiniteRandom => Ok("..".to_string()),
+                    ast::RangeType::InfiniteUp => Ok("..>".to_string()),
+                    ast::RangeType::InfiniteDown => Ok("..<".to_string()),
+                    _ => Err(CompileError::CodegenError {
+                        message: format!("Invalid infinite range type: {:?}", range_type),
+                        span: None,
+                        file_id: self.file_id,
+                    }),
+                }
             }
             ast::Expr::StructInit(name, fields, _) => {
                 let mut field_inits = Vec::new();

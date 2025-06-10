@@ -161,6 +161,12 @@ pub enum Token {
     Lt,
     #[token("in")]
     KwIn,
+    #[token("..=")]
+    DotDotEq,
+    #[token("..>")]
+    DotDotGt,
+    #[token("..<")]
+    DotDotLt,
     #[token("..")]
     DotDot,
     #[token("&&")]

@@ -808,7 +808,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Range(start, end, _) => {
+            Expr::Range(start, end, _, _) => {
                 let start_ty = self.check_expr(start)?;
                 let end_ty = self.check_expr(end)?;
 
@@ -821,6 +821,10 @@ impl TypeChecker {
                 }
 
                 Ok(Type::Unknown)
+            }
+            Expr::InfiniteRange(_, info) => {
+                info.ty = Type::I32;
+                Ok(Type::I32)
             }
             Expr::StructInit(
                 name,

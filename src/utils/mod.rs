@@ -789,7 +789,7 @@ fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String
         ast::Expr::Deref(expr, _) => {
             collect_expr_dependencies(expr, dependencies);
         }
-        ast::Expr::Range(start, end, _) => {
+        ast::Expr::Range(start, end, _, _) => {
             collect_expr_dependencies(start, dependencies);
             collect_expr_dependencies(end, dependencies);
         }
@@ -805,7 +805,8 @@ fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String
         | ast::Expr::Bool(_, _)
         | ast::Expr::Str(_, _)
         | ast::Expr::Void(_)
-        | ast::Expr::None(_) => {}
+        | ast::Expr::None(_)
+        | ast::Expr::InfiniteRange(_, _) => {}
         ast::Expr::SafeBlock(stmts, _) => {
             collect_variable_dependencies_from_block(stmts, dependencies);
         }

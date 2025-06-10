@@ -202,7 +202,8 @@ pub enum Expr {
     SafeBlock(Vec<Stmt>, ExprInfo),
     Deref(Box<Expr>, ExprInfo),
     Assign(Box<Expr>, Box<Expr>, ExprInfo),
-    Range(Box<Expr>, Box<Expr>, ExprInfo),
+    Range(Box<Expr>, Box<Expr>, RangeType, ExprInfo),
+    InfiniteRange(RangeType, ExprInfo),
     StructInit(String, Vec<(String, Expr)>, ExprInfo),
     FieldAccess(Box<Expr>, String, ExprInfo),
     ArrayInit(Vec<Expr>, ExprInfo),
@@ -216,6 +217,15 @@ pub enum Expr {
     Loop(Vec<Stmt>, ExprInfo),
     Void(ExprInfo),
     None(ExprInfo),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RangeType {
+    Exclusive,     // a..b
+    Inclusive,     // a..=b
+    InfiniteUp,    // ..> 
+    InfiniteDown,  // ..< 
+    InfiniteRandom, // ..
 }
 
 #[derive(Debug, Clone)]
@@ -266,7 +276,8 @@ impl Expr {
             Expr::SafeBlock(_, info) => info.span,
             Expr::Deref(_, info) => info.span,
             Expr::Assign(_, _, info) => info.span,
-            Expr::Range(_, _, info) => info.span,
+            Expr::Range(_, _, _, info) => info.span,
+            Expr::InfiniteRange(_, info) => info.span,
             Expr::StructInit(_, _, info) => info.span,
             Expr::FieldAccess(_, _, info) => info.span,
             Expr::ArrayInit(_, info) => info.span,
@@ -297,7 +308,8 @@ impl Expr {
             Expr::SafeBlock(_, info) => info.ty.clone(),
             Expr::Deref(_, info) => info.ty.clone(),
             Expr::Assign(_, _, info) => info.ty.clone(),
-            Expr::Range(_, _, info) => info.ty.clone(),
+            Expr::Range(_, _, _, info) => info.ty.clone(),
+            Expr::InfiniteRange(_, info) => info.ty.clone(),
             Expr::StructInit(_, _, info) => info.ty.clone(),
             Expr::FieldAccess(_, _, info) => info.ty.clone(),
             Expr::ArrayInit(_, info) => info.ty.clone(),
@@ -328,7 +340,8 @@ impl Expr {
             Expr::SafeBlock(_, info) => info,
             Expr::Deref(_, info) => info,
             Expr::Assign(_, _, info) => info,
-            Expr::Range(_, _, info) => info,
+            Expr::Range(_, _, _, info) => info,
+            Expr::InfiniteRange(_, info) => info,
             Expr::StructInit(_, _, info) => info,
             Expr::FieldAccess(_, _, info) => info,
             Expr::ArrayInit(_, info) => info,
@@ -685,7 +698,8 @@ pub trait AstVisitor {
             | Expr::Var(_, _)
             | Expr::F32(_, _)
             | Expr::Void(_)
-            | Expr::None(_) => {}
+            | Expr::None(_)
+            | Expr::InfiniteRange(_, _) => {}
 
             Expr::BinOp(left, _, right, _) => {
                 self.visit_expr(left);
@@ -715,7 +729,7 @@ pub trait AstVisitor {
                 self.visit_expr(left);
                 self.visit_expr(right);
             }
-            Expr::Range(start, end, _) => {
+            Expr::Range(start, end, _, _) => {
                 self.visit_expr(start);
                 self.visit_expr(end);
             }
@@ -875,7 +889,8 @@ impl AstVisitor for GenericCallCollector {
             | Expr::Var(_, _)
             | Expr::F32(_, _)
             | Expr::Void(_)
-            | Expr::None(_) => {}
+            | Expr::None(_)
+            | Expr::InfiniteRange(_, _) => {}
             Expr::BinOp(left, _, right, _) => {
                 self.visit_expr(left);
                 self.visit_expr(right);
@@ -904,7 +919,7 @@ impl AstVisitor for GenericCallCollector {
                 self.visit_expr(left);
                 self.visit_expr(right);
             }
-            Expr::Range(start, end, _) => {
+            Expr::Range(start, end, _, _) => {
                 self.visit_expr(start);
                 self.visit_expr(end);
             }
@@ -1107,6 +1122,7 @@ pub trait AstTransformer {
             Expr::F32(f, info) => Expr::F32(f, info),
             Expr::Void(info) => Expr::Void(info),
             Expr::None(info) => Expr::None(info),
+            Expr::InfiniteRange(range_type, info) => Expr::InfiniteRange(range_type, info),
             
             Expr::BinOp(left, op, right, info) => {
                 Expr::BinOp(
@@ -1142,10 +1158,11 @@ pub trait AstTransformer {
                     info,
                 )
             }
-            Expr::Range(start, end, info) => {
+            Expr::Range(start, end, range_type, info) => {
                 Expr::Range(
                     Box::new(self.transform_expr(*start)),
                     Box::new(self.transform_expr(*end)),
+                    range_type,
                     info,
                 )
             }
