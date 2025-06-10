@@ -93,7 +93,7 @@ pub struct StructDef {
 pub struct EnumVariant {
     pub name: String,
     pub data: Option<Vec<Type>>,
-    pub value: Option<i32>,  // For explicit values like Red = 1
+    pub value: Option<i32>, 
     #[allow(dead_code)]
     pub span: Span,
 }

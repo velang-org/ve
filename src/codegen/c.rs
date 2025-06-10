@@ -26,6 +26,7 @@ pub struct CBackend {
     is_test_mode: bool,
     test_name: Option<String>,
     current_function: Option<String>,
+    generated_optional_types: HashSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -47,14 +48,19 @@ impl CBackend {
         is_test_mode: bool,
         test_name: Option<String>,
     ) -> Self {
-        let backend = Self {
+        let mut variables = HashMap::new();
+        for ffi_var in imported_ffi_vars {
+            variables.insert(ffi_var.name, ffi_var.ty);
+        }
+
+        Self {
             config,
             header: String::new(),
             body: String::new(),
             file_id,
             functions_map_ast: None,
             includes: RefCell::new(BTreeSet::new()),
-            variables: RefCell::new(HashMap::new()),
+            variables: RefCell::new(variables),
             functions_map: HashMap::new(),
             ffi_functions: HashSet::new(),
             struct_defs: HashMap::new(),
@@ -64,16 +70,8 @@ impl CBackend {
             is_test_mode,
             test_name,
             current_function: None,
-        };
-
-        for ffi_var in imported_ffi_vars {
-            backend
-                .variables
-                .borrow_mut()
-                .insert(ffi_var.name, ffi_var.ty);
+            generated_optional_types: HashSet::new(),
         }
-
-        backend
     }
 
     fn generate_struct_to_str_functions<'a, I>(&mut self, structs: I)
@@ -142,6 +140,8 @@ impl CBackend {
         self.analyze_memory_requirements(&program);
         self.emit_header();
         self.generate_ffi_declarations(&program)?;
+        
+        // Clone to avoid borrowing issues
         let imported_structs = self.imported_structs.clone();
         for struct_def in &imported_structs {
             self.emit_struct(struct_def)?;
@@ -165,22 +165,22 @@ impl CBackend {
         }
         use crate::ast::Expr;
         fn collect_generic_enum_instances(expr: &Expr, out: &mut Vec<Type>) {
+            fn add_if_generic_instance(ty: &Type, out: &mut Vec<Type>) {
+                if let Type::GenericInstance(_, _) = ty {
+                    out.push(ty.clone());
+                }
+            }
+            
             match expr {
                 Expr::EnumConstruct(_, _, _, info) => {
-                    if let Type::GenericInstance(_, _) = &info.ty {
-                        out.push(info.ty.clone());
-                    }
+                    add_if_generic_instance(&info.ty, out);
                 }
                 Expr::Call(_, args, info) => {
-                    if let Type::GenericInstance(_, _) = &info.ty {
-                        out.push(info.ty.clone());
-                    }
+                    add_if_generic_instance(&info.ty, out);
                     for arg in args { collect_generic_enum_instances(arg, out); }
                 }
                 Expr::Match(_, arms, info) => {
-                    if let Type::GenericInstance(_, _) = &info.ty {
-                        out.push(info.ty.clone());
-                    }
+                    add_if_generic_instance(&info.ty, out);
                     for arm in arms {
                         match &arm.body {
                             crate::ast::MatchArmBody::Expr(e) => collect_generic_enum_instances(e, out),
@@ -245,7 +245,7 @@ impl CBackend {
             }
             for stmt in &func.body {
                 if let crate::ast::Stmt::Expr(e, _) = stmt {
-                    collect_generic_enum_instances(e, &mut generic_enum_instances);
+                    collect_generic_enum_instances(&e, &mut generic_enum_instances);
                 }
                 if let crate::ast::Stmt::Let(_, Some(ty), _, _, _) = stmt {
                     if let Type::GenericInstance(_, _) = ty {
@@ -296,6 +296,7 @@ impl CBackend {
         if self.is_test_mode {
             self.emit_tests(&program)?;
         }
+        
         let imported_structs = self.imported_structs.clone();
         let all_structs: Vec<&ast::StructDef> = program
             .structs
@@ -378,7 +379,7 @@ impl CBackend {
         let mangled_name = format!("{}_{}", 
             generic_func.name,
             type_args.iter()
-                .map(|t| format!("{:?}", t).replace(' ', "_"))
+                .map(|t| self.type_to_c_name(t))
                 .collect::<Vec<_>>()
                 .join("_")
         );
@@ -606,6 +607,11 @@ impl CBackend {
         self.header.push_str("#include <math.h>\n");
         self.header.push_str("#include <stdint.h>\n");
 
+        for include in self.includes.borrow().iter() {
+            self.header.push_str(&format!("#include {}\n", include));
+        }
+        self.header.push('\n');
+
         self.header.push_str("typedef unsigned char u8;\n");
         self.header.push_str("typedef unsigned short u16;\n");
         self.header.push_str("typedef unsigned int u32;\n");
@@ -627,12 +633,11 @@ impl CBackend {
         self.header.push_str("typedef double ve_f64;\n");
         self.header.push_str("typedef size_t ve_size_t;\n\n");
 
-        for include in self.includes.borrow().iter() {
-            self.header.push_str(&format!("#include {}\n", include));
-        }
+        self.emit_arena_system();
+        self.emit_utility_functions();
+    }
 
-        self.header.push('\n');
-
+    fn emit_arena_system(&mut self) {
         self.header.push_str("typedef struct {\n");
         self.header.push_str("    char* memory;\n");
         self.header.push_str("    size_t used;\n");
@@ -676,6 +681,7 @@ impl CBackend {
             "static {} int ve_arena_depth = 0;\n\n",
             thread_local_keyword
         ));
+        
         self.header.push_str("static void ve_arena_enter() {\n");
         self.header.push_str("    ve_arena_depth++;\n");
         self.header
@@ -704,6 +710,7 @@ impl CBackend {
         self.header.push_str("        ve_temp_arena.used = 0;\n");
         self.header.push_str("    }\n");
         self.header.push_str("}\n\n");
+        
         self.header
             .push_str("char* ve_arena_alloc(size_t size) {\n");
         self.header.push_str("    if (!ve_temp_arena.memory) {\n");
@@ -767,90 +774,32 @@ impl CBackend {
             .push_str("        ve_temp_arena.capacity = 0;\n");
         self.header.push_str("    }\n");
         self.header.push_str("}\n\n");
+    }
 
-        self.header
-            .push_str("static char* ve_int_to_str(int num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(12);\n");
-        self.header.push_str("    sprintf(buffer, \"%d\", num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-        self.header
-            .push_str("static char* ve_float_to_str(float num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(32);\n");
-        self.header.push_str("    sprintf(buffer, \"%g\", num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
+    fn emit_utility_functions(&mut self) {
+        let to_str_functions = [
+            ("int", "int", "%d", "12"),
+            ("float", "float", "%g", "32"),
+            ("double", "double", "%g", "32"),
+            ("i8", "ve_i8", "%d", "8"), 
+            ("i16", "ve_i16", "%d", "8"),
+            ("i64", "ve_i64", "%lld", "24"),
+            ("u8", "ve_u8", "%u", "8"),
+            ("u16", "ve_u16", "%u", "8"), 
+            ("u32", "ve_u32", "%u", "16"),
+            ("u64", "ve_u64", "%llu", "24"),
+        ];
 
-        self.header
-            .push_str("static char* ve_double_to_str(double num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(32);\n");
-        self.header.push_str("    sprintf(buffer, \"%g\", num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-        self.header
-            .push_str("static char* ve_i8_to_str(ve_i8 num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(8);\n");
-        self.header
-            .push_str("    sprintf(buffer, \"%d\", (int)num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-
-        self.header
-            .push_str("static char* ve_i16_to_str(ve_i16 num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(8);\n");
-        self.header
-            .push_str("    sprintf(buffer, \"%d\", (int)num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-
-        self.header
-            .push_str("static char* ve_i64_to_str(ve_i64 num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(24);\n");
-        self.header
-            .push_str("    sprintf(buffer, \"%lld\", num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-
-        self.header
-            .push_str("static char* ve_u8_to_str(ve_u8 num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(8);\n");
-        self.header
-            .push_str("    sprintf(buffer, \"%u\", (unsigned int)num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-
-        self.header
-            .push_str("static char* ve_u16_to_str(ve_u16 num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(8);\n");
-        self.header
-            .push_str("    sprintf(buffer, \"%u\", (unsigned int)num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-
-        self.header
-            .push_str("static char* ve_u32_to_str(ve_u32 num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(16);\n");
-        self.header.push_str("    sprintf(buffer, \"%u\", num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
-
-        self.header
-            .push_str("static char* ve_u64_to_str(ve_u64 num) {\n");
-        self.header
-            .push_str("    char* buffer = ve_arena_alloc(24);\n");
-        self.header
-            .push_str("    sprintf(buffer, \"%llu\", num);\n");
-        self.header.push_str("    return buffer;\n");
-        self.header.push_str("}\n\n");
+        for (name, c_type, fmt, size) in &to_str_functions {
+            let cast = if name.contains("u8") || name.contains("u16") || name.contains("i8") || name.contains("i16") {
+                if name.contains("u") { "(unsigned int)" } else { "(int)" }
+            } else { "" };
+            
+            self.header.push_str(&format!(
+                "static char* ve_{}_to_str({} num) {{\n    char* buffer = ve_arena_alloc({});\n    sprintf(buffer, \"{}\", {}num);\n    return buffer;\n}}\n\n",
+                name, c_type, size, fmt, cast
+            ));
+        }
 
         self.header
             .push_str("static char* ve_bool_to_str(bool b) {\n");
@@ -871,6 +820,7 @@ impl CBackend {
         self.header.push_str("    sprintf(buffer, \"%p\", ptr);\n");
         self.header.push_str("    return buffer;\n");
         self.header.push_str("}\n\n");
+
         let (strcpy_fn, strcat_fn) = if cfg!(target_os = "windows") && cfg!(target_env = "msvc") {
             (
                 "strcpy_s(result, len1 + len2 + 1, s1)",
@@ -912,7 +862,6 @@ impl CBackend {
             self.header.push_str("}\n");
             self.header.push_str("#endif\n\n");
         }
-
     }
 
 
@@ -922,12 +871,13 @@ impl CBackend {
         }
         
         let type_name = self.type_to_c_name(inner_type);
-        let c_type = self.type_to_c(inner_type);
         
-        let type_def = format!("ve_optional_{}", type_name);
-        if self.header.contains(&type_def) {
+        if !self.generated_optional_types.insert(type_name.clone()) {
             return;
         }
+        
+        let c_type = self.type_to_c(inner_type);
+        let type_def = format!("ve_optional_{}", type_name);
 
         self.header.push_str(&format!(
             "typedef struct {{\n    bool has_value;\n    {} value;\n}} {};\n\n",
@@ -946,13 +896,12 @@ impl CBackend {
     }
 
     fn is_simple_enum(&self, enum_name: &str) -> bool {
-        if let Some(enum_def) = self.enum_defs.get(enum_name) {
-            let is_simple = enum_def.variants.iter().all(|variant| variant.data.is_none());
-            is_simple
-        } else {
-            eprintln!("Debug: Enum '{}' not found in enum_defs", enum_name);
-            false 
-        }
+        self.enum_defs.get(enum_name)
+            .map(|enum_def| enum_def.variants.iter().all(|variant| variant.data.is_none()))
+            .unwrap_or_else(|| {
+                eprintln!("Debug: Enum '{}' not found in enum_defs", enum_name);
+                false 
+            })
     }
 
     fn emit_globals(&mut self, program: &ast::Program) -> Result<(), CompileError> {
@@ -1917,41 +1866,60 @@ impl CBackend {
 
     fn type_to_c_name(&self, ty: &Type) -> String {
         match ty {
-            Type::I32 => "i32",
-            Type::Bool => "bool",
-            Type::String => "string",
-            Type::Void => "void",
-            Type::F32 => "f32",
-            Type::F64 => "f64",
-            Type::I8 => "i8",
-            Type::I16 => "i16",
-            Type::I64 => "i64",
-            Type::U8 => "u8",
-            Type::U16 => "u16",
-            Type::U32 => "u32",
-            Type::U64 => "u64",
-            Type::Struct(name) | Type::Enum(name) | Type::Generic(name) => name.as_str(),
+            Type::I32 => "i32".to_string(),
+            Type::Bool => "bool".to_string(), 
+            Type::String => "string".to_string(),
+            Type::Void => "void".to_string(),
+            Type::F32 => "f32".to_string(),
+            Type::F64 => "f64".to_string(),
+            Type::I8 => "i8".to_string(),
+            Type::I16 => "i16".to_string(),
+            Type::I64 => "i64".to_string(),
+            Type::U8 => "u8".to_string(),
+            Type::U16 => "u16".to_string(),
+            Type::U32 => "u32".to_string(),
+            Type::U64 => "u64".to_string(),
+            Type::Struct(name) | Type::Enum(name) | Type::Generic(name) => name.clone(),
             Type::GenericInstance(name, args) => {
                 let mut s = name.clone();
                 for arg in args {
                     s.push('_');
                     s.push_str(&self.type_to_c_name(arg));
                 }
-                return s;
+                s
             }
-            Type::Optional(inner) => return format!("optional_{}", self.type_to_c_name(inner)),
-            Type::NoneType => "none",
-            _ => "unknown",
-        }.to_string()
+            Type::Optional(inner) => format!("optional_{}", self.type_to_c_name(inner)),
+            Type::NoneType => "none".to_string(),
+            _ => "unknown".to_string(),
+        }
     }
 
     fn type_to_c(&self, ty: &Type) -> String {
         match ty {
-            Type::GenericInstance(_, _) | Type::Struct(_) | Type::Enum(_) => format!("ve_{}", self.type_to_c_name(ty)),
+            Type::GenericInstance(_, _) | Type::Struct(_) | Type::Enum(_) => {
+                format!("ve_{}", self.type_to_c_name(ty))
+            }
             Type::I32 => "int".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "const char*".to_string(),
             Type::Void => "void".to_string(),
+            Type::F32 => "float".to_string(),
+            Type::F64 => "double".to_string(),
+            Type::I8 => "ve_i8".to_string(),
+            Type::I16 => "ve_i16".to_string(),
+            Type::I64 => "ve_i64".to_string(),
+            Type::U8 => "ve_u8".to_string(),
+            Type::U16 => "ve_u16".to_string(),
+            Type::U32 => "ve_u32".to_string(),
+            Type::U64 => "ve_u64".to_string(),
+            Type::CChar => "char".to_string(),
+            Type::CInt => "int".to_string(),
+            Type::CSize => "ve_size_t".to_string(),
+            Type::RawPtr => "void*".to_string(),
+            Type::Any => "void*".to_string(),
+            Type::Unknown | Type::Generic(_) => "void*".to_string(),
+            Type::Optional(inner) => format!("ve_optional_{}", self.type_to_c_name(inner)),
+            Type::NoneType => "void*".to_string(),
             Type::Ellipsis => "...".to_string(),
             Type::Function(args, ret) => {
                 let args_str = args.iter().map(|t| self.type_to_c(t)).collect::<Vec<_>>().join(", ");
@@ -1961,23 +1929,6 @@ impl CBackend {
             Type::Pointer(inner) | Type::Array(inner) | Type::SizedArray(inner, _) => {
                 format!("{}*", self.type_to_c(inner))
             }
-            Type::F32 => "float".to_string(),
-            Type::I8 => "ve_i8".to_string(),
-            Type::I16 => "ve_i16".to_string(),
-            Type::I64 => "ve_i64".to_string(),
-            Type::U8 => "ve_u8".to_string(),
-            Type::U16 => "ve_u16".to_string(),
-            Type::U32 => "ve_u32".to_string(),
-            Type::U64 => "ve_u64".to_string(),
-            Type::F64 => "double".to_string(),
-            Type::CChar => "char".to_string(),
-            Type::CInt => "int".to_string(),
-            Type::CSize => "ve_size_t".to_string(),
-            Type::RawPtr => "void*".to_string(),
-            Type::Any => "void*".to_string(),
-            Type::Unknown | Type::Generic(_) => "void*".to_string(),
-            Type::Optional(inner) => format!("ve_optional_{}", self.type_to_c_name(inner)),
-            Type::NoneType => "void*".to_string(),
         }
     }
 
@@ -1989,37 +1940,32 @@ impl CBackend {
             Type::Bool => "bool".to_string(),
             Type::String => "const char*".to_string(),
             Type::Void => "void".to_string(),
-            Type::Ellipsis => "...".to_string(),
-            Type::Unknown => "void*".to_string(),
-            Type::Function(args, ret) => {
-                let args_str = args
-                    .iter()
-                    .map(|t| self.type_to_c_ffi(t))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let ret_str = self.type_to_c_ffi(ret);
-                format!("{}(*)({})", ret_str, args_str)
-            }
-            Type::Pointer(inner) => format!("{}*", self.type_to_c_ffi(inner)),
-            Type::RawPtr => "void*".to_string(),
-            Type::Array(inner) => format!("{}*", self.type_to_c_ffi(inner)),
-            Type::SizedArray(inner, _) => format!("{}*", self.type_to_c_ffi(inner)),
-            Type::Any => "void*".to_string(),
             Type::F32 => "float".to_string(),
+            Type::F64 => "double".to_string(),
             Type::I8 => "int8_t".to_string(),
             Type::I16 => "int16_t".to_string(),
             Type::I64 => "int64_t".to_string(),
-            Type::U8 => "unsigned char".to_string(),
+            Type::U8 => "uint8_t".to_string(),
             Type::U16 => "uint16_t".to_string(),
             Type::U32 => "uint32_t".to_string(),
             Type::U64 => "uint64_t".to_string(),
-            Type::F64 => "double".to_string(),
             Type::CChar => "char".to_string(),
             Type::CInt => "int".to_string(),
             Type::CSize => "size_t".to_string(),
-            Type::Generic(_) => "void*".to_string(),
+            Type::RawPtr => "void*".to_string(),
+            Type::Any => "void*".to_string(),
+            Type::Unknown | Type::Generic(_) => "void*".to_string(),
             Type::Optional(inner) => format!("ve_optional_{}", self.type_to_c_name(inner)),
             Type::NoneType => "void*".to_string(),
+            Type::Ellipsis => "...".to_string(),
+            Type::Function(args, ret) => {
+                let args_str = args.iter().map(|t| self.type_to_c_ffi(t)).collect::<Vec<_>>().join(", ");
+                let ret_str = self.type_to_c_ffi(ret);
+                format!("{}(*)({})", ret_str, args_str)
+            }
+            Type::Pointer(inner) | Type::Array(inner) | Type::SizedArray(inner, _) => {
+                format!("{}*", self.type_to_c_ffi(inner))
+            }
         }
     }
 
@@ -2080,11 +2026,34 @@ impl CBackend {
     }
 
     fn emit_enum(&mut self, enum_def: &ast::EnumDef) -> Result<(), CompileError> {
-        let enum_name = format!("ve_{}", enum_def.name);
-
         if !enum_def.generic_params.is_empty() {
-            return Ok(());
+            return Ok(()); 
         }
+        
+        self.emit_enum_impl(enum_def, &[], &enum_def.name)
+    }
+
+    fn emit_generic_enum_instance(
+        &mut self,
+        enum_def: &ast::EnumDef,
+        args: &[Type],
+    ) -> Result<(), CompileError> {
+        let mut name = enum_def.name.clone();
+        for arg in args {
+            name.push('_');
+            name.push_str(&self.type_to_c_name(arg));
+        }
+        
+        self.emit_enum_impl(enum_def, args, &name)
+    }
+    
+    fn emit_enum_impl(
+        &mut self,
+        enum_def: &ast::EnumDef,
+        type_args: &[Type], 
+        base_name: &str,
+    ) -> Result<(), CompileError> {
+        let enum_name = format!("ve_{}", base_name);
 
         let is_simple_enum = enum_def.variants.iter().all(|v| v.data.is_none());
         
@@ -2117,11 +2086,15 @@ impl CBackend {
         for variant in &enum_def.variants {
             if let Some(data_types) = &variant.data {
                 if !data_types.is_empty() {
-                    self.header.push_str(&format!("        struct {{\n"));
+                    self.header.push_str("        struct {\n");
                     for (i, ty) in data_types.iter().enumerate() {
-                        let c_type = self.type_to_c(ty);
-                        self.header
-                            .push_str(&format!("            {} field{};\n", c_type, i));
+                        let concrete_ty = if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
+                            type_args.get(idx).unwrap_or(ty)
+                        } else {
+                            ty
+                        };
+                        let c_type = self.type_to_c(concrete_ty);
+                        self.header.push_str(&format!("            {} field{};\n", c_type, i));
                     }
                     self.header.push_str(&format!("        }} {};\n", variant.name.to_lowercase()));
                 }
@@ -2136,32 +2109,28 @@ impl CBackend {
                 if !data_types.is_empty() {
                     let mut params = Vec::new();
                     for (i, ty) in data_types.iter().enumerate() {
-                        params.push(format!("{} field{}", self.type_to_c(ty), i));
+                        let concrete_ty = if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
+                            type_args.get(idx).unwrap_or(ty)
+                        } else {
+                            ty
+                        };
+                        params.push(format!("{} field{}", self.type_to_c(concrete_ty), i));
                     }
 
                     self.header.push_str(&format!(
                         "static {} {}_{}_new({}) {{\n",
-                        enum_name,
-                        enum_name,
-                        variant.name,
-                        params.join(", ")
+                        enum_name, enum_name, variant.name, params.join(", ")
                     ));
-                    self.header
-                        .push_str(&format!("    {} result;\n", enum_name));
-                    self.header.push_str(&format!(
-                        "    result.tag = {}_{};\n",
-                        enum_name, variant.name
-                    ));
-
+                    self.header.push_str(&format!("    {} result;\n", enum_name));
+                    self.header.push_str(&format!("    result.tag = {}_{};\n", enum_name, variant.name));
+                    
                     for (i, _) in data_types.iter().enumerate() {
                         self.header.push_str(&format!(
                             "    result.data.{}.field{} = field{};\n",
-                            variant.name.to_lowercase(),
-                                                       i,
-                            i
+                            variant.name.to_lowercase(), i, i
                         ));
                     }
-
+                    
                     self.header.push_str("    return result;\n");
                     self.header.push_str("}\n\n");
                 } else {
@@ -2169,12 +2138,8 @@ impl CBackend {
                         "static {} {}_{}_new() {{\n",
                         enum_name, enum_name, variant.name
                     ));
-                    self.header
-                        .push_str(&format!("    {} result;\n", enum_name));
-                    self.header.push_str(&format!(
-                        "    result.tag = {}_{};\n",
-                        enum_name, variant.name
-                    ));
+                    self.header.push_str(&format!("    {} result;\n", enum_name));
+                    self.header.push_str(&format!("    result.tag = {}_{};\n", enum_name, variant.name));
                     self.header.push_str("    return result;\n");
                     self.header.push_str("}\n\n");
                 }
@@ -2184,111 +2149,12 @@ impl CBackend {
                     enum_name, enum_name, variant.name
                 ));
                 self.header.push_str(&format!("    {} result;\n", enum_name));
-                self.header.push_str(&format!(
-                    "    result.tag = {}_{};\n",
-                    enum_name, variant.name
-                ));
+                self.header.push_str(&format!("    result.tag = {}_{};\n", enum_name, variant.name));
                 self.header.push_str("    return result;\n");
                 self.header.push_str("}\n\n");
             }
         }
 
-        Ok(())
-    }
-
-    fn emit_generic_enum_instance(
-        &mut self,
-        enum_def: &ast::EnumDef,
-        args: &[Type],
-    ) -> Result<(), CompileError> {
-        let mut name = format!("ve_{}", enum_def.name);
-        for arg in args {
-            name.push('_');
-            name.push_str(&self.type_to_c_name(arg));
-        }
-
-        self.header.push_str(&format!("typedef enum {{\n"));
-        for (i, variant) in enum_def.variants.iter().enumerate() {
-            self.header
-                .push_str(&format!("    {}_{} = {},\n", name, variant.name, i));
-        }
-        self.header.push_str(&format!("}} {}_Tag;\n\n", name));
-
-        self.header.push_str(&format!("typedef struct {} {{\n", name));
-        self.header.push_str(&format!("    {}_Tag tag;\n", name));
-        self.header.push_str("    union {\n");
-        for variant in &enum_def.variants {
-            if let Some(data_types) = &variant.data {
-                if !data_types.is_empty() {
-                    self.header.push_str("        struct {\n");
-                    for (i, ty) in data_types.iter().enumerate() {
-                        let concrete_ty = if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
-                            &args[idx]
-                        } else {
-                            ty
-                        };
-                        let c_type = self.type_to_c(concrete_ty);
-                        self.header.push_str(&format!("            {} field{};\n", c_type, i));
-                    }
-                    self.header.push_str(&format!("        }} {};\n", variant.name.to_lowercase()));
-                }
-            }
-        }
-        self.header.push_str("    } data;\n");
-        self.header.push_str(&format!("}} {};\n\n", name));
-
-        for variant in &enum_def.variants {
-            if let Some(data_types) = &variant.data {
-                if !data_types.is_empty() {
-                    let mut params = Vec::new();
-                    for (i, ty) in data_types.iter().enumerate() {
-                        let concrete_ty = if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
-                            &args[idx]
-                        } else {
-                            ty
-                        };
-                        params.push(format!("{} field{}", self.type_to_c(concrete_ty), i));
-                    }
-                    self.header.push_str(&format!(
-                        "static {} {}_{}_new({}) {{\n",
-                        name,
-                        name,
-                        variant.name,
-                        params.join(", ")
-                    ));
-                    self.header.push_str(&format!("    {} result;\n", name));
-                    self.header.push_str(&format!("    result.tag = {}_{};\n", name, variant.name));
-                    for (i, _) in data_types.iter().enumerate() {
-                        self.header.push_str(&format!(
-                            "    result.data.{}.field{} = field{};\n",
-                            variant.name.to_lowercase(),
-                                                       i,
-                            i
-                        ));
-                    }
-                    self.header.push_str("    return result;\n");
-                    self.header.push_str("}\n\n");
-                } else {
-                    self.header.push_str(&format!(
-                        "static {} {}_{}_new() {{\n",
-                        name, name, variant.name
-                    ));
-                    self.header.push_str(&format!("    {} result;\n", name));
-                    self.header.push_str(&format!("    result.tag = {}_{};\n", name, variant.name));
-                    self.header.push_str("    return result;\n");
-                    self.header.push_str("}\n\n");
-                }
-            } else {
-                self.header.push_str(&format!(
-                    "static {} {}_{}_new() {{\n",
-                    name, name, variant.name
-                ));
-                self.header.push_str(&format!("    {} result;\n", name));
-                self.header.push_str(&format!("    result.tag = {}_{};\n", name, variant.name));
-                self.header.push_str("    return result;\n");
-                self.header.push_str("}\n\n");
-            }
-        }
         Ok(())
     }
 

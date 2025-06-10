@@ -91,7 +91,6 @@ fn run_tests_with_formatting(
         io::stdout().flush().unwrap();
         
         let test_start = Instant::now();
-          // Run the test - każdy test ma swoje własne main()
         let result = Command::new(&executable_path)
             .arg(&test_name)
             .output()
