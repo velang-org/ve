@@ -29,6 +29,8 @@ pub enum Token {
     KwWhile,
     #[token("for")]
     KwFor,
+    #[token("loop")]
+    KwLoop,
     #[token("import")]
     KwImport,
     #[token("from")]

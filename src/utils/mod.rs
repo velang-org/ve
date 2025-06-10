@@ -841,5 +841,10 @@ fn collect_expr_dependencies(expr: &ast::Expr, dependencies: &mut HashSet<String
                 }
             }
         }
+        ast::Expr::Loop(body, _) => {
+            for stmt in body {
+                collect_variable_dependencies(stmt, dependencies);
+            }
+        }
     }
 }

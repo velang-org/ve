@@ -27,6 +27,8 @@ pub struct CBackend {
     test_name: Option<String>,
     current_function: Option<String>,
     generated_optional_types: HashSet<String>,
+    current_loop_result: Option<String>,
+    current_loop_break: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -71,6 +73,8 @@ impl CBackend {
             test_name,
             current_function: None,
             generated_optional_types: HashSet::new(),
+            current_loop_result: None,
+            current_loop_break: None,
         }
     }
 
@@ -141,7 +145,6 @@ impl CBackend {
         self.emit_header();
         self.generate_ffi_declarations(&program)?;
         
-        // Clone to avoid borrowing issues
         let imported_structs = self.imported_structs.clone();
         for struct_def in &imported_structs {
             self.emit_struct(struct_def)?;
@@ -1201,6 +1204,13 @@ impl CBackend {
                 }
                 self.body.push_str("}\n");
             }
+            ast::Stmt::Loop(body, _) => {
+                self.body.push_str("while (1) {\n");
+                for stmt in body {
+                    self.emit_stmt(stmt)?;
+                }
+                self.body.push_str("}\n");
+            }
             ast::Stmt::For(var_name, range, body, _) => {
                 let range_code = self.emit_expr(range)?;
                 let parts: Vec<&str> = range_code.split("..").collect();
@@ -1216,8 +1226,26 @@ impl CBackend {
                 }
                 self.body.push_str("}\n");
             }
-            ast::Stmt::Break(_) => {
-                self.body.push_str("break;\n");
+            ast::Stmt::Break(expr, _) => {
+                let in_loop_expr = self.current_loop_result.is_some() && self.current_loop_break.is_some();
+                
+                if in_loop_expr {
+                    let result_var = self.current_loop_result.as_ref().unwrap().clone();
+                    let break_label = self.current_loop_break.as_ref().unwrap().clone();
+                    
+                    if let Some(expr) = expr {
+                        let expr_code = self.emit_expr(expr)?;
+                        self.body.push_str(&format!("{{ {} = {}; goto {}; }}\n", result_var, expr_code, break_label));
+                    } else {
+                        self.body.push_str(&format!("goto {};\n", break_label));
+                    }
+                } else {
+                    if let Some(_expr) = expr {
+                        self.body.push_str("break; /* break with value in regular loop */\n");
+                    } else {
+                        self.body.push_str("break;\n");
+                    }
+                }
             }
             ast::Stmt::Continue(_) => {
                 self.body.push_str("continue;\n");
@@ -1809,6 +1837,41 @@ impl CBackend {
             code.push_str("}\n");
             Ok(code)
         }
+        ast::Expr::Loop(body, info) => {
+            let result_var = format!("_loop_result_{}", info.span.start());
+            let loop_start = format!("_loop_start_{}", info.span.start());
+            let loop_break = format!("_loop_break_{}", info.span.start());
+            
+            let result_type = self.type_to_c(&info.ty);
+            
+            let old_loop_result = std::mem::replace(&mut self.current_loop_result, Some(result_var.clone()));
+            let old_loop_break = std::mem::replace(&mut self.current_loop_break, Some(loop_break.clone()));
+            
+            let mut code = String::new();
+            code.push_str("({ ");
+            code.push_str(&format!("{} {} = 0; ", result_type, result_var));
+            code.push_str(&format!("{}: ", loop_start));
+            code.push_str("while (1) {\n");
+            
+            let mut body_code = String::new();
+            let old_body = std::mem::replace(&mut self.body, body_code);
+            
+            for stmt in body {
+                self.emit_stmt(stmt)?;
+            }
+            
+            body_code = std::mem::replace(&mut self.body, old_body);
+            code.push_str(&body_code);
+            
+            code.push_str("}\n");
+            code.push_str(&format!("{}: {}; ", loop_break, result_var));
+            code.push_str("})");
+            
+            self.current_loop_result = old_loop_result;
+            self.current_loop_break = old_loop_break;
+            
+            Ok(code)
+        }
         ast::Expr::None(_) => Ok("NULL".to_string()),
         }
     }
@@ -2336,7 +2399,7 @@ impl CBackend {
                 }
                 max_depth + 1
             }
-            ast::Stmt::Break(_) => {
+            ast::Stmt::Break(_, _) => {
                 0
             }
             ast::Stmt::Continue(_) => {

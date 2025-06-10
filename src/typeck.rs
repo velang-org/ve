@@ -9,6 +9,7 @@ struct Context {
     current_return_type: Type,
     in_safe: bool,
     in_loop: bool,
+    break_types: Vec<Type>,
     struct_defs: HashMap<String, Vec<(String, Type)>>,
     enum_defs: HashMap<String, Vec<String>>,
     enum_def_map: HashMap<String, ast::EnumDef>,
@@ -23,6 +24,7 @@ impl Context {
             current_return_type: Type::Void,
             in_safe: false,
             in_loop: false,
+            break_types: Vec::new(),
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             enum_def_map: HashMap::new(),
@@ -290,6 +292,11 @@ impl TypeChecker {
                 self.check_block(body)?;
                 self.context.in_loop = false;
             }
+            Stmt::Loop(body, _) => {
+                self.context.in_loop = true;
+                self.check_block(body)?;
+                self.context.in_loop = false;
+            }
             Stmt::For(name, range, body, _) => {
                 self.check_expr(range)?;
 
@@ -298,9 +305,15 @@ impl TypeChecker {
                 self.check_block(body)?;
                 self.context.in_loop = false;
             }
-            Stmt::Break(span) => {
+            Stmt::Break(expr, span) => {
                 if !self.context.in_loop {
                     self.report_error("Break statement outside of loop", *span);
+                }
+                if let Some(expr) = expr {
+                    let break_type = self.check_expr(expr)?;
+                    self.context.break_types.push(break_type);
+                } else {
+                    self.context.break_types.push(Type::Void);
                 }
             }
             Stmt::Continue(span) => {
@@ -1288,6 +1301,42 @@ impl TypeChecker {
 
                 info.ty = result_ty.clone();
                 Ok(result_ty)
+            }
+            Expr::Loop(body, info) => {
+                self.context.in_loop = true;
+                
+                let previous_break_types = std::mem::take(&mut self.context.break_types);
+                
+                for stmt in body.iter_mut() {
+                    self.check_stmt(stmt)?;
+                }
+                
+                let break_types = std::mem::take(&mut self.context.break_types);
+                self.context.break_types = previous_break_types;
+                self.context.in_loop = false;
+                
+                let loop_type = if break_types.is_empty() {
+                    Type::Void
+                } else {
+                    let mut common_type = break_types[0].clone();
+                    for break_type in &break_types[1..] {
+                        if !Self::is_convertible(&common_type, break_type) && 
+                           !Self::is_convertible(break_type, &common_type) {
+                            if common_type != *break_type {
+                                self.report_error(&format!(
+                                    "Inconsistent types in break statements: {:?} vs {:?}", 
+                                    common_type, break_type
+                                ), info.span);
+                                common_type = Type::Unknown;
+                                break;
+                            }
+                        }
+                    }
+                    common_type
+                };
+                
+                info.ty = loop_type.clone();
+                Ok(loop_type)
             }
             Expr::None(info) => {
                 info.ty = Type::NoneType;

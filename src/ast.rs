@@ -158,8 +158,9 @@ pub enum Stmt {
     Return(Expr, Span),
     Defer(Expr, Span),
     While(Expr, Vec<Stmt>, Span),
+    Loop(Vec<Stmt>, Span),
     For(String, Expr, Vec<Stmt>, Span),
-    Break(Span),
+    Break(Option<Expr>, Span),
     Continue(Span),
     Block(Vec<Stmt>, Span),
 }
@@ -212,6 +213,7 @@ pub enum Expr {
     EnumConstruct(String, String, Vec<Expr>, ExprInfo),
     Match(Box<Pattern>, Vec<MatchArm>, ExprInfo),
     If(Box<Expr>, Vec<Stmt>, Option<Vec<Stmt>>, ExprInfo),
+    Loop(Vec<Stmt>, ExprInfo),
     Void(ExprInfo),
     None(ExprInfo),
 }
@@ -275,6 +277,7 @@ impl Expr {
             Expr::EnumConstruct(_, _, _, info) => info.span,
             Expr::Match(_, _, info) => info.span,
             Expr::If(_, _, _, info) => info.span,
+            Expr::Loop(_, info) => info.span,
             Expr::Void(info) => info.span,
             Expr::None(info) => info.span,
         }
@@ -305,6 +308,7 @@ impl Expr {
             Expr::EnumConstruct(_, _, _, info) => info.ty.clone(),
             Expr::Match(_, _, info) => info.ty.clone(),
             Expr::If(_, _, _, info) => info.ty.clone(),
+            Expr::Loop(_, info) => info.ty.clone(),
             Expr::Void(info) => info.ty.clone(),
             Expr::None(info) => info.ty.clone(),
         }
@@ -335,6 +339,7 @@ impl Expr {
             Expr::EnumConstruct(_, _, _, info) => info,
             Expr::Match(_, _, info) => info,
             Expr::If(_, _, _, info) => info,
+            Expr::Loop(_, info) => info,
             Expr::Void(info) => info,
             Expr::None(info) => info,
         }
@@ -480,8 +485,9 @@ impl Stmt {
             Stmt::Return(_, span) => *span,
             Stmt::Defer(_, span) => *span,
             Stmt::While(_, _, span) => *span,
+            Stmt::Loop(_, span) => *span,
             Stmt::For(_, _, _, span) => *span,
-            Stmt::Break(span) => *span,
+            Stmt::Break(_, span) => *span,
             Stmt::Continue(span) => *span,
             Stmt::Block(_, span) => *span,
         }
@@ -645,13 +651,22 @@ pub trait AstVisitor {
                     self.visit_stmt(stmt);
                 }
             }
+            Stmt::Loop(body, _) => {
+                for stmt in body {
+                    self.visit_stmt(stmt);
+                }
+            }
             Stmt::For(_, iter, body, _) => {
                 self.visit_expr(iter);
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
             }
-            Stmt::Break(_) => {}
+            Stmt::Break(expr, _) => {
+                if let Some(expr) = expr {
+                    self.visit_expr(expr);
+                }
+            }
             Stmt::Continue(_) => {}
             Stmt::Block(stmts, _) => {
                 for stmt in stmts {
@@ -756,6 +771,11 @@ pub trait AstVisitor {
                     for stmt in else_stmts {
                         self.visit_stmt(stmt);
                     }
+                }
+            }
+            Expr::Loop(body, _) => {
+                for stmt in body {
+                    self.visit_stmt(stmt);
                 }
             }
         }
@@ -942,6 +962,11 @@ impl AstVisitor for GenericCallCollector {
                     }
                 }
             }
+            Expr::Loop(body, _) => {
+                for stmt in body {
+                    self.visit_stmt(stmt);
+                }
+            }
         }
     }
 }
@@ -1047,6 +1072,12 @@ pub trait AstTransformer {
                     span,
                 )
             }
+            Stmt::Loop(body, span) => {
+                Stmt::Loop(
+                    body.into_iter().map(|s| self.transform_stmt(s)).collect(),
+                    span,
+                )
+            }
             Stmt::For(var, iter, body, span) => {
                 Stmt::For(
                     var,
@@ -1055,7 +1086,10 @@ pub trait AstTransformer {
                     span,
                 )
             }
-            Stmt::Break(span) => Stmt::Break(span),
+            Stmt::Break(expr, span) => Stmt::Break(
+                expr.map(|e| self.transform_expr(e)),
+                span,
+            ),
             Stmt::Continue(span) => Stmt::Continue(span),
             Stmt::Block(stmts, span) => {
                 Stmt::Block(stmts.into_iter().map(|s| self.transform_stmt(s)).collect(), span)
@@ -1167,6 +1201,12 @@ pub trait AstTransformer {
                     Box::new(self.transform_expr(*condition)),
                     then_branch.into_iter().map(|s| self.transform_stmt(s)).collect(),
                     else_branch.map(|stmts| stmts.into_iter().map(|s| self.transform_stmt(s)).collect()),
+                    info,
+                )
+            }
+            Expr::Loop(body, info) => {
+                Expr::Loop(
+                    body.into_iter().map(|s| self.transform_stmt(s)).collect(),
                     info,
                 )
             }

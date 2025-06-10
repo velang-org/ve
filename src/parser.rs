@@ -1071,6 +1071,8 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             self.parse_return()
         } else if self.check(Token::KwWhile) {
             self.parse_while()
+        } else if self.check(Token::KwLoop) {
+            self.parse_loop()
         } else if self.check(Token::KwFor) {
             self.parse_for()
         } else if self.check(Token::KwBreak) {
@@ -1086,6 +1088,18 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             }
             Ok(ast::Stmt::Expr(expr, span))
         }
+    }
+
+    fn parse_loop(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
+        self.expect(Token::KwLoop)?;
+        let loop_span = self.previous().map(|(_, s)| *s).unwrap();
+
+        let body = self.parse_block()?;
+
+        Ok(ast::Stmt::Loop(
+            body,
+            Span::new(loop_span.start(), self.previous().unwrap().1.end()),
+        ))
     }
 
     fn parse_while(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
@@ -1125,11 +1139,17 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
         let break_span = self.peek_span();
         self.expect(Token::KwBreak)?;
         
+        let expr = if self.check(Token::Semi) || self.check(Token::RBrace) {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        
         if self.check(Token::Semi) {
             self.advance();
         }
         
-        Ok(ast::Stmt::Break(break_span))
+        Ok(ast::Stmt::Break(expr, break_span))
     }
 
     fn parse_continue(&mut self) -> Result<ast::Stmt, Diagnostic<FileId>> {
@@ -1394,6 +1414,7 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             }
             Some((Token::KwMatch, span)) => self.parse_match(span),
             Some((Token::KwIf, span)) => self.parse_if_expr(span),
+            Some((Token::KwLoop, span)) => self.parse_loop_expr(span),
             _ => {
                 let token = self.previous().map(|(t, _)| t.clone()).unwrap();
                 let span = self.previous().map(|(_, s)| *s).unwrap();
@@ -1726,6 +1747,7 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             ast::Expr::EnumConstruct(_, _, _, info) => info.is_tail = true,
             ast::Expr::Match(_, _, info) => info.is_tail = true,
             ast::Expr::If(_, _, _, info) => info.is_tail = true,
+            ast::Expr::Loop(_, info) => info.is_tail = true,
             ast::Expr::Void(info) => info.is_tail = true,
             ast::Expr::None(info) => info.is_tail = true,
         }
@@ -1853,6 +1875,23 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             Some((_, span)) => self.error("Expected pattern", span),
             None => self.error("Expected pattern", Span::new(0, 0)),
         }
+    }
+
+    fn parse_loop_expr(&mut self, loop_span: Span) -> Result<ast::Expr, Diagnostic<FileId>> {
+        let body = self.parse_block()?;
+
+        let end_span = body.last()
+            .map(|s| s.span().end())
+            .unwrap_or(loop_span.end());
+
+        Ok(ast::Expr::Loop(
+            body,
+            ast::ExprInfo {
+                span: Span::new(loop_span.start(), end_span),
+                ty: ast::Type::Unknown,
+                is_tail: false,
+            },
+        ))
     }
 
 }
