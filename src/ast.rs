@@ -111,6 +111,7 @@ pub struct EnumDef {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Expr>,
     pub body: MatchArmBody,
     pub span: Span,
 }
@@ -159,7 +160,7 @@ pub enum Stmt {
     Defer(Expr, Span),
     While(Expr, Vec<Stmt>, Span),
     Loop(Vec<Stmt>, Span),
-    For(String, Expr, Vec<Stmt>, Span),
+    For(String, Option<String>, Expr, Option<Expr>, Vec<Stmt>, Span), // (value_var, index_var, range, step, body, span)
     Break(Option<Expr>, Span),
     Continue(Span),
     Block(Vec<Stmt>, Span),
@@ -221,11 +222,11 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RangeType {
-    Exclusive,     // a..b
-    Inclusive,     // a..=b
-    InfiniteUp,    // ..> 
-    InfiniteDown,  // ..< 
-    InfiniteRandom, // ..
+    Exclusive,      // a..b
+    Inclusive,      // a..=b
+    InfiniteUp,     // ..> 
+    InfiniteDown,   // ..< 
+    Infinite,       // .. 
 }
 
 #[derive(Debug, Clone)]
@@ -499,7 +500,7 @@ impl Stmt {
             Stmt::Defer(_, span) => *span,
             Stmt::While(_, _, span) => *span,
             Stmt::Loop(_, span) => *span,
-            Stmt::For(_, _, _, span) => *span,
+            Stmt::For(_, _, _, _, _, span) => *span,
             Stmt::Break(_, span) => *span,
             Stmt::Continue(span) => *span,
             Stmt::Block(_, span) => *span,
@@ -669,7 +670,7 @@ pub trait AstVisitor {
                     self.visit_stmt(stmt);
                 }
             }
-            Stmt::For(_, iter, body, _) => {
+            Stmt::For(_, _, iter, _, body, _) => {
                 self.visit_expr(iter);
                 for stmt in body {
                     self.visit_stmt(stmt);
@@ -797,6 +798,9 @@ pub trait AstVisitor {
 
     fn visit_match_arm(&mut self, arm: &MatchArm) {
         self.visit_pattern(&arm.pattern);
+        if let Some(guard) = &arm.guard {
+            self.visit_expr(guard);
+        }
         match &arm.body {
             MatchArmBody::Expr(expr) => {
                 self.visit_expr(expr);
@@ -1093,10 +1097,12 @@ pub trait AstTransformer {
                     span,
                 )
             }
-            Stmt::For(var, iter, body, span) => {
+            Stmt::For(var, index_var, iter, step, body, span) => {
                 Stmt::For(
                     var,
+                    index_var,
                     self.transform_expr(iter),
+                    step.map(|s| self.transform_expr(s)),
                     body.into_iter().map(|s| self.transform_stmt(s)).collect(),
                     span,
                 )
@@ -1233,6 +1239,7 @@ pub trait AstTransformer {
     fn transform_match_arm(&mut self, arm: MatchArm) -> MatchArm {
         MatchArm {
             pattern: arm.pattern,
+            guard: arm.guard.map(|g| self.transform_expr(g)),
             body: match arm.body {
                 MatchArmBody::Expr(expr) => MatchArmBody::Expr(self.transform_expr(expr)),
                 MatchArmBody::Block(stmts) => MatchArmBody::Block(stmts.into_iter().map(|s| self.transform_stmt(s)).collect()),

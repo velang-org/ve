@@ -1212,57 +1212,147 @@ impl CBackend {
                 }
                 self.body.push_str("}\n");
             }
-            ast::Stmt::For(var_name, range, body, _) => {
+            ast::Stmt::For(var_name, index_var, range, step, body, _) => {
                 if let ast::Expr::Range(start_expr, end_expr, range_type, _) = range {
-                    let start_code = self.emit_expr(start_expr)?;
-                    let end_code = self.emit_expr(end_expr)?;
-                    
-                    let loop_var = if var_name.is_empty() {
-                        "_unused_var"
-                    } else {
-                        var_name
-                    };
-                    
-                    let is_reversed = if let (ast::Expr::Int(start_val, _), ast::Expr::Int(end_val, _)) = (start_expr.as_ref(), end_expr.as_ref()) {
-                        start_val > end_val
-                    } else {
-                        false
-                    };
-                    
-                    if is_reversed {
-                        let condition = match range_type {
-                            ast::RangeType::Exclusive => format!("{} > {}", loop_var, end_code),
-                            ast::RangeType::Inclusive => format!("{} >= {}", loop_var, end_code),
-                            _ => return Err(CompileError::CodegenError {
-                                message: format!("Unsupported range type for reversed range: {:?}", range_type),
-                                span: None,
-                                file_id: self.file_id,
-                            }),
+                    if let ast::Expr::InfiniteRange(_, _) = end_expr.as_ref() {
+                        let start_code = self.emit_expr(start_expr)?;
+                        let step_code = if let Some(step_expr) = step {
+                            self.emit_expr(step_expr)?
+                        } else {
+                            "1".to_string()
+                        };
+                        let loop_var = if var_name.is_empty() {
+                            "_unused_var"
+                        } else {
+                            var_name
                         };
                         
-                        self.body.push_str(&format!(
-                            "for (int {var} = {start}; {condition}; {var}--) {{\n",
-                            var = loop_var,
-                            start = start_code,
-                            condition = condition
-                        ));
-                    } else {
-                        let condition = match range_type {
-                            ast::RangeType::Exclusive => format!("{} < {}", loop_var, end_code),
-                            ast::RangeType::Inclusive => format!("{} <= {}", loop_var, end_code),
-                            _ => return Err(CompileError::CodegenError {
-                                message: format!("Unsupported range type for normal range: {:?}", range_type),
-                                span: None,
-                                file_id: self.file_id,
-                            }),
+                        if let Some(index_name) = index_var {
+                            self.body.push_str(&format!(
+                                "for (int {var} = {start}, {idx} = 0; ; {var} += {step}, {idx}++) {{\n",
+                                var = loop_var,
+                                idx = index_name,
+                                start = start_code,
+                                step = step_code
+                            ));
+                        } else {
+                            self.body.push_str(&format!(
+                                "for (int {var} = {start}; ; {var} += {step}) {{\n",
+                                var = loop_var,
+                                start = start_code,
+                                step = step_code
+                            ));
+                        }
+                    } else if let ast::Expr::InfiniteRange(_, _) = start_expr.as_ref() {
+                        let end_code = self.emit_expr(end_expr)?;
+                        let step_code = if let Some(step_expr) = step {
+                            self.emit_expr(step_expr)?
+                        } else {
+                            "1".to_string()
+                        };
+                        let loop_var = if var_name.is_empty() {
+                            "_unused_var"
+                        } else {
+                            var_name
                         };
                         
-                        self.body.push_str(&format!(
-                            "for (int {var} = {start}; {condition}; {var}++) {{\n",
-                            var = loop_var,
-                            start = start_code,
-                            condition = condition
-                        ));
+                        if let Some(index_name) = index_var {
+                            self.body.push_str(&format!(
+                                "for (int {var} = 0, {idx} = 0; {var} < {end}; {var} += {step}, {idx}++) {{\n",
+                                var = loop_var,
+                                idx = index_name,
+                                end = end_code,
+                                step = step_code
+                            ));
+                        } else {
+                            self.body.push_str(&format!(
+                                "for (int {var} = 0; {var} < {end}; {var} += {step}) {{\n",
+                                var = loop_var,
+                                end = end_code,
+                                step = step_code
+                            ));
+                        }
+                    } else {
+                        let start_code = self.emit_expr(start_expr)?;
+                        let end_code = self.emit_expr(end_expr)?;
+                        
+                        let loop_var = if var_name.is_empty() {
+                            "_unused_var"
+                        } else {
+                            var_name
+                        };
+                        
+                        let step_code = if let Some(step_expr) = step {
+                            self.emit_expr(step_expr)?
+                        } else {
+                            "1".to_string()
+                        };
+                        
+                        let is_reversed = if let (ast::Expr::Int(start_val, _), ast::Expr::Int(end_val, _)) = (start_expr.as_ref(), end_expr.as_ref()) {
+                            start_val > end_val
+                        } else {
+                            false
+                        };
+                        
+                        if is_reversed {
+                            let condition = match range_type {
+                                ast::RangeType::Exclusive => format!("{} > {}", loop_var, end_code),
+                                ast::RangeType::Inclusive => format!("{} >= {}", loop_var, end_code),
+                                _ => return Err(CompileError::CodegenError {
+                                    message: format!("Unsupported range type for reversed range: {:?}", range_type),
+                                    span: None,
+                                    file_id: self.file_id,
+                                }),
+                            };
+                            
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!(
+                                    "for (int {var} = {start}, {idx} = 0; {condition}; {var} -= {step}, {idx}++) {{\n",
+                                    var = loop_var,
+                                    idx = index_name,
+                                    start = start_code,
+                                    condition = condition,
+                                    step = step_code
+                                ));
+                            } else {
+                                self.body.push_str(&format!(
+                                    "for (int {var} = {start}; {condition}; {var} -= {step}) {{\n",
+                                    var = loop_var,
+                                    start = start_code,
+                                    condition = condition,
+                                    step = step_code
+                                ));
+                            }
+                        } else {
+                            let condition = match range_type {
+                                ast::RangeType::Exclusive => format!("{} < {}", loop_var, end_code),
+                                ast::RangeType::Inclusive => format!("{} <= {}", loop_var, end_code),
+                                _ => return Err(CompileError::CodegenError {
+                                    message: format!("Unsupported range type for normal range: {:?}", range_type),
+                                    span: None,
+                                    file_id: self.file_id,
+                                }),
+                            };
+                            
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!(
+                                    "for (int {var} = {start}, {idx} = 0; {condition}; {var} += {step}, {idx}++) {{\n",
+                                    var = loop_var,
+                                    idx = index_name,
+                                    start = start_code,
+                                    condition = condition,
+                                    step = step_code
+                                ));
+                            } else {
+                                self.body.push_str(&format!(
+                                    "for (int {var} = {start}; {condition}; {var} += {step}) {{\n",
+                                    var = loop_var,
+                                    start = start_code,
+                                    condition = condition,
+                                    step = step_code
+                                ));
+                            }
+                        }
                     }
                 } else if let ast::Expr::InfiniteRange(range_type, _) = range {
                     let loop_var = if var_name.is_empty() {
@@ -1277,7 +1367,7 @@ impl CBackend {
                     let unique_id = format!("{}_{}", loop_var, self.body.len());
                     
                     match range_type {
-                        ast::RangeType::InfiniteRandom => {
+                        ast::RangeType::Infinite => {
                             self.body.push_str(&format!(
                                 "{{\n\
                                  static int seeded_{} = 0;\n\
@@ -1285,7 +1375,7 @@ impl CBackend {
                                      srand(time(NULL) + {});\n\
                                      seeded_{} = 1;\n\
                                  }}\n\
-                                 for (int k = 0; k < 3; k++) rand();\n\
+                                 for (int k = 0; k < 5; k++) rand();\n\
                                  long long {var};\n\
                                  int scale = rand() % 4;\n\
                                  switch(scale) {{\n\
@@ -1294,11 +1384,13 @@ impl CBackend {
                                      case 2: {var} = ((long long)rand() << 16) | rand(); break; \n\
                                      case 3: {var} = ((long long)rand() << 32) | ((long long)rand() << 16) | rand(); break; \n\
                                  }}\n\
-                                 if (rand() % 2) {var} = -{var};  \n\
-                                 int direction_{var} = (rand() % 2) ? 1 : -1;\n\
-                                 for (;;) {{\n",
-                                unique_id, unique_id, unique_id.len() * 17, unique_id, var = loop_var
+                                 if (rand() % 2) {var} = -{var};  \n",
+                                unique_id, unique_id, unique_id.len() * 23, unique_id, var = loop_var
                             ));
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!("int {} = 0;\n", index_name));
+                            }
+                            self.body.push_str("for (;;) {\n");
                         }
                         ast::RangeType::InfiniteUp => {
                             self.body.push_str(&format!(
@@ -1312,14 +1404,17 @@ impl CBackend {
                                  long long {var};\n\
                                  int scale = rand() % 4; \n\
                                  switch(scale) {{\n\
-                                     case 0: {var} = rand() % 1000; break;  0\n\
+                                     case 0: {var} = rand() % 1000; break;\n\
                                      case 1: {var} = rand() % 1000000; break;\n\
                                      case 2: {var} = ((long long)rand() << 16) | rand(); break; \n\
                                      case 3: {var} = ((long long)rand() << 32) | ((long long)rand() << 16) | rand(); break;\n\
-                                 }}\n\
-                                 for (;;) {{\n",
+                                 }}\n",
                                 unique_id, unique_id, unique_id.len() * 31, unique_id, var = loop_var
                             ));
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!("int {} = 0;\n", index_name));
+                            }
+                            self.body.push_str("for (;;) {\n");
                         }
                         ast::RangeType::InfiniteDown => {
                             self.body.push_str(&format!(
@@ -1337,10 +1432,13 @@ impl CBackend {
                                      case 1: {var} = -(rand() % 1000000); break; \n\
                                      case 2: {var} = -(((long long)rand() << 16) | rand()); break; \n\
                                      case 3: {var} = -(((long long)rand() << 32) | ((long long)rand() << 16) | rand()); break; \n\
-                                 }}\n\
-                                 for (;;) {{\n",
+                                 }}\n",
                                 unique_id, unique_id, unique_id.len() * 43, unique_id, var = loop_var
                             ));
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!("int {} = 0;\n", index_name));
+                            }
+                            self.body.push_str("for (;;) {\n");
                         }
                         _ => return Err(CompileError::CodegenError {
                             message: format!("Invalid infinite range type: {:?}", range_type),
@@ -1349,17 +1447,14 @@ impl CBackend {
                         }),
                     }
                 } else {
-                    let range_code = self.emit_expr(range)?;
-                    let loop_var = if var_name.is_empty() {
+                    let _range_code = self.emit_expr(range)?;
+                    let _loop_var = if var_name.is_empty() {
                         "_unused_var"
                     } else {
                         var_name
                     };
                     
-                    self.body.push_str(&format!(
-                        "/* Unsupported range type: {} */\n",
-                        range_code
-                    ));
+                    self.body.push_str("/* Unsupported range type */\n");
                 }
 
                 for stmt in body {
@@ -1374,14 +1469,23 @@ impl CBackend {
                     };
                     
                     match range_type {
-                        ast::RangeType::InfiniteRandom => {
-                            self.body.push_str(&format!("    {} += direction_{};\n", loop_var, loop_var));
-                        }
                         ast::RangeType::InfiniteUp => {
                             self.body.push_str(&format!("    {}++;\n", loop_var));
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!("    {}++;\n", index_name));
+                            }
                         }
                         ast::RangeType::InfiniteDown => {
                             self.body.push_str(&format!("    {}--;\n", loop_var));
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!("    {}++;\n", index_name));
+                            }
+                        }
+                        ast::RangeType::Infinite => {
+                            self.body.push_str(&format!("    {}++;\n", loop_var));
+                            if let Some(index_name) = index_var {
+                                self.body.push_str(&format!("    {}++;\n", index_name));
+                            }
                         }
                         _ => {}
                     }
@@ -1644,14 +1748,14 @@ impl CBackend {
                     ast::RangeType::Exclusive => Ok(format!("{}..{}", start_code, end_code)),
                     ast::RangeType::InfiniteUp => Ok(format!("{}..>", start_code)),
                     ast::RangeType::InfiniteDown => Ok(format!("{}..<", start_code)),
-                    ast::RangeType::InfiniteRandom => Ok(format!("{}..", start_code)),
+                    ast::RangeType::Infinite => Ok(format!("{}..", start_code)),
                 }
             }
             ast::Expr::InfiniteRange(range_type, _) => {
                 match range_type {
-                    ast::RangeType::InfiniteRandom => Ok("..".to_string()),
                     ast::RangeType::InfiniteUp => Ok("..>".to_string()),
                     ast::RangeType::InfiniteDown => Ok("..<".to_string()),
+                    ast::RangeType::Infinite => Ok("..".to_string()),
                     _ => Err(CompileError::CodegenError {
                         message: format!("Invalid infinite range type: {:?}", range_type),
                         span: None,
@@ -1703,6 +1807,7 @@ impl CBackend {
                     {} {}[] = {{ {} }}; \
                     {}* {} = ve_arena_alloc({} * sizeof({})); \
                     if ({}) {{ \
+
                         for (int _i = 0; _i < {}; _i++) {{{}[_i] = {}[_i];}} \
                     }} \
                     {}; \
@@ -1906,15 +2011,14 @@ impl CBackend {
                                             });
                                         }
                                     }
-                                }
-                                code.push_str(&format!(
-                                    "    {} {} = {}.data.{}.field{};\n",
-                                    field_type,
-                                    var_name,
-                                    matched_var,
-                                    variant_name.to_lowercase(),
-                                    i
-                                ));
+                                    code.push_str(&format!(
+                                        "    {} {} = {}.data.{}.field{};\n",
+                                        field_type,
+                                        var_name,
+                                        matched_var,
+                                        variant_name.to_lowercase(),
+                                        i
+                                    ));
                             }
                         }
 
@@ -1937,6 +2041,7 @@ impl CBackend {
                         }
                         code.push_str("}\n");
                     }
+                }
                     ast::Pattern::Literal(expr, _) => {
                         let literal_code = self.emit_expr(expr)?;
                         code.push_str(&format!("case {}: {{\n", literal_code));
@@ -2432,110 +2537,254 @@ impl CBackend {
             _ => matched_var.to_string(),
         };
 
-        code.push_str(&format!("switch ({}) {{\n", switch_expr));
+        let has_guards = arms.iter().any(|arm| arm.guard.is_some());
 
-        for arm in arms {
-            match &arm.pattern {
-                ast::Pattern::EnumVariant(enum_name_arm, variant_name, patterns, _) => {
-                    let case_value = if is_generic {
-                        format!("{}_{}", tag_prefix, variant_name)
-                    } else {
-                        format!("ve_{}_{}", enum_name_arm, variant_name)
-                    };
-                    code.push_str(&format!("    case {}: {{\n", case_value));
-
-                    for (i, pattern) in patterns.iter().enumerate() {
-                        if let ast::Pattern::Variable(var_name, _) = pattern {
-                            let mut field_type = "int".to_string();
-                            if let Some(Type::GenericInstance(enum_name, args)) = &matched_type {
-                                if let Some(enum_def) = self.enum_defs.get(enum_name) {
-                                    enum_def.variants.iter().find(|v| v.name == *variant_name).map(|variant| {
-                                        if let Some(data_types) = &variant.data {
-                                            if let Some(ty) = data_types.get(i) {
-                                                field_type = self.type_to_c(if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
-                                                    &args[idx]
-                                                } else {
-                                                    ty
-                                                });
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                            code.push_str(&format!(
-                                "    {} {} = {}.data.{}.field{};\n",
-                                field_type,
-                                var_name,
-                                matched_var,
-                                variant_name.to_lowercase(),
-                                i
-                            ));
-                        }
+        if has_guards {
+            use std::collections::HashMap;
+            let mut variants_map: HashMap<String, Vec<&ast::MatchArm>> = HashMap::new();
+            
+            for arm in arms {
+                match &arm.pattern {
+                    ast::Pattern::EnumVariant(_, variant_name, _, _) => {
+                        variants_map.entry(variant_name.clone()).or_insert_with(Vec::new).push(arm);
                     }
-
-                    let body_code = match &arm.body {
-                        ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
-                        ast::MatchArmBody::Block(stmts) => {
-                            let mut block_code = String::new();
-                            for stmt in stmts {
-                                block_code.push_str(&self.emit_stmt_to_string(stmt)?);
-                            }
-                            block_code
-                        }
-                    };
-                    code.push_str(&format!("    {} = {};\n", result_var, body_code));
-                    code.push_str("    break;\n");
-                    code.push_str("}\n");
-                }
-                ast::Pattern::Wildcard(_) => {
-                    code.push_str("    default: {\n");
-                    let body_code = match &arm.body {
-                        ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
-                        ast::MatchArmBody::Block(stmts) => {
-                            let mut block_code = String::new();
-                            for stmt in stmts {
-                                block_code.push_str(&self.emit_stmt_to_string(stmt)?);
-                            }
-                            block_code
-                        }
-                    };
-                    code.push_str(&format!("        {} = {};\n", result_var, body_code));
-                    code.push_str("        break;\n");
-                    code.push_str("    }\n");
-                }
-                ast::Pattern::Variable(var_name, _) => {
-                    code.push_str("    default: {\n");
-                    let expr_type = Type::Unknown;
-                    let c_type = self.type_to_c(&expr_type);
-                    code.push_str(&format!(
-                        "        {} {} = {};\n",
-                        c_type, var_name, matched_var
-                    ));
-                    let body_code = match &arm.body {
-                        ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
-                        ast::MatchArmBody::Block(stmts) => {
-                            let mut block_code = String::new();
-                            for stmt in stmts {
-                                block_code.push_str(&self.emit_stmt_to_string(stmt)?);
-                            }
-                            block_code
-                        }
-                    };
-                    code.push_str(&format!("        {} = {};\n", result_var, body_code));
-                    code.push_str("        break;\n");
-                    code.push_str("    }\n");
-                }
-                ast::Pattern::Literal(_expr, _) => {
-                    return Err(CompileError::CodegenError {
-                        message: "Literal patterns in enum match not yet supported".to_string(),
-                        span: Some(arm.span),
-                        file_id: self.file_id,
-                    });
+                    _ => {}
                 }
             }
-        }
 
-        code.push_str("}\n");
+            let mut first_arm = true;
+            for arm in arms {
+                match &arm.pattern {
+                    ast::Pattern::EnumVariant(enum_name_arm, variant_name, patterns, _) => {
+                        let case_value = if is_generic {
+                            format!("{}_{}", tag_prefix, variant_name)
+                        } else {
+                            format!("ve_{}_{}", enum_name_arm, variant_name)
+                        };
+
+                        let arms_for_variant = variants_map.get(variant_name).unwrap();
+                        let is_first_for_variant = arms_for_variant.first().map(|a| std::ptr::eq(*a, arm)).unwrap_or(false);
+
+                        if is_first_for_variant {
+                            let if_keyword = if first_arm { "if" } else { "else if" };
+                            first_arm = false;
+                            code.push_str(&format!("{} ({} == {}) {{\n", if_keyword, switch_expr, case_value));
+
+                            for (i, pattern) in patterns.iter().enumerate() {
+                                if let ast::Pattern::Variable(var_name, _) = pattern {
+                                    let mut field_type = "int".to_string();
+                                    if let Some(Type::GenericInstance(enum_name, args)) = &matched_type {
+                                        if let Some(enum_def) = self.enum_defs.get(enum_name) {
+                                            enum_def.variants.iter().find(|v| v.name == *variant_name).map(|variant| {
+                                                if let Some(data_types) = &variant.data {
+                                                    if let Some(ty) = data_types.get(i) {
+                                                        field_type = self.type_to_c(if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
+                                                            &args[idx]
+                                                        } else {
+                                                            ty
+                                                        });
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                    code.push_str(&format!(
+                                        "        {} {} = {}.data.{}.field{};\n",
+                                        field_type,
+                                        var_name,
+                                        matched_var,
+                                        variant_name.to_lowercase(),
+                                        i
+                                    ));
+                                }
+                            }
+
+                            for variant_arm in arms_for_variant {
+                                if let Some(guard) = &variant_arm.guard {
+                                    let guard_code = self.emit_expr(guard)?;
+                                    code.push_str(&format!("    if ({}) {{\n", guard_code));
+                                } else {
+                                    code.push_str("    {\n");
+                                }
+
+                                let body_code = match &variant_arm.body {
+                                    ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                                    ast::MatchArmBody::Block(stmts) => {
+                                        let mut block_code = String::new();
+                                        for stmt in stmts {
+                                            block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                        }
+                                        block_code
+                                    }
+                                };
+
+                                code.push_str(&format!("        {} = {};\n", result_var, body_code));
+                                code.push_str("    }\n");
+
+                                if variant_arm.guard.is_some() {
+                                    code.push_str("    else ");
+                                } else {
+                                    break;
+                                }
+                            }
+                            code.push_str("}\n");
+                        }
+                    }
+                    ast::Pattern::Wildcard(_) => {
+                        let else_keyword = if first_arm { "" } else { "else " };
+                        first_arm = false;
+                        code.push_str(&format!("{}{{ \n", else_keyword));
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        code.push_str(&format!("    {} = {};\n", result_var, body_code));
+                        code.push_str("}\n");
+                    }
+                    ast::Pattern::Variable(var_name, _) => {
+                        let else_keyword = if first_arm { "" } else { "else " };
+                        first_arm = false;
+                        code.push_str(&format!("{}{{ \n", else_keyword));
+                        let expr_type = Type::Unknown;
+                        let c_type = self.type_to_c(&expr_type);
+                        code.push_str(&format!(
+                            "    {} {} = {};\n",
+                            c_type, var_name, matched_var
+                        ));
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        code.push_str(&format!("    {} = {};\n", result_var, body_code));
+                        code.push_str("}\n");
+                    }
+                    ast::Pattern::Literal(_expr, _) => {
+                        return Err(CompileError::CodegenError {
+                            message: "Literal patterns in enum match not yet supported".to_string(),
+                            span: Some(arm.span),
+                            file_id: self.file_id,
+                        });
+                    }
+                }
+            }
+        } else {
+            code.push_str(&format!("switch ({}) {{\n", switch_expr));
+
+            for arm in arms {
+                match &arm.pattern {
+                    ast::Pattern::EnumVariant(enum_name_arm, variant_name, patterns, _) => {
+                        let case_value = if is_generic {
+                            format!("{}_{}", tag_prefix, variant_name)
+                        } else {
+                            format!("ve_{}_{}", enum_name_arm, variant_name)
+                        };
+                        code.push_str(&format!("    case {}: {{\n", case_value));
+
+                        for (i, pattern) in patterns.iter().enumerate() {
+                            if let ast::Pattern::Variable(var_name, _) = pattern {
+                                let mut field_type = "int".to_string();
+                                if let Some(Type::GenericInstance(enum_name, args)) = &matched_type {
+                                    if let Some(enum_def) = self.enum_defs.get(enum_name) {
+                                        enum_def.variants.iter().find(|v| v.name == *variant_name).map(|variant| {
+                                            if let Some(data_types) = &variant.data {
+                                                if let Some(ty) = data_types.get(i) {
+                                                    field_type = self.type_to_c(if let Some(idx) = enum_def.generic_params.iter().position(|gp| gp == &ty.to_string()) {
+                                                        &args[idx]
+                                                    } else {
+                                                        ty
+                                                    });
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                                code.push_str(&format!(
+                                    "    {} {} = {}.data.{}.field{};\n",
+                                    field_type,
+                                    var_name,
+                                    matched_var,
+                                    variant_name.to_lowercase(),
+                                    i
+                                ));
+                            }
+                        }
+
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        code.push_str(&format!("    {} = {};\n", result_var, body_code));
+                        code.push_str("    break;\n");
+                        code.push_str("}\n");
+                    }
+                    ast::Pattern::Wildcard(_) => {
+                        code.push_str("    default: {\n");
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        code.push_str(&format!("        {} = {};\n", result_var, body_code));
+                        code.push_str("        break;\n");
+                        code.push_str("    }\n");
+                    }
+                    ast::Pattern::Variable(var_name, _) => {
+                        code.push_str("    default: {\n");
+                        let expr_type = Type::Unknown;
+                        let c_type = self.type_to_c(&expr_type);
+                        code.push_str(&format!(
+                            "        {} {} = {};\n",
+                            c_type, var_name, matched_var
+                        ));
+                        let body_code = match &arm.body {
+                            ast::MatchArmBody::Expr(expr) => self.emit_expr(expr)?,
+                            ast::MatchArmBody::Block(stmts) => {
+                                let mut block_code = String::new();
+                                for stmt in stmts {
+                                    block_code.push_str(&self.emit_stmt_to_string(stmt)?);
+                                }
+                                block_code
+                            }
+                        };
+                        code.push_str(&format!("        {} = {};\n", result_var, body_code));
+                        code.push_str("        break;\n");
+                        code.push_str("    }\n");
+                    }
+                    ast::Pattern::Literal(_expr, _) => {
+                        return Err(CompileError::CodegenError {
+                            message: "Literal patterns in enum match not yet supported".to_string(),
+                            span: Some(arm.span),
+                            file_id: self.file_id,
+                        });
+                    }
+                }
+            }
+
+            code.push_str("}\n");
+        }
         Ok(())
     }
 
@@ -2577,7 +2826,7 @@ impl CBackend {
                 max_depth + 1
            
             }
-            ast::Stmt::While(_, body, _) | ast::Stmt::For(_, _, body, _) => {
+            ast::Stmt::While(_, body, _) | ast::Stmt::For(_, _, _, _, body, _) => {
                 let mut max_depth = 0;
                 for stmt in body {
                     max_depth = max_depth.max(self.analyze_stmt_memory(stmt));
@@ -2716,5 +2965,4 @@ impl CBackend {
             self.memory_analysis.estimated_arena_size = 64 * 1024 * 1024;
         }
     }
-
 }

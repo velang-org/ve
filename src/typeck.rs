@@ -297,13 +297,25 @@ impl TypeChecker {
                 self.check_block(body)?;
                 self.context.in_loop = false;
             }
-            Stmt::For(name, range, body, _) => {
+            Stmt::For(name, index_var, range, step, body, _) => {
                 self.check_expr(range)?;
+                
+                if let Some(step_expr) = step {
+                    let step_type = self.check_expr(step_expr)?;
+                    if !matches!(step_type, Type::I32 | Type::I64 | Type::U32 | Type::U64) {
+                        self.report_error("Step value must be an integer", step_expr.span());
+                    }
+                }
 
+                let old_variables = self.context.variables.clone();
                 self.context.variables.insert(name.clone(), Type::I32);
+                if let Some(idx_var) = index_var {
+                    self.context.variables.insert(idx_var.clone(), Type::I32);
+                }
                 self.context.in_loop = true;
                 self.check_block(body)?;
                 self.context.in_loop = false;
+                self.context.variables = old_variables;
             }
             Stmt::Break(expr, span) => {
                 if !self.context.in_loop {
@@ -1234,6 +1246,14 @@ impl TypeChecker {
                             self.check_pattern(&arm.pattern, &matched_ty)?;
                         }
                     }
+                    
+                    if let Some(guard) = &mut arm.guard {
+                        let guard_ty = self.check_expr(guard)?;
+                        if !matches!(guard_ty, Type::Bool) {
+                            self.report_error("Guard condition must be a boolean expression", guard.span());
+                        }
+                    }
+                    
                     let arm_ty = match &mut arm.body {
                         ast::MatchArmBody::Expr(expr) => self.check_expr(expr)?,
                         ast::MatchArmBody::Block(stmts) => {

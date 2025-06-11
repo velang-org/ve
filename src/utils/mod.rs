@@ -729,7 +729,7 @@ fn collect_variable_dependencies(stmt: &ast::Stmt, dependencies: &mut HashSet<St
             collect_expr_dependencies(condition, dependencies);
             collect_variable_dependencies_from_block(body, dependencies);
         }
-        ast::Stmt::For(_, iter_expr, body, _) => {
+        ast::Stmt::For(_, _, iter_expr, _, body, _) => {
             collect_expr_dependencies(iter_expr, dependencies);
             collect_variable_dependencies_from_block(body, dependencies);
         }
