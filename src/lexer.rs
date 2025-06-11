@@ -41,6 +41,8 @@ pub enum Token {
     KwExport,
     #[token("struct")]
     KwStruct,
+    #[token("impl")]
+    KwImpl,
     #[token("enum")]
     KwEnum,
     #[token("match")]

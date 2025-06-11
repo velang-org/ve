@@ -296,6 +296,10 @@ impl CBackend {
 
         self.emit_functions(&program)?;
 
+        for impl_block in &program.impls {
+            self.emit_impl_block(impl_block)?;
+        }
+
         if self.is_test_mode {
             self.emit_tests(&program)?;
         }
@@ -988,8 +992,10 @@ impl CBackend {
             };
             let func_name = if func.name == "main" {
                 func.name.clone()
+            } else if func.name.starts_with("ve_method_") {
+                func.name.clone()
             } else {
-                format!("ve_{}", func.name)
+                format!("ve_fn_{}", func.name)
             };
             
         
@@ -1001,6 +1007,22 @@ impl CBackend {
                 .join(", ");
             self.body
                 .push_str(&format!("{} {}({});\n", return_type, func_name, params));
+        }
+        
+        for impl_block in &program.impls {
+            for method in &impl_block.methods {
+                let return_type = self.type_to_c(&method.return_type);
+                let method_name = format!("ve_method_{}_{}", impl_block.target_type, method.name);
+                
+                let params = method
+                    .params
+                    .iter()
+                    .map(|(name, ty)| format!("{} {}", self.type_to_c(ty), name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.body
+                    .push_str(&format!("{} {}({});\n", return_type, method_name, params));
+            }
         }
         
 
@@ -1033,8 +1055,10 @@ impl CBackend {
 
         let func_name = if func.name == "main" {
             func.name.clone()
+        } else if func.name.starts_with("ve_method_") {
+            func.name.clone()
         } else {
-            format!("ve_{}", func.name)
+            format!("ve_fn_{}", func.name)
         };
 
         let is_generic = !func.generic_params.is_empty();
@@ -1671,10 +1695,29 @@ impl CBackend {
                 }
             }
             ast::Expr::Call(name, args, _expr_info) => {
+                if name.starts_with("<method>.") {
+                    let method_name = &name[9..]; 
+                    if let Some(obj_expr) = args.first() {
+                        let obj_code = self.emit_expr(obj_expr)?;
+                        let obj_type = &obj_expr.get_type();
+                        let type_name = self.type_to_c_name(obj_type);
+                        
+                        let method_func_name = format!("ve_method_{}_{}", type_name, method_name);
+                        
+                        let mut args_code = Vec::new();
+                        args_code.push(obj_code); 
+                        for arg in args.iter().skip(1) {
+                            args_code.push(self.emit_expr(arg)?);
+                        }
+                        
+                        return Ok(format!("{}({})", method_func_name, args_code.join(", ")));
+                    }
+                }
+                
                 let final_name = if self.ffi_functions.contains(name) {
                     name.clone()
                 } else {
-                    format!("ve_{}", name)
+                    format!("ve_fn_{}", name)
                 };
                 
                 let mut args_code = Vec::new();
@@ -2964,5 +3007,18 @@ impl CBackend {
         if self.memory_analysis.estimated_arena_size > 64 * 1024 * 1024 {
             self.memory_analysis.estimated_arena_size = 64 * 1024 * 1024;
         }
+    }
+
+    fn emit_impl_block(&mut self, impl_block: &ast::ImplBlock) -> Result<(), CompileError> {
+        for method in &impl_block.methods {
+            let mangled_name = format!("ve_method_{}_{}", impl_block.target_type, method.name);
+            
+            let mut impl_function = method.clone();
+            impl_function.name = mangled_name;
+            
+            self.emit_function(&impl_function)?;
+        }
+        
+        Ok(())
     }
 }

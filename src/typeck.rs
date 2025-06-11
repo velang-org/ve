@@ -41,6 +41,7 @@ pub struct TypeChecker {
     functions: HashMap<String, (Vec<Type>, Type)>,
     file_id: FileId,
     enums: Vec<ast::EnumDef>,
+    impls: Vec<ast::ImplBlock>,
 }
 
 impl TypeChecker {
@@ -56,6 +57,7 @@ impl TypeChecker {
             context: Context::new(),
             functions: imported_functions,
             enums: Vec::new(),
+            impls: Vec::new(),
         };
 
         for struct_def in imported_structs {
@@ -79,6 +81,7 @@ impl TypeChecker {
 
     pub fn check(&mut self, program: &mut ast::Program) -> Result<(), Vec<Diagnostic<FileId>>> {
         self.enums = program.enums.clone();
+        self.impls = program.impls.clone(); 
 
         for ffi in &program.ffi_functions {
             self.functions.insert(
@@ -126,6 +129,10 @@ impl TypeChecker {
         for func in &mut program.functions {
             self.context.current_return_type = func.return_type.clone();
             self.check_function(func)?;
+        }
+
+        for impl_block in &mut program.impls {
+            self.check_impl_block(impl_block)?;
         }
 
         for test in &mut program.tests {
@@ -723,6 +730,54 @@ impl TypeChecker {
                     is_tail: _,
                 },
             ) => {
+                if name.starts_with("<method>.") {
+                    let method_name = &name[9..]; 
+                    if let Some(obj_expr) = args.first_mut() {
+                        let obj_type = self.check_expr(obj_expr)?;
+                        
+                        let type_name = obj_type.to_string();
+                        
+                        let impls = self.impls.clone();
+                        let mut method_found = false;
+                        let mut method_return_type = Type::Unknown;
+                        let mut expected_args = 0;
+                        
+                        for impl_block in &impls {
+                            if impl_block.target_type == type_name {
+                                for method in &impl_block.methods {
+                                    if method.name == method_name {
+                                        method_found = true;
+                                        method_return_type = method.return_type.clone();
+                                        expected_args = method.params.len();
+                                        break;
+                                    }
+                                }
+                                if method_found { break; }
+                            }
+                        }
+                        
+                        if !method_found {
+                            self.report_error(
+                                &format!("Method '{}' not found for type '{}'", method_name, type_name),
+                                *span,
+                            );
+                            *expr_type = Type::Unknown;
+                            return Ok(Type::Unknown);
+                        }
+                        
+                        if args.len() != expected_args {
+                            self.report_error(
+                                &format!("Method '{}' expects {} arguments, got {}", 
+                                    method_name, expected_args, args.len()),
+                                *span,
+                            );
+                        }
+                        
+                        *expr_type = method_return_type.clone();
+                        return Ok(method_return_type);
+                    }
+                }
+                
                 let mut found = self.functions.get(name).cloned();
                 if found.is_none() {
                     found = self
@@ -1555,6 +1610,50 @@ impl TypeChecker {
             self.check_stmt(stmt)?;
         }
         Ok(())
+    }
+
+    fn check_impl_block(&mut self, impl_block: &mut ast::ImplBlock) -> Result<(), Vec<Diagnostic<FileId>>> {
+        let target_type = self.parse_type_name(&impl_block.target_type);
+        
+        for method in &mut impl_block.methods {
+            for (param_name, param_type) in &mut method.params {
+                if param_name == "self" {
+                    *param_type = target_type.clone();
+                }
+            }
+            
+            self.context.current_return_type = method.return_type.clone();
+            self.check_function(method)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn parse_type_name(&self, type_name: &str) -> Type {
+        match type_name {
+            "string" => Type::String,
+            "i32" => Type::I32,
+            "i64" => Type::I64,
+            "i8" => Type::I8,
+            "i16" => Type::I16,
+            "u8" => Type::U8,
+            "u16" => Type::U16,
+            "u32" => Type::U32,
+            "u64" => Type::U64,
+            "f32" => Type::F32,
+            "f64" => Type::F64,
+            "bool" => Type::Bool,
+            "void" => Type::Void,
+            _ => {
+                if self.context.struct_defs.contains_key(type_name) {
+                    Type::Struct(type_name.to_string())
+                } else if self.context.enum_defs.contains_key(type_name) {
+                    Type::Enum(type_name.to_string())
+                } else {
+                    Type::Unknown
+                }
+            }
+        }
     }
 }
 

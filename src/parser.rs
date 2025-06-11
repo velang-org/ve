@@ -49,6 +49,7 @@ impl<'a> Parser<'a> {
             ffi_functions: Vec::new(),
             ffi_variables: Vec::new(),
             tests: Vec::new(),
+            impls: Vec::new(),
         };
 
         while !self.is_at_end() {
@@ -82,6 +83,8 @@ impl<'a> Parser<'a> {
                 program.structs.push(self.parse_struct()?);
             } else if self.check(Token::KwEnum) {
                 program.enums.push(self.parse_enum()?);
+            } else if self.check(Token::KwImpl) {
+                program.impls.push(self.parse_impl()?);
             } else if self.check(Token::Hash) {
                 self.advance();
                 let metadata = self.parse_metadata()?;
@@ -583,37 +586,22 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             Token::Dot => {
                 let (field, field_span) = self.consume_ident()?;
                 if self.check(Token::LParen) {
-                    if let ast::Expr::Var(enum_name, _) = &lhs {
-                        let args = self.parse_call_args()?;
-                        let end_span = args.1;
-                        Ok(ast::Expr::EnumConstruct(
-                            enum_name.clone(),
-                            field,
-                            args.0,
-                            ast::ExprInfo {
-                                span: Span::new(lhs.span().start(), end_span.end()),
-                                ty: ast::Type::Enum(enum_name.clone()),
-                                is_tail: false,
-                            },
-                        ))
-                    } else {
-                        let method_span = Span::new(lhs.span().start(), field_span.end());
-                        let args = self.parse_call_args()?;
-                        let end_span = args.1;
-                        Ok(ast::Expr::Call(
-                            format!("{}.{}", "<method>", field),
-                            {
-                                let mut v = vec![lhs];
-                                v.extend(args.0);
-                                v
-                            },
-                            ast::ExprInfo {
-                                span: Span::new(method_span.start(), end_span.end()),
-                                ty: ast::Type::Unknown,
-                                is_tail: false,
-                            },
-                        ))
-                    }
+                    let method_span = Span::new(lhs.span().start(), field_span.end());
+                    let args = self.parse_call_args()?;
+                    let end_span = args.1;
+                    Ok(ast::Expr::Call(
+                        format!("<method>.{}", field),
+                        {
+                            let mut v = vec![lhs];
+                            v.extend(args.0);
+                            v
+                        },
+                        ast::ExprInfo {
+                            span: Span::new(method_span.start(), end_span.end()),
+                            ty: ast::Type::Unknown,
+                            is_tail: false,
+                        },
+                    ))
                 } else {
                     if let ast::Expr::Var(_e_num_name, _) = &lhs {
                         let span = Span::new(lhs.span().start(), field_span.end());
@@ -1086,9 +1074,15 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
                 }
             } else {
                 let (name, _) = self.consume_ident()?;
-                self.consume(Token::Colon, "Expected ':' after parameter name")?;
-                let param_type = self.parse_type()?;
-                params.push((name, param_type));
+                
+            
+                if name == "self" {
+                    params.push((name, ast::Type::Unknown)); 
+                } else {
+                    self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                    let param_type = self.parse_type()?;
+                    params.push((name, param_type));
+                }
             }
             if !self.check(Token::Comma) {
                 break;
@@ -2044,6 +2038,33 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
                 is_tail: false,
             },
         ))
+    }
+
+    fn parse_impl(&mut self) -> Result<ast::ImplBlock, Diagnostic<FileId>> {
+        let start_span = self.consume(Token::KwImpl, "Expected 'impl'")?;
+        
+        let target_type_ast = self.parse_type()?;
+        let target_type = target_type_ast.to_string();
+        
+        self.expect(Token::LBrace)?;
+        
+        let mut methods = Vec::new();
+        while !self.check(Token::RBrace) {
+            if self.check(Token::KwFn) {
+                methods.push(self.parse_function()?);
+            } else {
+                let span = self.peek_span();
+                return self.error("Expected function in impl block", span);
+            }
+        }
+        
+        let end_span = self.expect(Token::RBrace)?;
+        
+        Ok(ast::ImplBlock {
+            target_type,
+            methods,
+            span: Span::new(start_span.start(), end_span.end()),
+        })
     }
 
 }

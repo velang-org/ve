@@ -137,9 +137,17 @@ pub struct Program {
     pub functions: Vec<Function>,
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
+    pub impls: Vec<ImplBlock>,
     pub ffi_functions: Vec<FfiFunction>,
     pub ffi_variables: Vec<FfiVariable>,
     pub tests: Vec<Test>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImplBlock {
+    pub target_type: String,
+    pub methods: Vec<Function>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -526,6 +534,9 @@ pub trait AstVisitor {
         for enum_def in &program.enums {
             self.visit_enum_def(enum_def);
         }
+        for impl_block in &program.impls {
+            self.visit_impl_block(impl_block);
+        }
         for ffi_func in &program.ffi_functions {
             self.visit_ffi_function(ffi_func);
         }
@@ -568,6 +579,12 @@ pub trait AstVisitor {
             for ty in types {
                 self.visit_type(ty);
             }
+        }
+    }
+
+    fn visit_impl_block(&mut self, impl_block: &ImplBlock) {
+        for method in &impl_block.methods {
+            self.visit_function(method);
         }
     }
 
@@ -1029,6 +1046,7 @@ pub trait AstTransformer {
             functions: program.functions.into_iter().map(|f| self.transform_function(f)).collect(),
             structs: program.structs.into_iter().map(|s| self.transform_struct_def(s)).collect(),
             enums: program.enums.into_iter().map(|e| self.transform_enum_def(e)).collect(),
+            impls: program.impls.into_iter().map(|i| self.transform_impl_block(i)).collect(),
             ffi_functions: program.ffi_functions,
             ffi_variables: program.ffi_variables,
             tests: program.tests.into_iter().map(|t| self.transform_test(t)).collect(),
@@ -1053,6 +1071,14 @@ pub trait AstTransformer {
 
     fn transform_enum_def(&mut self, enum_def: EnumDef) -> EnumDef {
         enum_def
+    }
+
+    fn transform_impl_block(&mut self, impl_block: ImplBlock) -> ImplBlock {
+        ImplBlock {
+            target_type: impl_block.target_type,
+            methods: impl_block.methods.into_iter().map(|m| self.transform_function(m)).collect(),
+            span: impl_block.span,
+        }
     }
 
     fn transform_test(&mut self, test: Test) -> Test {
