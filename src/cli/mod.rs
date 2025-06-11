@@ -340,11 +340,23 @@ pub fn process_build(
         imported_ffi_funcs,
         imported_ffi_vars,
         imported_stmts,
+        imported_impls,
     ) = process_imports(&mut files, &program.imports, &input)?;
     program.functions.extend(imported_asts);
     program.ffi_functions.extend(imported_ffi_funcs);
     program.ffi_variables.extend(imported_ffi_vars.clone());
     program.stmts.extend(imported_stmts);
+    program.impls.extend(imported_impls);
+
+    let mut seen_functions = std::collections::HashSet::new();
+    program.functions.retain(|func| {
+        if seen_functions.contains(&func.name) {
+            false
+        } else {
+            seen_functions.insert(func.name.clone());
+            true
+        }
+    });
 
     if verbose {
         let ast_file = build_dir.join("parsed_ast.txt");

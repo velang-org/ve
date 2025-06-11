@@ -48,6 +48,7 @@ pub fn process_imports(
     Vec<ast::FfiFunction>,
     Vec<ast::FfiVariable>,
     Vec<ast::Stmt>,
+    Vec<ast::ImplBlock>,
 )> {
     imports.iter().try_fold(
         (
@@ -57,8 +58,9 @@ pub fn process_imports(
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         ),
-        |(mut map, mut funcs, mut structs, mut ffi_funcs, mut ffi_vars, mut stmts), import_decl| {
+        |(mut map, mut funcs, mut structs, mut ffi_funcs, mut ffi_vars, mut stmts, mut impls), import_decl| {
             match import_decl {
                 ast::ImportDeclaration::ImportAll {
                     module_path,
@@ -128,6 +130,7 @@ pub fn process_imports(
                         nested_ffi_funcs,
                         nested_ffi_vars,
                         nested_stmts,
+                        nested_impls,
                     ) = process_imports(files, &program.imports, &path)?;
                     
                     program.functions.extend(nested_asts);
@@ -135,6 +138,7 @@ pub fn process_imports(
                     program.ffi_variables.extend(nested_ffi_vars);
                     program.structs.extend(nested_structs);
                     program.stmts.extend(nested_stmts);
+                    program.impls.extend(nested_impls);
                     
                     for (name, (params, return_type)) in nested_functions {
                         map.insert(name, (params, return_type));
@@ -208,7 +212,11 @@ pub fn process_imports(
                         }
                     }
 
-                    Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts))
+                    for impl_block in &program.impls {
+                        impls.push(impl_block.clone());
+                    }
+
+                    Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts, impls))
                 }
                 ast::ImportDeclaration::ImportSpecifiers {
                     module_path,
@@ -252,6 +260,7 @@ pub fn process_imports(
                         nested_ffi_funcs,
                         nested_ffi_vars,
                         nested_stmts,
+                        nested_impls,
                     ) = process_imports(files, &program.imports, &path)?;
                     
                     program.functions.extend(nested_asts);
@@ -259,6 +268,7 @@ pub fn process_imports(
                     program.ffi_variables.extend(nested_ffi_vars);
                     program.structs.extend(nested_structs);
                     program.stmts.extend(nested_stmts);
+                    program.impls.extend(nested_impls);
                     
                     for (name, (params, return_type)) in nested_functions {
                         map.insert(name, (params, return_type));
@@ -315,7 +325,11 @@ pub fn process_imports(
                         }
                     }
 
-                    Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts))
+                    for impl_block in &program.impls {
+                        impls.push(impl_block.clone());
+                    }
+
+                    Ok((map, funcs, structs, ffi_funcs, ffi_vars, stmts, impls))
                 }
             }
         },

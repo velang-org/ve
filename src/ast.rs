@@ -168,7 +168,7 @@ pub enum Stmt {
     Defer(Expr, Span),
     While(Expr, Vec<Stmt>, Span),
     Loop(Vec<Stmt>, Span),
-    For(String, Option<String>, Expr, Option<Expr>, Vec<Stmt>, Span), // (value_var, index_var, range, step, body, span)
+    For(String, Option<String>, Expr, Option<Expr>, Vec<Stmt>, Span), 
     Break(Option<Expr>, Span),
     Continue(Span),
     Block(Vec<Stmt>, Span),

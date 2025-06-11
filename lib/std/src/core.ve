@@ -3,9 +3,17 @@ import "std/io";
 #[header="stdlib.h"]
 foreign fn exit(code: i32) -> void;
 
+#[header="string.h"]
+foreign fn strlen(s: string) -> size_t;
 
 
 export fn panic(msg: string) -> void {
     println(`Panic: ${msg}`);
     exit(1);   
+}
+
+impl string {
+    fn length(self) -> i32 {
+        return strlen(self) as i32;
+    }
 }
