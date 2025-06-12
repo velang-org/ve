@@ -16,6 +16,7 @@ use codespan_reporting::term;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use std::path::PathBuf;
 use colored::*;
+use crate::cli::upgrade::Channel;
 
 #[derive(Debug)]
 pub struct CliError(pub String);
@@ -54,6 +55,7 @@ pub enum CliCommand {
         no_remind: bool,
         force: bool,
         verbose: bool,
+        channel: Channel,
     },
     Test {
         input: PathBuf,
@@ -138,6 +140,8 @@ enum Command {
         force: bool,
         #[arg(short, long, help = "Show verbose output during upgrade")]
         verbose: bool,
+        #[arg(long, help = "Update channel: stable or canary", value_parser = parse_channel)]
+        channel: Option<crate::cli::upgrade::Channel>,
     },
     Test {
        #[arg(value_parser = validate_ve_file)]
@@ -148,6 +152,14 @@ enum Command {
        verbose: bool,
        #[arg(long, help = "List available tests")]
        list: bool,
+    }
+}
+
+fn parse_channel(s: &str) -> Result<Channel, String> {
+    match s.to_lowercase().as_str() {
+        "stable" => Ok(Channel::Stable),
+        "canary" => Ok(Channel::Canary),
+        _ => Err(format!("Invalid channel '{}'. Valid options: stable, canary", s)),
     }
 }
 
@@ -189,10 +201,12 @@ pub fn parse() -> anyhow::Result<CliCommand> {
             no_remind,
             force,
             verbose,
+            channel,
         }) => Ok(CliCommand::Upgrade {
             no_remind,
             force,
             verbose,
+            channel: channel.unwrap_or_default(),
         }),
         Some(Command::Test {
             input,

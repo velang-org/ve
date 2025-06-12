@@ -46,7 +46,8 @@ fn main() -> Result<()> {
             no_remind,
             force,
             verbose,
-        }) => cli::upgrade::run_upgrade(no_remind, force, verbose),
+            channel,
+        }) => cli::upgrade::run_upgrade(no_remind, force, verbose, channel),
         Err(e) => {
             eprintln!("Error: {}", e);
             std::process::exit(1);
