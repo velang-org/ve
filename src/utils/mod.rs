@@ -1003,17 +1003,17 @@ fn get_lib_path() -> Result<PathBuf> {
     let mut potential_paths = Vec::new();
 
     if let Ok(home) = env::var("HOME") {
-        potential_paths.push(PathBuf::from(home).join(".velang").join("lib"));
+        potential_paths.push(PathBuf::from(home).join(".veil").join("lib"));
     }
 
     if let Ok(userprofile) = env::var("USERPROFILE") {
-        potential_paths.push(PathBuf::from(userprofile).join(".velang").join("lib"));
+        potential_paths.push(PathBuf::from(userprofile).join(".veil").join("lib"));
     }
 
     potential_paths.extend(vec![
-        PathBuf::from("/usr/local/share/velang/lib"),
-        PathBuf::from("/opt/velang/lib"),
-        PathBuf::from("/usr/share/velang/lib"),
+        PathBuf::from("/usr/local/share/veil/lib"),
+        PathBuf::from("/opt/veil/lib"),
+        PathBuf::from("/usr/share/veil/lib"),
     ]);
 
     for path in &potential_paths {

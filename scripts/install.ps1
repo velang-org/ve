@@ -5,8 +5,8 @@ param(
     [string]$Branch = $env:VELANG_BRANCH
 )
 
-$INSTALL_DIR = Join-Path $env:USERPROFILE ".velang"
-$TEMP_DIR = Join-Path $env:TEMP "velang_install"
+$INSTALL_DIR = Join-Path $env:USERPROFILE ".veil"
+$TEMP_DIR = Join-Path $env:TEMP "veil-install"
 
 # Function to display formatted messages
 function Write-Message {

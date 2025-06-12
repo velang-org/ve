@@ -48,7 +48,7 @@ description = "{description}"
     let content = VE_TOML_TEMPLATE
         .replace("{project_name}", project_name)
         .replace("{version}", "0.1.0")
-        .replace("{description}", "A new Velang project");
+        .replace("{description}", "A new Veil project");
 
     let mut file =
         File::create(&ve_toml_path).map_err(|e| anyhow!("Failed to create ve.toml: {}", e))?;

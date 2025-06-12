@@ -1238,11 +1238,8 @@ impl TypeChecker {
                 info.ty = Type::String;
                 Ok(Type::String)
             }
-            Expr::FfiCall(_name, _args, _info) => {
-                // TODO: Implement FFI call type checking
-                Ok(Type::Unknown)
-            }
-            Expr::EnumConstruct(enum_name, variant_name, args, info) => {
+            Expr::FfiCall(_name, _args, _info) => Ok(Type::Unknown), 
+            Expr::EnumConstruct(enum_name, _, args, info) => {
                 for arg in args.iter_mut() {
                     self.check_expr(arg)?;
                 }

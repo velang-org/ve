@@ -13,12 +13,12 @@ Join our [Discord](https://dsc.gg/velang) server to chat with the community and 
 
 **Unix (Linux/macOS):**
 ```bash
-curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | bash
+curl -sSf https://raw.githubusercontent.com/veil-lang/veil/main/scripts/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
+iex (iwr -useb https://raw.githubusercontent.com/veil-lang/veil/main/scripts/install.ps1).Content
 ```
 
 ### Manual Installation
