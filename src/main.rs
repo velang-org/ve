@@ -26,7 +26,7 @@ fn main() -> Result<()> {
             target_triple,
             verbose,
         }) => {
-            cli::process_build(input, output, optimize, target_triple, verbose, false, None)?;
+            cli::process_build(input, output, optimize, target_triple, verbose, false)?;
             Ok(())
         },
         Ok(cli::CliCommand::Test { input, test_name, verbose, list }) => {

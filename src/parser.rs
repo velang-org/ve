@@ -119,14 +119,23 @@ impl<'a> Parser<'a> {
 
         loop {
             let (name, _) = self.consume_ident()?;
-            self.expect(Token::Eq)?;
-            let value = match self.advance().cloned() {
-                Some((Token::Str(s), _)) => s,
-                Some((_, span)) => return self.error("Expected string value", span),
-                None => return self.error("Expected string value", Span::new(0, 0)),
-            };
 
-            metadata.insert(name, value);
+            if self.check(Token::Eq) {
+                self.advance();
+
+                let value = match self.advance().cloned() {
+                    Some((Token::Str(s), _)) => s,
+                    Some((Token::Ident(s), _)) => s,
+                    Some((Token::KwTrue, _)) => "true".to_string(),
+                    Some((Token::KwFalse, _)) => "false".to_string(),
+                    Some((_, span)) => return self.error("Expected string or bool value", span),
+                    None => return self.error("Expected value after '='", Span::new(0, 0)),
+                };
+
+                metadata.insert(name, value);
+            } else {
+                metadata.insert(name, "true".to_string());
+            }
 
             if self.check(Token::Comma) {
                 self.advance();
@@ -143,6 +152,7 @@ impl<'a> Parser<'a> {
             Ok(Some(metadata))
         }
     }
+
 
     fn parse_ffi(
         &mut self,

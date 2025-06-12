@@ -8,7 +8,6 @@ pub fn run_project(input: std::path::PathBuf, verbose: bool) -> anyhow::Result<(
         "x86_64-pc-windows-msvc".into(),
         verbose,
         false,
-        None,
     )?;
     Ok(())
 }

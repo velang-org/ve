@@ -5,11 +5,11 @@ pub mod upgrade;
 pub mod test;
 
 #[cfg(target_os = "windows")]
-use crate::utils::{prepare_windows_clang_args, process_imports, validate_ve_file};
+use crate::utils::{prepare_windows_clang_args, validate_ve_file};
 #[cfg(not(target_os = "windows"))]
-use crate::utils::{process_imports, validate_ve_file};
-use crate::{codegen, lexer, parser, typeck};
-use anyhow::{Context, anyhow};
+use crate::utils::validate_ve_file;
+use crate::{codegen, typeck};
+use anyhow::anyhow;
 use clap::{Parser, Subcommand};
 use codespan::Files;
 use codespan_reporting::term;
@@ -234,7 +234,6 @@ pub fn process_build(
     target_triple: String,
     verbose: bool,
     is_test: bool,
-    test_name: Option<String>,
 ) -> anyhow::Result<PathBuf> {
     let build_dir = input
         .parent()
@@ -245,20 +244,57 @@ pub fn process_build(
         if verbose {
             println!("{}", format!("Cleaning build directory: {}", build_dir.display()).yellow());
         }
+        
+        let cache_dir = build_dir.join(".cache");
+        let cache_backup = if cache_dir.exists() {
+            let temp_cache = std::env::temp_dir().join(format!("veil_cache_backup_{}", std::process::id()));
+            std::fs::rename(&cache_dir, &temp_cache)?;
+            Some(temp_cache)
+        } else {
+            None
+        };
+        
         std::fs::remove_dir_all(&build_dir)?;
+        std::fs::create_dir_all(&build_dir)?;
+        
+        if let Some(temp_cache) = cache_backup {
+            std::fs::rename(&temp_cache, &cache_dir)?;
+            if verbose {
+                println!("{}", "Cache preserved".green());
+            }
+        }
+    } else {
+        std::fs::create_dir_all(&build_dir)?;
     }
-    std::fs::create_dir_all(&build_dir)?;
 
     let output = build_dir.join(output.file_name().unwrap());
-
     let c_file = build_dir.join("temp.c");
 
     let mut files = Files::<String>::new();
-    let file_id = files.add(
-        input.to_str().unwrap().to_string(),
-        std::fs::read_to_string(input.clone())
-            .with_context(|| format!("Reading input file {}", input.display()))?,
-    );
+    let mut module_compiler = crate::utils::ModuleCompiler::new(&build_dir);
+    module_compiler.initialize()?;
+
+    if verbose {
+        println!("{}", "Discovering modules and building dependency graph...".yellow());
+    }
+
+    module_compiler.discover_all_modules(&input)?;
+
+    if verbose {
+        println!("{}", "Compiling modules incrementally...".yellow());
+    }
+
+    let compiled_modules = module_compiler.compile_all_modules(&mut files, verbose)?;
+
+    if verbose && !compiled_modules.is_empty() {
+        println!("{} modules were recompiled", compiled_modules.len());
+    }
+
+    if verbose {
+        println!("{}", "Creating merged program...".yellow());
+    }
+
+    let mut program = module_compiler.create_merged_program(&input)?;
 
     if verbose {
         println!("{}", format!("Input file: {}", input.display()).cyan());
@@ -266,104 +302,15 @@ pub fn process_build(
         println!("{}", format!("Build directory: {}", build_dir.display()).cyan());
     }
 
-    let lexer = lexer::Lexer::new(&files, file_id);
-    let mut parser = parser::Parser::new(lexer);
-
-    let mut program = match parser.parse() {
-        Ok(program) => program,
-        Err(error) => {
-            let file_path = Some(files.name(file_id).to_string_lossy().to_string());
-            let module_info = file_path.as_ref().and_then(|path: &String| {
-                if let Some(_idx) = path.find("lib/std") {
-                    Some("standard library".to_string())
-                } else if let Some(lib_start) = path.find("lib/") {     
-                    let rest = &path[lib_start + 4..];
-                    if let Some(end) = rest.find('/') {
-                        let lib_name = &rest[..end];
-                        if lib_name != "std" {
-                            return Some(format!("external library '{}'", lib_name));
-                        }
-                    }
-                    None
-                } else if let Some(ex_start) = path.find("examples/") {
-                    let rest = &path[ex_start + 9..];
-                    if let Some(end) = rest.find('/') {
-                        let ex_name = &rest[..end];
-                        return Some(format!("example module '{}'", ex_name));
-                    }
-                    None
-                } else {
-                    None
-                }
-            });
-
-            let writer = StandardStream::stderr(ColorChoice::Auto);
-            let config = term::Config::default();
-            term::emit(&mut writer.lock(), &config, &files, &error)?;
-
-            let location = match file_path {
-                Some(ref path) => {
-                    match module_info {
-                        Some(ref module) => format!("in file '{}' ({})", path, module),
-                        None => format!("in file '{}'", path),
-                    }
-                }
-                None => "in unknown location".to_string(),
-            };
-
-            eprintln!("\nParser error {}: {}", location, error.message);
-
-            if let Some(label) = error.labels.get(0) {
-                eprintln!("  --> at {}..{}", label.range.start, label.range.end);
-                eprintln!("  = detail: {}", label.message);
-            }
-
-            for note in &error.notes {
-                eprintln!("  note: {}", note);
-            }
-
-            if verbose {
-                let ast_file = build_dir.join("partial_ast.txt");
-                let ast_content = "Partial AST (parser failed): Debug info not available".to_string();
-                std::fs::write(&ast_file, ast_content)?;
-                println!("Partial AST saved to: {}", ast_file.display());
-                return Err(anyhow!("Parser failed, but partial AST saved to file"));
-            }
-
-            return Err(anyhow!("Parser failed"));
-        }
-    };
-    let (
-        imported_functions,
-        imported_asts,
-        imported_structs,
-        imported_ffi_funcs,
-        imported_ffi_vars,
-        imported_stmts,
-        imported_impls,
-    ) = process_imports(&mut files, &program.imports, &input)?;
-    program.functions.extend(imported_asts);
-    program.ffi_functions.extend(imported_ffi_funcs);
-    program.ffi_variables.extend(imported_ffi_vars.clone());
-    program.stmts.extend(imported_stmts);
-    program.impls.extend(imported_impls);
-
-    let mut seen_functions = std::collections::HashSet::new();
-    program.functions.retain(|func| {
-        if seen_functions.contains(&func.name) {
-            false
-        } else {
-            seen_functions.insert(func.name.clone());
-            true
-        }
-    });
-
     if verbose {
         let ast_file = build_dir.join("parsed_ast.txt");
         let ast_content = format!("Parsed AST:\n{:#?}", program);
         std::fs::write(&ast_file, ast_content)?;
         println!("{}", format!("Parsed AST saved to: {}", ast_file.display()).green());
     }
+
+    let (imported_functions, imported_structs, imported_ffi_vars) = module_compiler.get_imported_info()?;
+    let file_id = module_compiler.get_entry_file_id(&mut files, &input)?;
 
     let mut type_checker = typeck::TypeChecker::new(
         file_id,
@@ -377,8 +324,23 @@ pub fn process_build(
             let writer = StandardStream::stderr(ColorChoice::Auto);
             let config = term::Config::default();
 
-            for error in &errors {
-                term::emit(&mut writer.lock(), &config, &files, &error)?;
+            println!("=== TYPE CHECKER ERRORS ===");
+            println!("Found {} errors", errors.len());
+            for (i, error) in errors.iter().enumerate() {
+                println!("Error {}: {}", i + 1, error.message);
+                
+                if let Some(label) = error.labels.get(0) {
+                    println!("  Location: {}..{}", label.range.start, label.range.end);
+                    println!("  Detail: {}", label.message);
+                }
+                
+                for note in &error.notes {
+                    println!("  Note: {}", note);
+                }
+                
+                if let Err(emit_err) = term::emit(&mut writer.lock(), &config, &files, &error) {
+                    println!("  (Failed to emit formatted error: {})", emit_err);
+                }
 
                 let file_id = error.labels.get(0).map(|l| l.file_id);
                 let file_path = file_id.map(|fid| files.name(fid).to_string_lossy().to_string());
@@ -426,6 +388,8 @@ pub fn process_build(
                 for note in &error.notes {
                     eprintln!("  note: {}", note);
                 }
+                
+                println!(""); 
             }
 
             return Err(anyhow!("Type check failed"));
@@ -440,7 +404,6 @@ pub fn process_build(
         imported_structs,
         program.ffi_variables.clone(),
         is_test,
-        test_name.map(|s| s.to_string()),
     );
 
     target.compile(&program, &c_file)?;
@@ -482,6 +445,14 @@ pub fn process_build(
 
     if verbose {
         println!("{}", format!("Successfully compiled to: {}", output.display()).green());
+    }
+
+    let artifacts = vec![output.clone(), c_file.clone()];
+    let entry_dependencies = module_compiler.collect_module_dependencies(&program.imports, &input)?;
+    module_compiler.cache_compilation_artifacts(&input, entry_dependencies, artifacts)?;
+
+    if verbose {
+        println!("{}", "Artifacts cached successfully".green());
     }
 
     if is_test {

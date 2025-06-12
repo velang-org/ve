@@ -34,16 +34,13 @@ pub fn run_test(input: PathBuf, test_name: Option<String>, verbose: bool, list: 
         }
     } else {
         available_tests
-    };
-
-    let executable_path = process_build(
+    };    let executable_path = process_build(
         input.clone(),
         "build/program.exe".into(),
         false,
         "x86_64-pc-windows-msvc".into(),
         verbose,
         true,
-        None, 
     )?;
 
     run_tests_with_formatting(&executable_path, &tests_to_run, verbose)

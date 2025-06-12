@@ -24,7 +24,6 @@ pub struct CBackend {
     enum_defs: HashMap<String, ast::EnumDef>,
     memory_analysis: MemoryAnalysis,
     is_test_mode: bool,
-    test_name: Option<String>,
     current_function: Option<String>,
     generated_optional_types: HashSet<String>,
     current_loop_result: Option<String>,
@@ -48,7 +47,6 @@ impl CBackend {
         imported_structs: Vec<ast::StructDef>,
         imported_ffi_vars: Vec<ast::FfiVariable>,
         is_test_mode: bool,
-        test_name: Option<String>,
     ) -> Self {
         let mut variables = HashMap::new();
         for ffi_var in imported_ffi_vars {
@@ -70,7 +68,6 @@ impl CBackend {
             enum_defs: HashMap::new(),
             memory_analysis: MemoryAnalysis::default(),
             is_test_mode,
-            test_name,
             current_function: None,
             generated_optional_types: HashSet::new(),
             current_loop_result: None,
@@ -588,9 +585,16 @@ impl CBackend {
                 self.includes.borrow_mut().insert(format!("<{}>", header));
             }
 
+
             if let Some(link) = ffi.metadata.as_ref().and_then(|m| m.get("link")) {
                 self.header
                     .push_str(&format!("#pragma comment(lib, \"{}\")\n", link));
+            }
+
+            if let Some(no_emit_decl) = ffi.metadata.as_ref().and_then(|m| m.get("no_emit_decl")) {
+                if no_emit_decl == "true" {
+                    continue;
+                }
             }
 
             ffi_decls.push_str(&format!("extern {} {}({});\n", ret, ffi.name, param_str));
@@ -868,6 +872,30 @@ impl CBackend {
             self.header
                 .push_str("    printf(\"  Malloc fallbacks: %zu\\n\", ve_malloc_count);\n");
             self.header.push_str("}\n");
+            self.header.push_str("#else\n");
+            self.header.push_str("static void ve_arena_stats() {}\n");
+            self.header.push_str("#endif\n\n");
+        }
+        
+        #[cfg(not(debug_assertions))]
+        {
+            self.header.push_str("#ifdef VE_DEBUG_MEMORY\n");
+            self.header.push_str("static void ve_arena_stats() {\n");
+            self.header
+                .push_str("    printf(\"Arena Statistics:\\n\");\n");
+            self.header
+                .push_str("    printf(\"  Capacity: %zu bytes\\n\", ve_temp_arena.capacity);\n");
+            self.header
+                .push_str("    printf(\"  Used: %zu bytes\\n\", ve_temp_arena.used);\n");
+            self.header.push_str("    printf(\"  Free: %zu bytes\\n\", ve_temp_arena.capacity - ve_temp_arena.used);\n");
+            self.header
+                .push_str("    printf(\"  Utilization: %.1f%%\\n\", \n");
+            self.header.push_str("           ve_temp_arena.capacity > 0 ? (100.0 * ve_temp_arena.used / ve_temp_arena.capacity) : 0.0);\n");
+            self.header
+                .push_str("    printf(\"  Malloc fallbacks: %zu\\n\", ve_malloc_count);\n");
+            self.header.push_str("}\n");
+            self.header.push_str("#else\n");
+            self.header.push_str("static void ve_arena_stats() {}\n");
             self.header.push_str("#endif\n\n");
         }
     }
@@ -907,7 +935,6 @@ impl CBackend {
         self.enum_defs.get(enum_name)
             .map(|enum_def| enum_def.variants.iter().all(|variant| variant.data.is_none()))
             .unwrap_or_else(|| {
-                eprintln!("Debug: Enum '{}' not found in enum_defs", enum_name);
                 false 
             })
     }

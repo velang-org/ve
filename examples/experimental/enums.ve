@@ -1,8 +1,8 @@
 import "std/io";
 
 enum Color {
-    Red 
-    Green
+    Red, 
+    Green,
     Blue 
 }
 

@@ -128,7 +128,9 @@ impl TypeChecker {
 
         for func in &mut program.functions {
             self.context.current_return_type = func.return_type.clone();
-            self.check_function(func)?;
+            if let Err(e) = self.check_function(func) {
+                return Err(e);
+            }
         }
 
         for impl_block in &mut program.impls {
@@ -493,13 +495,16 @@ impl TypeChecker {
                 let ty = match name.as_str() {
                     "true" | "false" => Type::Bool,
                     _ => {
-                        self.context.variables.get(name).cloned().ok_or_else(|| {
-                            self.report_error(
-                                &format!("Undefined variable '{}'", name),
-                                *span,
-                            );
-                            vec![]
-                        })?
+                        match self.context.variables.get(name).cloned() {
+                            Some(ty) => ty,
+                            None => {
+                                self.report_error(
+                                    &format!("Undefined variable '{}'", name),
+                                    *span,
+                                );
+                                Type::Unknown
+                            }
+                        }
                     },
                 };
                 *expr_type = ty.clone();
@@ -1161,13 +1166,16 @@ impl TypeChecker {
                                 let ty = if name == "true" || name == "false" {
                                     Type::Bool
                                 } else {
-                                    self.context.variables.get(name).cloned().ok_or_else(|| {
-                                        self.report_error(
-                                            &format!("Undefined variable '{}'", name),
-                                            var_info.span,
-                                        );
-                                        vec![]
-                                    })?
+                                    match self.context.variables.get(name).cloned() {
+                                        Some(ty) => ty,
+                                        None => {
+                                            self.report_error(
+                                                &format!("Undefined variable '{}'", name),
+                                                var_info.span,
+                                            );
+                                            Type::Unknown
+                                        }
+                                    }
                                 };
                                 var_info.ty = ty.clone();
                                 if !matches!(
@@ -1502,13 +1510,16 @@ impl TypeChecker {
                         }
                         Ok(())
                     }
-                    _ => Err(self.report_error_vec(
-                        &format!(
-                            "Pattern expects enum {}, but got {}",
-                            enum_name, expected_ty
-                        ),
-                        pattern.span(),
-                    )),
+                    _ => {
+                        self.report_error(
+                            &format!(
+                                "Pattern expects enum {}, but got {}",
+                                enum_name, expected_ty
+                            ),
+                            pattern.span(),
+                        );
+                        Ok(())
+                    }
                 }
             }
             ast::Pattern::Literal(expr, span) => {
@@ -1522,13 +1533,14 @@ impl TypeChecker {
                 if Self::is_convertible(&literal_ty, expected) {
                     Ok(())
                 } else {
-                    Err(self.report_error_vec(
+                    self.report_error(
                         &format!(
                             "Literal pattern type {} doesn't match expected type {}",
                             literal_ty, expected
                         ),
                         *span,
-                    ))
+                    );
+                    Ok(())
                 }
             }
         }
@@ -1542,10 +1554,8 @@ impl TypeChecker {
     ) -> Result<(), Vec<Diagnostic<FileId>>> {
         if !Self::is_convertible(actual, expected) {
             self.report_error(&format!("Expected {}, got {}", expected, actual), span);
-            Err(vec![])
-        } else {
-            Ok(())
         }
+        Ok(())
     }
     fn is_convertible(from: &Type, to: &Type) -> bool {
         if from == to { return true; }
@@ -1656,6 +1666,7 @@ impl TypeChecker {
         }
     }
 }
+
 
 fn substitute_generics(ty: &Type, subst: &std::collections::HashMap<&String, &Type>) -> Type {
     match ty {

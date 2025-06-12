@@ -1,8 +1,6 @@
-#[cfg(not(target_os = "windows"))]
-use crate::utils::process_imports;
 #[cfg(target_os = "windows")]
-use crate::utils::{prepare_windows_clang_args, process_imports};
-use crate::{codegen, lexer, parser, typeck};
+use crate::utils::prepare_windows_clang_args;
+use crate::{codegen, typeck};
 use anyhow::{Context, anyhow};
 use codespan::Files;
 use codespan_reporting::term;
@@ -26,11 +24,6 @@ pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow
     let c_file = build_dir.join("benchmark.c");
 
     let mut files = Files::<String>::new();
-    let file_id = files.add(
-        input.to_str().unwrap().to_string(),
-        std::fs::read_to_string(input.clone())
-            .with_context(|| format!("Error reading input file {}", input.display()))?,
-    );
 
     let mut stdout = StandardStream::stdout(ColorChoice::Auto);
 
@@ -71,21 +64,9 @@ pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow
     stdout.flush()?;
 
     let parse_start = Instant::now();
-    let lexer = lexer::Lexer::new(&files, file_id);
-    let mut parser = parser::Parser::new(lexer);
-    let mut program = match parser.parse() {
-        Ok(program) => program,
-        Err(error) => {
-            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
-            writeln!(&mut stdout, "FAILED")?;
-            stdout.reset()?;
-
-            let writer = StandardStream::stderr(ColorChoice::Auto);
-            let config = term::Config::default();
-            term::emit(&mut writer.lock(), &config, &files, &error)?;
-            return Err(anyhow!("Parsing failed"));
-        }
-    };
+    let mut module_compiler = crate::utils::ModuleCompiler::new(&build_dir);
+    module_compiler.initialize()?;
+    module_compiler.discover_all_modules(&input)?;
     let parse_time = parse_start.elapsed();
 
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
@@ -95,31 +76,18 @@ pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
     write!(&mut stdout, "  [2/4] Type checking... ")?;
     stdout.flush()?;
-    let (
-        imported_functions,
-        imported_asts,
-        imported_structs,
-        imported_ffi_funcs,
-        imported_ffi_vars,
-        imported_stmts,
-        imported_impls,
-    ) = process_imports(&mut files, &program.imports, &*input)?;
+    let mut module_compiler = crate::utils::ModuleCompiler::new(&build_dir);
+    module_compiler.initialize()?;
+    module_compiler.discover_all_modules(&input)?;
+    
+    let compiled_modules = module_compiler.compile_all_modules(&mut files, verbose)?;
+    if verbose && !compiled_modules.is_empty() {
+        println!("{} modules were recompiled", compiled_modules.len());
+    }
 
-    program.functions.extend(imported_asts);
-    program.ffi_functions.extend(imported_ffi_funcs);
-    program.ffi_variables.extend(imported_ffi_vars.clone());
-    program.stmts.extend(imported_stmts);
-    program.impls.extend(imported_impls);
-
-    let mut seen_functions = std::collections::HashSet::new();
-    program.functions.retain(|func| {
-        if seen_functions.contains(&func.name) {
-            false
-        } else {
-            seen_functions.insert(func.name.clone());
-            true
-        }
-    });
+    let mut program = module_compiler.create_merged_program(&input)?;
+    let (imported_functions, imported_structs, imported_ffi_vars) = module_compiler.get_imported_info()?;
+    let file_id = module_compiler.get_entry_file_id(&mut files, &input)?;
 
     if verbose {
         println!("✓ AST parsed successfully");
@@ -218,7 +186,6 @@ pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow
         imported_structs,
         imported_ffi_vars,
         false,
-        None,
     );
     target.compile(&program, &c_file)?;
     let codegen_time = codegen_start.elapsed();
