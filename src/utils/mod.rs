@@ -702,6 +702,26 @@ pub fn resolve_imports_only(
                     module_path: module_path.clone(),
                 });
             }
+            ast::ImportDeclaration::ExportImportAll { module_path, module_type, alias } => {
+                let resolved_path = resolver.resolve_import_path(module_path, module_type, base_path)?
+                    .canonicalize()
+                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
+                resolved.push(ResolvedImport {
+                    path: resolved_path,
+                    import_type: ImportType::All { alias: alias.clone() },
+                    module_path: module_path.clone(),
+                });
+            }
+            ast::ImportDeclaration::ExportImportSpecifiers { module_path, module_type, specifiers } => {
+                let resolved_path = resolver.resolve_import_path(module_path, module_type, base_path)?
+                    .canonicalize()
+                    .with_context(|| format!("Failed to canonicalize path for: {}", module_path))?;
+                resolved.push(ResolvedImport {
+                    path: resolved_path,
+                    import_type: ImportType::Specifiers { specifiers: specifiers.clone() },
+                    module_path: module_path.clone(),
+                });
+            }
         }
     }
     Ok(resolved)
@@ -1300,7 +1320,7 @@ impl ModuleCompiler {
 
     pub fn discover_all_modules(&mut self, entry_point: &Path) -> Result<()> {
 
-        self.auto_load_stdlib_modules()?;
+        self.auto_load_prelude()?;
         
         let mut to_process = vec![entry_point.to_path_buf()];
         let mut processed = std::collections::HashSet::new();
@@ -1473,57 +1493,48 @@ impl ModuleCompiler {
         Ok(file_id)
     }
 
-    pub fn auto_load_stdlib_modules(&mut self) -> Result<()> {
+    pub fn auto_load_prelude(&mut self) -> Result<()> {
         let lib_dir = get_lib_path()?;
-        let std_src_dir = lib_dir.join("std").join("src");
+        let prelude_path = lib_dir.join("std").join("src").join("prelude.ve");
         
-        if !std_src_dir.exists() {
+        if !prelude_path.exists() {
             return Ok(());
         }
         
-        let std_modules = ["core.ve", "io.ve", "testing.ve"];
+        let normalized_path = prelude_path.canonicalize().unwrap_or(prelude_path.clone());
         
-        for module_name in &std_modules {
-            let module_path = std_src_dir.join(module_name);
-            if !module_path.exists() {
-                continue;
-            }
-            
-            let normalized_path = module_path.canonicalize().unwrap_or(module_path.clone());
-            
-            if self.module_graph.modules.contains_key(&normalized_path) {
-                if let Some(module_info) = self.module_graph.modules.get(&normalized_path) {
-                    if module_info.program.is_some() {
-                        continue;
-                    }
+        if self.module_graph.modules.contains_key(&normalized_path) {
+            if let Some(module_info) = self.module_graph.modules.get(&normalized_path) {
+                if module_info.program.is_some() {
+                    return Ok(());
                 }
-            } else {
-                self.add_module(&normalized_path)?;
             }
-                
-            let content = fs::read_to_string(&normalized_path)?;
-            let mut files = Files::<String>::new();
-            let file_id = files.add(normalized_path.to_string_lossy().to_string(), content);
-                
-            let lexer = crate::lexer::Lexer::new(&files, file_id);
-            let mut parser = crate::parser::Parser::new(lexer);
-            let program = parser.parse().map_err(|e| anyhow!("Parse error in {}: {:?}", normalized_path.display(), e))?;
-                
-            let resolved_deps = resolve_imports_only(&program.imports, &normalized_path)?;
-                
-            for resolved_import in &resolved_deps {
-                let dep_path = &resolved_import.path;
-                let dep_normalized = dep_path.canonicalize().unwrap_or_else(|_| dep_path.clone());
-                if !self.module_graph.modules.contains_key(&dep_normalized) {
-                    self.add_module(&dep_normalized)?;
-                }
-                self.module_graph.add_dependency(&normalized_path, &dep_normalized)?;
+        } else {
+            self.add_module(&normalized_path)?;
+        }
+            
+        let content = fs::read_to_string(&normalized_path)?;
+        let mut files = Files::<String>::new();
+        let file_id = files.add(normalized_path.to_string_lossy().to_string(), content);
+            
+        let lexer = crate::lexer::Lexer::new(&files, file_id);
+        let mut parser = crate::parser::Parser::new(lexer);
+        let program = parser.parse().map_err(|e| anyhow!("Parse error in {}: {:?}", normalized_path.display(), e))?;
+            
+        let resolved_deps = resolve_imports_only(&program.imports, &normalized_path)?;
+            
+        for resolved_import in &resolved_deps {
+            let dep_path = &resolved_import.path;
+            let dep_normalized = dep_path.canonicalize().unwrap_or_else(|_| dep_path.clone());
+            if !self.module_graph.modules.contains_key(&dep_normalized) {
+                self.add_module(&dep_normalized)?;
             }
-                
-            if let Some(module_info) = self.module_graph.modules.get_mut(&normalized_path) {
-                module_info.imports = program.imports.clone();
-                module_info.program = Some(program);
-            }
+            self.module_graph.add_dependency(&normalized_path, &dep_normalized)?;
+        }
+            
+        if let Some(module_info) = self.module_graph.modules.get_mut(&normalized_path) {
+            module_info.imports = program.imports.clone();
+            module_info.program = Some(program);
         }
         
         Ok(())

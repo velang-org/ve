@@ -262,6 +262,16 @@ pub enum ImportDeclaration {
         module_type: ModuleType,
         specifiers: Vec<ImportSpecifier>,
     },
+    ExportImportAll {
+        module_path: String,
+        module_type: ModuleType,
+        alias: Option<String>,
+    },
+    ExportImportSpecifiers {
+        module_path: String,
+        module_type: ModuleType,
+        specifiers: Vec<ImportSpecifier>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -598,6 +608,12 @@ pub trait AstVisitor {
         match import {
             ImportDeclaration::ImportAll { .. } => {}
             ImportDeclaration::ImportSpecifiers { specifiers, .. } => {
+                for specifier in specifiers {
+                    self.visit_import_specifier(specifier);
+                }
+            }
+            ImportDeclaration::ExportImportAll { .. } => {}
+            ImportDeclaration::ExportImportSpecifiers { specifiers, .. } => {
                 for specifier in specifiers {
                     self.visit_import_specifier(specifier);
                 }

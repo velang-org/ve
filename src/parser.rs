@@ -58,7 +58,10 @@ impl<'a> Parser<'a> {
                 program.imports.push(import);
             } else if self.check(Token::KwExport) {
                 self.advance();
-                if self.check(Token::KwStruct) {
+                if self.check(Token::KwImport) {
+                    let import = self.parse_export_import()?;
+                    program.imports.push(import);
+                } else if self.check(Token::KwStruct) {
                     let mut struct_def = self.parse_struct()?;
                     struct_def.visibility = ast::Visibility::Public;
                     program.structs.push(struct_def);
@@ -75,7 +78,7 @@ impl<'a> Parser<'a> {
                     self.parse_export_block(&mut program)?;
                 } else {
                     let span = self.peek_span();
-                    return self.error("Expected 'fn', 'struct', or '{' after 'export'", span);
+                    return self.error("Expected 'fn', 'struct', 'import', or '{' after 'export'", span);
                 }
             } else if self.check(Token::KwFn) {
                 program.functions.push(self.parse_function()?);
@@ -2075,6 +2078,53 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             methods,
             span: Span::new(start_span.start(), end_span.end()),
         })
+    }
+
+    fn parse_export_import(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
+        self.expect(Token::KwImport)?;
+        
+        let result = if self.check(Token::Star) {
+            self.advance();
+            self.expect(Token::KwFrom)?;
+            let import_all = self.parse_import_all()?;
+            match import_all {
+                ast::ImportDeclaration::ImportAll { module_path, module_type, alias } => {
+                    ast::ImportDeclaration::ExportImportAll {
+                        module_path,
+                        module_type,
+                        alias,
+                    }
+                }
+                _ => unreachable!(),
+            }
+        } else if self.check(Token::LBrace) {
+            let import_specifiers = self.parse_import_specifiers()?;
+            match import_specifiers {
+                ast::ImportDeclaration::ImportSpecifiers { module_path, module_type, specifiers } => {
+                    ast::ImportDeclaration::ExportImportSpecifiers {
+                        module_path,
+                        module_type,
+                        specifiers,
+                    }
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            let import_all = self.parse_import_all()?;
+            match import_all {
+                ast::ImportDeclaration::ImportAll { module_path, module_type, alias } => {
+                    ast::ImportDeclaration::ExportImportAll {
+                        module_path,
+                        module_type,
+                        alias,
+                    }
+                }
+                _ => unreachable!(),
+            }
+        };
+        
+        self.expect(Token::Semi)?;
+        Ok(result)
     }
 
 }
