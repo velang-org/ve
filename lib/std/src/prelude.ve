@@ -1,3 +1,2 @@
 export import "std/io";
 export import "std/core";
-export import { abs, max, min, random } from "std/math";
