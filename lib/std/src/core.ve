@@ -1,4 +1,4 @@
-import "std/io";
+import std/io;
 
 #[header="stdlib.h"]
 foreign fn exit(code: i32) -> void;

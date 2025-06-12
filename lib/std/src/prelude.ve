@@ -1,2 +1,2 @@
-export import "std/io";
-export import "std/core";
+export import std/io;
+export import std/core;

@@ -230,59 +230,80 @@ impl<'a> Parser<'a> {
 
     fn parse_import(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
         self.consume(Token::KwImport, "Expected 'import'")?;
-        if self.check(Token::Str(String::new())) {
-            let module_path = match self.advance().cloned() {
-                Some((Token::Str(path), _)) => path.clone(),
-                _ => {
-                    let span = self.peek_span();
-                    return self.error("Expected module path", span);
-                }
-            };
 
-            let module_type = if module_path.starts_with("std/") {
-                ast::ModuleType::Standard
-            } else if module_path.starts_with("./") || module_path.starts_with("../") {
-                ast::ModuleType::Local
-            } else {
-                ast::ModuleType::External
-            };
+        match self.peek_token() {
+            Token::Ident(_) => {
+                let module_path = self.parse_module_path()?;
 
-            let alias = if self.check(Token::KwAs) {
-                self.advance();
-                match self.consume_ident()? {
-                    (name, _) => Some(name),
-                }
-            } else {
-                None
-            };
-            self.expect(Token::Semi)?;
-            return Ok(ast::ImportDeclaration::ImportAll {
-                module_path,
-                module_type,
-                alias,
-            });
+                let module_type = if module_path.starts_with("std/") {
+                    ast::ModuleType::Standard
+                } else if module_path.starts_with("./") || module_path.starts_with("../") {
+                    ast::ModuleType::Local
+                } else {
+                    ast::ModuleType::External
+                };
+
+                let alias = if self.check(Token::KwAs) {
+                    self.advance();
+                    match self.consume_ident()? {
+                        (name, _) => Some(name),
+                    }
+                } else {
+                    None
+                };
+
+                self.expect(Token::Semi)?;
+                Ok(ast::ImportDeclaration::ImportAll {
+                    module_path,
+                    module_type,
+                    alias,
+                })
+            }
+            Token::LBrace => {
+                self.parse_import_specifiers()
+            }
+            Token::Ident(_) => {
+                self.parse_import_specifier()
+            }
+            _ => {
+                let span = self.peek_span();
+                self.error("Invalid import statement", span)
+            }
         }
-        let import_decl = match self.peek_token() {
-            Token::Str(_) => self.parse_import_all()?,
-            Token::LBrace => self.parse_import_specifiers()?,
-            Token::Ident(_) => self.parse_import_specifier()?,
-            _ => {
-                let span = self.peek_span();
-                return self.error("Invalid import statement", span);
-            }
-        };
-
-        self.expect(Token::Semi)?;
-        Ok(import_decl)
     }
-    fn parse_import_all(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
-        let module_path = match self.advance().cloned() {
-            Some((Token::Str(path), _)) => path.clone(),
-            _ => {
-                let span = self.peek_span();
-                return self.error("Expected module path", span);
+
+
+
+    fn parse_module_path(&mut self) -> Result<String, Diagnostic<FileId>> {
+        let mut parts = vec![];
+
+        loop {
+            match self.peek_token() {
+                Token::Ident(name) => {
+                    parts.push(name.clone());
+                    self.advance();
+                }
+                _ => break,
             }
-        };
+
+            if self.check(Token::Slash) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if parts.is_empty() {
+            let span = self.peek_span();
+            return self.error("Expected module path", span);
+        }
+
+        Ok(parts.join("/"))
+    }
+
+
+    fn parse_import_all(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
+        let module_path = self.parse_module_path()?;
 
         let module_type = if module_path.starts_with("std/") {
             ast::ModuleType::Standard
@@ -323,13 +344,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(Token::RBrace)?;
         self.expect(Token::KwFrom)?;
-        let module_path = match self.advance().cloned() {
-            Some((Token::Str(path), _)) => path.clone(),
-            _ => {
-                let span = self.peek_span();
-                return self.error("Expected module path", span);
-            }
-        };
+        let module_path = self.parse_module_path()?;
 
         let module_type = if module_path.starts_with("std/") {
             ast::ModuleType::Standard
@@ -349,13 +364,7 @@ impl<'a> Parser<'a> {
     fn parse_import_specifier(&mut self) -> Result<ast::ImportDeclaration, Diagnostic<FileId>> {
         let (name, alias) = self.parse_import_specifier_item()?;
         self.expect(Token::KwFrom)?;
-        let module_path = match self.advance().cloned() {
-            Some((Token::Str(path), _)) => path.clone(),
-            _ => {
-                let span = self.peek_span();
-                return self.error("Expected module path", span);
-            }
-        };
+        let module_path = self.parse_module_path()?;
 
         let module_type = if module_path.starts_with("std/") {
             ast::ModuleType::Standard
