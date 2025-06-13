@@ -2329,6 +2329,13 @@ impl CBackend {
             Type::GenericInstance(_, _) | Type::Struct(_) | Type::Enum(_) => {
                 format!("ve_{}", self.type_to_c_name(ty))
             }
+            Type::Generic(name) => {
+                if self.struct_defs.contains_key(name) {
+                    format!("ve_{}", name)
+                } else {
+                    "void*".to_string()
+                }
+            }
             Type::I32 => "int".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "const char*".to_string(),
@@ -2347,7 +2354,7 @@ impl CBackend {
             Type::CSize => "ve_size_t".to_string(),
             Type::RawPtr => "void*".to_string(),
             Type::Any => "void*".to_string(),
-            Type::Unknown | Type::Generic(_) => "void*".to_string(),
+            Type::Unknown => "void*".to_string(),
             Type::Optional(inner) => format!("ve_optional_{}", self.type_to_c_name(inner)),
             Type::NoneType => "void*".to_string(),
             Type::Ellipsis => "...".to_string(),
