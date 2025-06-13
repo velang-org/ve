@@ -1650,6 +1650,15 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
             self.advance();
             Ok(span)
         } else {
+            if matches!(token, Token::Semi) {
+                if let Some((_, prev_span)) = self.previous() {
+                    use codespan::ByteIndex;
+                    let end_pos = prev_span.end().0 as u32;
+                    let error_span = Span::new(prev_span.end(), ByteIndex::from(end_pos + 1));
+                    return self.error(&format!("Expected {:?}", token), error_span);
+                }
+            }
+            
             let span = self
                 .tokens
                 .peek()

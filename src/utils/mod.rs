@@ -1,7 +1,11 @@
 use crate::ast::Type;
 use crate::{ast, lexer, parser};
 use anyhow::{Context, Result, anyhow};
-use codespan::Files;
+use codespan::{FileId, Files, Span};
+use codespan_reporting::{
+    diagnostic::{Diagnostic, Label},
+    term::{self, termcolor::{StandardStream, ColorChoice}},
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -1267,7 +1271,14 @@ impl ModuleCompiler {
             
             let lexer = crate::lexer::Lexer::new(files, file_id);
             let mut parser = crate::parser::Parser::new(lexer);
-            let program = parser.parse().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+            let program = parser.parse().map_err(|e| {
+                print_parse_error(files, file_id, &e, module_path);
+                
+                let line_col = extract_line_col_from_error(files, file_id, &e);
+                let clean_path = module_path.to_string_lossy().replace("\\\\?\\", "");
+                
+                anyhow!("{}:{}: {}", clean_path, line_col, e.message)
+            })?;
 
             if let Some(module_info) = self.module_graph.modules.get_mut(module_path) {
                 module_info.program = Some(program.clone());
@@ -1342,7 +1353,14 @@ impl ModuleCompiler {
             
             let lexer = crate::lexer::Lexer::new(&files, file_id);
             let mut parser = crate::parser::Parser::new(lexer);
-            let program = parser.parse().map_err(|e| anyhow!("Parse error in {}: {:?}", normalized_current.display(), e))?;
+            let program = parser.parse().map_err(|e| {
+                print_parse_error(&files, file_id, &e, &normalized_current);
+                
+                let line_col = extract_line_col_from_error(&files, file_id, &e);
+                let clean_path = normalized_current.to_string_lossy().replace("\\\\?\\", "");
+                
+                anyhow!("{}:{}: {}", clean_path, line_col, e.message)
+            })?;
 
             let resolved_deps = resolve_imports_only(&program.imports, &normalized_current)?;
             
@@ -1519,7 +1537,14 @@ impl ModuleCompiler {
             
         let lexer = crate::lexer::Lexer::new(&files, file_id);
         let mut parser = crate::parser::Parser::new(lexer);
-        let program = parser.parse().map_err(|e| anyhow!("Parse error in {}: {:?}", normalized_path.display(), e))?;
+        let program = parser.parse().map_err(|e| {
+            print_parse_error(&files, file_id, &e, &normalized_path);
+            
+            let line_col = extract_line_col_from_error(&files, file_id, &e);
+            let clean_path = normalized_path.to_string_lossy().replace("\\\\?\\", "");
+            
+            anyhow!("{}:{}: {}", clean_path, line_col, e.message)
+        })?;
             
         let resolved_deps = resolve_imports_only(&program.imports, &normalized_path)?;
             
@@ -1605,4 +1630,146 @@ impl Default for CacheConfig {
             cache_std_modules: true,
         }
     }
+}
+
+fn extract_line_col_from_error(
+    files: &Files<String>,
+    file_id: FileId,
+    error: &codespan_reporting::diagnostic::Diagnostic<FileId>,
+) -> String {
+    if let Some(label) = error.labels.first() {
+        let source = files.source(file_id);
+        let mut line_num = 1u32;
+        let mut col_num = 1u32;
+        
+        for (idx, ch) in source.char_indices() {
+            if idx >= label.range.start {
+                break;
+            }
+            if ch == '\n' {
+                line_num += 1;
+                col_num = 1;
+            } else {
+                col_num += 1;
+            }
+        }
+        format!("{}:{}", line_num, col_num)
+    } else {
+        "1:1".to_string()
+    }
+}
+
+pub fn format_parse_error(
+    files: &Files<String>,
+    file_id: FileId,
+    error: &codespan_reporting::diagnostic::Diagnostic<FileId>,
+    file_path: &Path,
+) -> String {
+    let mut output = String::new();
+    
+
+    let file_name = file_path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    output.push_str(&format!("\x1b[1;31merror\x1b[0m: {}\n", error.message));
+    
+    if let Some(label) = error.labels.first() {
+        let range = label.range.clone();
+        
+
+        let source = files.source(file_id);
+        let lines: Vec<&str> = source.lines().collect();
+        
+
+        let mut line_num = 1u32;
+        let mut col_num = 1u32;
+        
+        for (idx, ch) in source.char_indices() {
+            if idx >= range.start {
+                break;
+            }
+            if ch == '\n' {
+                line_num += 1;
+                col_num = 1;
+            } else {
+                col_num += 1;
+            }
+        }
+        
+        output.push_str(&format!(
+            " \x1b[1;34m-->\x1b[0m {}:{}:{}\n",
+            file_name,
+            line_num,
+            col_num
+        ));
+        
+
+        let line_idx = (line_num.saturating_sub(1)) as usize;
+        
+        if line_idx < lines.len() {
+            let line_content = lines[line_idx];
+            let col_start = (col_num.saturating_sub(1)) as usize;
+            
+
+            let mut end_col = col_start + 1;
+            if range.end > range.start {
+                let error_length = (range.end - range.start).min(line_content.len() - col_start);
+                end_col = col_start + error_length;
+            }
+            
+            output.push_str(&format!(" \x1b[1;34m{:4} |\x1b[0m\n", ""));
+            output.push_str(&format!(" \x1b[1;34m{:4} |\x1b[0m {}\n", line_num, line_content));
+            
+
+            output.push_str(&format!(" \x1b[1;34m{:4} |\x1b[0m ", ""));
+            
+
+            for _ in 0..col_start {
+                output.push(' ');
+            }
+            
+
+            let indicator_len = if end_col > col_start {
+                end_col - col_start
+            } else {
+                1
+            };
+            
+            output.push_str("\x1b[1;31m");
+            for i in 0..indicator_len {
+                if i == 0 {
+                    output.push('^');
+                } else {
+                    output.push('~');
+                }
+            }
+            output.push_str("\x1b[0m");
+            
+
+            if !label.message.is_empty() {
+                output.push_str(&format!(" \x1b[1;31m{}\x1b[0m", label.message));
+            }
+            
+            output.push('\n');
+        }
+    }
+    
+
+    for note in &error.notes {
+        output.push_str(&format!(" \x1b[1;36m= note:\x1b[0m {}\n", note));
+    }
+    
+    output
+}
+
+
+pub fn print_parse_error(
+    files: &Files<String>,
+    file_id: FileId,
+    error: &codespan_reporting::diagnostic::Diagnostic<FileId>,
+    file_path: &Path,
+) {
+    let formatted = format_parse_error(files, file_id, error, file_path);
+    eprint!("{}", formatted);
 }
