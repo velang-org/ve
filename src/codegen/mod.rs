@@ -17,7 +17,7 @@ impl Target {
     pub fn create(
         config: CodegenConfig,
         file_id: FileId,
-        _imported_return_types: std::collections::HashMap<
+        imported_functions: std::collections::HashMap<
             String,
             (Vec<crate::ast::Type>, crate::ast::Type),
         >,
@@ -25,7 +25,7 @@ impl Target {
         imported_ffi_vars: Vec<crate::ast::FfiVariable>,
         is_test_mode: bool,
     ) -> Self {
-        Target::Native(c::CBackend::new(config, file_id, imported_structs, imported_ffi_vars, is_test_mode))
+        Target::Native(c::CBackend::new(config, file_id, imported_functions, imported_structs, imported_ffi_vars, is_test_mode))
     }
 
     pub fn compile(

@@ -919,8 +919,14 @@ impl TypeChecker {
 
                 let mut seen_fields = HashMap::new();
                 for (field_name, field_expr) in fields {
-                    let field_ty = self.check_expr(field_expr)?;
                     let field_name = field_name.clone();
+
+                    let expected_ty = match struct_fields.iter().find(|(name, _)| name == &field_name) {
+                        Some((_, expected_ty)) => expected_ty.clone(),
+                        None => Type::Unknown,
+                    };
+
+                    let field_ty = self.check_expr_with_expected(field_expr, &expected_ty)?;
 
                     match struct_fields.iter().find(|(name, _)| name == &field_name) {
                         Some((_, expected_ty)) => {
@@ -1429,6 +1435,19 @@ impl TypeChecker {
         }
     }
 
+    fn check_expr_with_expected(&mut self, expr: &mut Expr, expected_ty: &Type) -> Result<Type, Vec<Diagnostic<FileId>>> {
+        if let Expr::ArrayInit(elements, ast::ExprInfo { ty: expr_type, .. }) = expr {
+            if elements.is_empty() {
+                if let Type::Array(_element_ty) = expected_ty {
+                    *expr_type = expected_ty.clone();
+                    return Ok(expected_ty.clone());
+                }
+            }
+        }
+        
+        self.check_expr(expr)
+    }
+
     fn is_cast_allowed(&self, from: &Type, to: &Type) -> bool {
     match (from, to) {
         (Type::Bool, Type::String) => true,
@@ -1606,12 +1625,7 @@ impl TypeChecker {
                 .with_labels(vec![Label::primary(self.file_id, span)]),
         );
     }
-    fn report_error_vec(&mut self, message: &str, span: Span) -> Vec<Diagnostic<FileId>> {
-        let diag = Diagnostic::error()
-            .with_message(message)
-            .with_labels(vec![Label::primary(self.file_id, span)]);
-        vec![diag]
-    }
+    
     fn check_block(&mut self, stmts: &mut [Stmt]) -> Result<(), Vec<Diagnostic<FileId>>> {
         for stmt in stmts {
             self.check_stmt(stmt)?;

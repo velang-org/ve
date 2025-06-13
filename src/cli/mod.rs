@@ -4,8 +4,9 @@ pub(crate) mod run;
 pub mod upgrade;
 pub mod test;
 
+use crate::compiler::incremental::IncrementalCompiler;
 #[cfg(target_os = "windows")]
-use crate::utils::{prepare_windows_clang_args, validate_ve_file};
+use crate::helpers::{prepare_windows_clang_args, validate_ve_file};
 #[cfg(not(target_os = "windows"))]
 use crate::utils::validate_ve_file;
 use crate::{codegen, typeck};
@@ -285,14 +286,13 @@ pub fn process_build(
     let c_file = build_dir.join("temp.c");
 
     let mut files = Files::<String>::new();
-    let mut module_compiler = crate::utils::ModuleCompiler::new(&build_dir);
-    module_compiler.initialize()?;
+    let mut module_compiler = IncrementalCompiler::new(&build_dir);
 
     if verbose {
         println!("{}", "Discovering modules and building dependency graph...".yellow());
     }
 
-    module_compiler.discover_all_modules(&input)?;
+    module_compiler.build_dependency_graph(&input)?;
 
     if verbose {
         println!("{}", "Compiling modules incrementally...".yellow());

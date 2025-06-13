@@ -1,5 +1,6 @@
+
 #[cfg(target_os = "windows")]
-use crate::utils::prepare_windows_clang_args;
+use crate::helpers::prepare_windows_clang_args;
 use crate::{codegen, typeck};
 use anyhow::{Context, anyhow};
 use codespan::Files;
@@ -9,7 +10,7 @@ use codespan_reporting::term::termcolor::{Color, ColorChoice, ColorSpec, Standar
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-
+use crate::compiler::incremental::IncrementalCompiler;
 pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow::Result<()> {
     let build_dir = input
         .parent()
@@ -64,9 +65,8 @@ pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow
     stdout.flush()?;
 
     let parse_start = Instant::now();
-    let mut module_compiler = crate::utils::ModuleCompiler::new(&build_dir);
-    module_compiler.initialize()?;
-    module_compiler.discover_all_modules(&input)?;
+    let mut module_compiler = IncrementalCompiler::new(&build_dir);
+    module_compiler.build_dependency_graph(&input)?;
     let parse_time = parse_start.elapsed();
 
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
@@ -76,9 +76,8 @@ pub fn run_benchmark(input: PathBuf, iterations: usize, verbose: bool) -> anyhow
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)))?;
     write!(&mut stdout, "  [2/4] Type checking... ")?;
     stdout.flush()?;
-    let mut module_compiler = crate::utils::ModuleCompiler::new(&build_dir);
-    module_compiler.initialize()?;
-    module_compiler.discover_all_modules(&input)?;
+    let mut module_compiler = IncrementalCompiler::new(&build_dir);
+    module_compiler.build_dependency_graph(&input)?;
     
     let compiled_modules = module_compiler.compile_all_modules(&mut files, verbose)?;
     if verbose && !compiled_modules.is_empty() {

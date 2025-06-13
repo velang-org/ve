@@ -4,10 +4,11 @@ extern crate codespan_reporting;
 mod ast;
 mod cli;
 mod codegen;
+mod compiler;
 mod lexer;
 mod parser;
 mod typeck;
-mod utils;
+mod helpers;
 
 use anyhow::Result;
 

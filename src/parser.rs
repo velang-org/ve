@@ -870,9 +870,39 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
     fn parse_type(&mut self) -> Result<ast::Type, Diagnostic<FileId>> {
         let mut current_type = self.parse_base_type()?;
         
-        while self.check(Token::Question) {
-            self.advance();
-            current_type = ast::Type::Optional(Box::new(current_type));
+        loop {
+            if self.check(Token::Question) {
+                self.advance();
+                current_type = ast::Type::Optional(Box::new(current_type));
+            } else if self.check(Token::EmptyArray) {
+                self.advance();
+                current_type = ast::Type::Array(Box::new(current_type));
+            } else if self.check(Token::LBracket) {
+                self.advance();
+                if self.check(Token::RBracket) {
+                    self.advance();
+                    current_type = ast::Type::Array(Box::new(current_type));
+                } else {
+                    let size_token = self.advance().cloned();
+                    match size_token {
+                        Some((Token::Int(size), span)) => {
+                            self.expect(Token::RBracket)?;
+                            match size.parse::<usize>() {
+                                Ok(size_val) => {
+                                    current_type = ast::Type::SizedArray(Box::new(current_type), size_val);
+                                }
+                                Err(_) => return self.error("Invalid array size", span),
+                            }
+                        }
+                        _ => {
+                            let span = self.peek_span();
+                            return self.error("Expected array size (integer) or ']'", span);
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
         }
         
         Ok(current_type)
@@ -1558,6 +1588,13 @@ fn parse_prefix(&mut self) -> Result<ast::Expr, Diagnostic<FileId>> {
                 let end_span = self.expect(Token::RBracket)?;
                 Ok(ast::Expr::ArrayInit(elements, ast::ExprInfo {
                     span: Span::new(span.start(), end_span.end()),
+                    ty: ast::Type::Unknown,
+                    is_tail: false,
+                }))
+            }
+            Some((Token::EmptyArray, span)) => {
+                Ok(ast::Expr::ArrayInit(Vec::new(), ast::ExprInfo {
+                    span,
                     ty: ast::Type::Unknown,
                     is_tail: false,
                 }))

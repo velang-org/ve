@@ -44,6 +44,7 @@ impl CBackend {
     pub fn new(
         config: CodegenConfig,
         file_id: FileId,
+        imported_functions: HashMap<String, (Vec<Type>, Type)>,
         imported_structs: Vec<ast::StructDef>,
         imported_ffi_vars: Vec<ast::FfiVariable>,
         is_test_mode: bool,
@@ -51,6 +52,12 @@ impl CBackend {
         let mut variables = HashMap::new();
         for ffi_var in imported_ffi_vars {
             variables.insert(ffi_var.name, ffi_var.ty);
+        }
+
+        let mut functions_map = HashMap::new();
+
+        for (name, (_params, return_type)) in imported_functions {
+            functions_map.insert(name, return_type);
         }
 
         Self {
@@ -61,7 +68,7 @@ impl CBackend {
             functions_map_ast: None,
             includes: RefCell::new(BTreeSet::new()),
             variables: RefCell::new(variables),
-            functions_map: HashMap::new(),
+            functions_map,
             ffi_functions: HashSet::new(),
             struct_defs: HashMap::new(),
             imported_structs,
