@@ -3,9 +3,9 @@
 # Requires Git and Rust/Cargo
 
 # Configuration
-INSTALL_DIR="$HOME/.velang"
+INSTALL_DIR="$HOME/.veil"
 TEMP_DIR=$(mktemp -d)
-BRANCH="${VELANG_BRANCH:-main}"
+BRANCH="${VEIL_BRANCH:-main}"
 
 # Text formatting
 RED='\033[0;31m'
@@ -49,14 +49,14 @@ if ! command -v gcc &> /dev/null && ! command -v clang &> /dev/null; then
 fi
 
 # Clone repository
-print_msg "info" "Cloning VeLang repository (branch: $BRANCH)..."
-if ! git clone -b "$BRANCH" --quiet https://github.com/velang-org/ve.git "$TEMP_DIR" 2>/dev/null; then
+print_msg "info" "Cloning repository (branch: $BRANCH)..."
+if ! git clone -b "$BRANCH" --quiet https://github.com/veil-lang/veil.git "$TEMP_DIR" 2>/dev/null; then
     print_msg "error" "Failed to clone repository from branch '$BRANCH'"
     exit 1
 fi
 
 # Build VeLang
-print_msg "info" "Building VeLang..."
+print_msg "info" "Building Veil..."
 (
     cd "$TEMP_DIR" || exit 1
     if ! cargo build --release --quiet 2>/dev/null; then
@@ -101,7 +101,7 @@ rm -rf "$TEMP_DIR"
 # Verify installation
 print_msg "info" "Verifying installation..."
 if "$INSTALL_DIR/ve" --version &>/dev/null; then
-    print_msg "success" "VeLang installed successfully!"
+    print_msg "success" "Veil installed successfully!"
 else
     print_msg "warning" "Installation completed but verification failed"
 fi
@@ -112,4 +112,3 @@ echo "  source $shell_profile  # Reload your shell configuration"
 echo "  ve --help              # Show help"
 echo "  ve init my_project     # Create new project"
 echo "  ve example.ve          # Compile and run a file"
-echo -e "\nJoin our Discord: https://dsc.gg/velang"

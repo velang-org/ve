@@ -5,6 +5,10 @@ use logos::Logos;
 pub enum Token {
     #[token("fn")]
     KwFn,
+
+    #[token("test")]
+    KwTest,
+
     #[token("let")]
     KwLet,
     #[token("var")]
@@ -15,8 +19,6 @@ pub enum Token {
     KwElse,
     #[token("return")]
     KwReturn,
-    #[token("safe")]
-    KwSafe,
     #[token("rawptr")]
     KwRawPtr,
     #[token("defer")]
@@ -27,6 +29,10 @@ pub enum Token {
     KwWhile,
     #[token("for")]
     KwFor,
+    #[token("step")]
+    KwStep,
+    #[token("loop")]
+    KwLoop,
     #[token("import")]
     KwImport,
     #[token("from")]
@@ -35,6 +41,8 @@ pub enum Token {
     KwExport,
     #[token("struct")]
     KwStruct,
+    #[token("impl")]
+    KwImpl,
     #[token("enum")]
     KwEnum,
     #[token("match")]
@@ -43,6 +51,8 @@ pub enum Token {
     KwTrue,
     #[token("false")]
     KwFalse,
+    #[token("None")]
+    KwNone,
     #[token(".")]
     Dot,
     #[token("...")]
@@ -155,6 +165,12 @@ pub enum Token {
     Lt,
     #[token("in")]
     KwIn,
+    #[token("..=")]
+    DotDotEq,
+    #[token("..>")]
+    DotDotGt,
+    #[token("..<")]
+    DotDotLt,
     #[token("..")]
     DotDot,
     #[token("&&")]
@@ -169,15 +185,14 @@ pub enum Token {
     Hash,
     #[token("!")]
     Bang,
+    #[token("?")]
+    Question,
 
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse().ok())]
     F32(f32),
 
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
-
-    #[regex(r"[0-9]+", |lex| lex.slice().parse().ok())]
-    Int(i64),
 
     #[regex(r"[ \t\n]+", logos::skip)]
     Whitespace,
@@ -188,7 +203,13 @@ pub enum Token {
     #[regex(r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/", logos::skip)]
     MultiLineComment,
 
-    Error,
+    #[regex(r"[0-9]+", |lex| lex.slice().to_string())]
+    Int(String),
+
+    #[token("break")]
+    KwBreak,
+    #[token("continue")]
+    KwContinue,
 }
 
 pub struct Lexer<'a> {
@@ -205,11 +226,8 @@ impl<'a> Lexer<'a> {
         let source = self.files.source(self.file_id);
         Token::lexer(source)
             .spanned()
-            .filter_map(|(token, span)| match token {
-                Ok(token) if token != Token::Error => {
-                    Some((token, Span::new(span.start as u32, span.end as u32)))
-                }
-                _ => None,
+            .filter_map(|(token, span)| {
+                token.ok().map(|t| (t, Span::new(span.start as u32, span.end as u32)))
             })
             .collect()
     }

@@ -4,8 +4,8 @@ foreign fn rand() -> i32;
 #[header="stdlib.h"]
 foreign fn srand(seed: u32) -> void;
 
-#[header="time.h"]
-foreign fn time(t: i32) -> i32;
+#[header="time.h", no_emit_decl = true]
+foreign fn time(t: rawptr) -> i64;
 
 export fn abs(n: i32) -> i32 {
     if n < 0 {
@@ -37,8 +37,9 @@ export fn clamp(x: i32, min_val: i32, max_val: i32) -> i32 {
 let seeded = false;
 
 export fn random() -> i32 {
+    // todo: rewrite this
     if !seeded {
-       srand(time(0) as u32);
+       srand(time(0 as rawptr));
        seeded = true;
     }
     return rand();

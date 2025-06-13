@@ -2,18 +2,22 @@ pub mod benchmark;
 pub mod init;
 pub(crate) mod run;
 pub mod upgrade;
+pub mod test;
 
+use crate::compiler::incremental::IncrementalCompiler;
 #[cfg(target_os = "windows")]
-use crate::utils::{prepare_windows_clang_args, process_imports, validate_ve_file};
+use crate::helpers::{prepare_windows_clang_args, validate_ve_file};
 #[cfg(not(target_os = "windows"))]
-use crate::utils::{process_imports, validate_ve_file};
-use crate::{codegen, lexer, parser, typeck};
-use anyhow::{Context, anyhow};
+use crate::utils::validate_ve_file;
+use crate::{codegen, typeck};
+use anyhow::anyhow;
 use clap::{Parser, Subcommand};
 use codespan::Files;
 use codespan_reporting::term;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use std::path::PathBuf;
+use colored::*;
+use crate::cli::upgrade::Channel;
 
 #[derive(Debug)]
 pub struct CliError(pub String);
@@ -52,7 +56,14 @@ pub enum CliCommand {
         no_remind: bool,
         force: bool,
         verbose: bool,
+        channel: Channel,
     },
+    Test {
+        input: PathBuf,
+        test_name: Option<String>,
+        verbose: bool,
+        list: bool,
+    }
 }
 
 #[derive(Parser)]
@@ -130,7 +141,27 @@ enum Command {
         force: bool,
         #[arg(short, long, help = "Show verbose output during upgrade")]
         verbose: bool,
+        #[arg(long, help = "Update channel: stable or canary", value_parser = parse_channel)]
+        channel: Option<crate::cli::upgrade::Channel>,
     },
+    Test {
+       #[arg(value_parser = validate_ve_file)]
+       input: PathBuf,
+       #[arg(short, long)]
+       test_name: Option<String>,
+       #[arg(short, long)]
+       verbose: bool,
+       #[arg(long, help = "List available tests")]
+       list: bool,
+    }
+}
+
+fn parse_channel(s: &str) -> Result<Channel, String> {
+    match s.to_lowercase().as_str() {
+        "stable" => Ok(Channel::Stable),
+        "canary" => Ok(Channel::Canary),
+        _ => Err(format!("Invalid channel '{}'. Valid options: stable, canary", s)),
+    }
 }
 
 pub fn parse() -> anyhow::Result<CliCommand> {
@@ -171,10 +202,23 @@ pub fn parse() -> anyhow::Result<CliCommand> {
             no_remind,
             force,
             verbose,
+            channel,
         }) => Ok(CliCommand::Upgrade {
             no_remind,
             force,
             verbose,
+            channel: channel.unwrap_or_default(),
+        }),
+        Some(Command::Test {
+            input,
+            test_name,
+            verbose,
+            list,
+        }) => Ok(CliCommand::Test {
+            input,
+            test_name,
+            verbose,
+            list,
         }),
         None => {
             let input = args
@@ -204,7 +248,8 @@ pub fn process_build(
     optimize: bool,
     target_triple: String,
     verbose: bool,
-) -> anyhow::Result<()> {
+    is_test: bool,
+) -> anyhow::Result<PathBuf> {
     let build_dir = input
         .parent()
         .ok_or_else(|| anyhow!("Invalid input file path"))?
@@ -212,120 +257,74 @@ pub fn process_build(
 
     if build_dir.exists() {
         if verbose {
-            println!("Cleaning build directory: {}", build_dir.display());
+            println!("{}", format!("Cleaning build directory: {}", build_dir.display()).yellow());
         }
+        
+        let cache_dir = build_dir.join(".cache");
+        let cache_backup = if cache_dir.exists() {
+            let temp_cache = std::env::temp_dir().join(format!("veil_cache_backup_{}", std::process::id()));
+            std::fs::rename(&cache_dir, &temp_cache)?;
+            Some(temp_cache)
+        } else {
+            None
+        };
+        
         std::fs::remove_dir_all(&build_dir)?;
+        std::fs::create_dir_all(&build_dir)?;
+        
+        if let Some(temp_cache) = cache_backup {
+            std::fs::rename(&temp_cache, &cache_dir)?;
+            if verbose {
+                println!("{}", "Cache preserved".green());
+            }
+        }
+    } else {
+        std::fs::create_dir_all(&build_dir)?;
     }
-    std::fs::create_dir_all(&build_dir)?;
 
     let output = build_dir.join(output.file_name().unwrap());
-
     let c_file = build_dir.join("temp.c");
 
     let mut files = Files::<String>::new();
-    let file_id = files.add(
-        input.to_str().unwrap().to_string(),
-        std::fs::read_to_string(input.clone())
-            .with_context(|| format!("Reading input file {}", input.display()))?,
-    );
+    let mut module_compiler = IncrementalCompiler::new(&build_dir);
 
     if verbose {
-        println!("Input file: {}", input.display());
-        println!("Output file: {}", output.display());
-        println!("Build directory: {}", build_dir.display());
+        println!("{}", "Discovering modules and building dependency graph...".yellow());
     }
 
-    let lexer = lexer::Lexer::new(&files, file_id);
-    let mut parser = parser::Parser::new(lexer);
-
-    let mut program = match parser.parse_with_partial(verbose) {
-        Ok(program) => program,
-        Err((error, partial_program)) => {
-            let file_id = error.labels.get(0).map(|l| l.file_id);
-            let file_path = file_id
-                .and_then(|fid| Some(files.name(fid)))
-                .map(|n| n.to_string_lossy().to_string());
-            let module_info = file_path.as_ref().and_then(|path: &String| {
-                if let Some(_idx) = path.find("lib/std") {
-                    Some("standard library".to_string())
-                } else if let Some(lib_start) = path.find("lib/") {
-                    let rest = &path[lib_start + 4..];
-                    if let Some(end) = rest.find('/') {
-                        let lib_name = &rest[..end];
-                        if lib_name != "std" {
-                            return Some(format!("external library '{}'", lib_name));
-                        }
-                    }
-                    None
-                } else if let Some(ex_start) = path.find("examples/") {
-                    let rest = &path[ex_start + 9..];
-                    if let Some(end) = rest.find('/') {
-                        let ex_name = &rest[..end];
-                        return Some(format!("example module '{}'", ex_name));
-                    }
-                    None
-                } else {
-                    None
-                }
-            });
-
-            let writer = StandardStream::stderr(ColorChoice::Auto);
-            let config = term::Config::default();
-            term::emit(&mut writer.lock(), &config, &files, &error)?;
-
-            let location = if let Some(path) = file_path {
-                match module_info {
-                    Some(module) => format!("in file '{}' ({})", path, module),
-                    None => format!("in file '{}'", path),
-                }
-            } else {
-                "in unknown location".to_string()
-            };
-
-            eprintln!("\nParser error {}: {}", location, error.message);
-
-            if let Some(label) = error.labels.get(0) {
-                eprintln!("  --> at {}..{}", label.range.start, label.range.end);
-                eprintln!("  = detail: {}", label.message);
-            }
-
-            for note in &error.notes {
-                eprintln!("  note: {}", note);
-            }
-
-            if verbose {
-                if let Some(partial) = partial_program {
-                    println!("\n--- PARTIAL AST (verbose mode) ---");
-                    println!(
-                        "Successfully parsed {} functions, {} structs, {} enums",
-                        partial.functions.len(),
-                        partial.structs.len(),
-                        partial.enums.len()
-                    );
-                    println!("Partial AST:\n{:#?}\n", partial);
-                    return Err(anyhow!("Parser failed, but partial AST shown above"));
-                }
-            }
-
-            return Err(anyhow!("Parser failed"));
-        }
-    };
-    let (
-        imported_functions,
-        imported_asts,
-        imported_structs,
-        imported_ffi_funcs,
-        imported_ffi_vars,
-        imported_stmts,
-    ) = process_imports(&mut files, &program.imports, &input)?;
-    program.functions.extend(imported_asts);
-    program.ffi_functions.extend(imported_ffi_funcs);
-    program.ffi_variables.extend(imported_ffi_vars.clone());
-    program.stmts.extend(imported_stmts);
+    module_compiler.build_dependency_graph(&input)?;
 
     if verbose {
-        println!("Parsed AST:\n{:#?}", program);
+        println!("{}", "Compiling modules incrementally...".yellow());
     }
+
+    let compiled_modules = module_compiler.compile_all_modules(&mut files, verbose)?;
+
+    if verbose && !compiled_modules.is_empty() {
+        println!("{} modules were recompiled", compiled_modules.len());
+    }
+
+    if verbose {
+        println!("{}", "Creating merged program...".yellow());
+    }
+
+    let mut program = module_compiler.create_merged_program(&input)?;
+
+    if verbose {
+        println!("{}", format!("Input file: {}", input.display()).cyan());
+        println!("{}", format!("Output file: {}", output.display()).cyan());
+        println!("{}", format!("Build directory: {}", build_dir.display()).cyan());
+    }
+
+    if verbose {
+        let ast_file = build_dir.join("parsed_ast.txt");
+        let ast_content = format!("Parsed AST:\n{:#?}", program);
+        std::fs::write(&ast_file, ast_content)?;
+        println!("{}", format!("Parsed AST saved to: {}", ast_file.display()).green());
+    }
+
+    let (imported_functions, imported_structs, imported_ffi_vars) = module_compiler.get_imported_info()?;
+    let file_id = module_compiler.get_entry_file_id(&mut files, &input)?;
 
     let mut type_checker = typeck::TypeChecker::new(
         file_id,
@@ -339,13 +338,26 @@ pub fn process_build(
             let writer = StandardStream::stderr(ColorChoice::Auto);
             let config = term::Config::default();
 
-            for error in &errors {
-                term::emit(&mut writer.lock(), &config, &files, &error)?;
+            println!("=== TYPE CHECKER ERRORS ===");
+            println!("Found {} errors", errors.len());
+            for (i, error) in errors.iter().enumerate() {
+                println!("Error {}: {}", i + 1, error.message);
+                
+                if let Some(label) = error.labels.get(0) {
+                    println!("  Location: {}..{}", label.range.start, label.range.end);
+                    println!("  Detail: {}", label.message);
+                }
+                
+                for note in &error.notes {
+                    println!("  Note: {}", note);
+                }
+                
+                if let Err(emit_err) = term::emit(&mut writer.lock(), &config, &files, &error) {
+                    println!("  (Failed to emit formatted error: {})", emit_err);
+                }
 
                 let file_id = error.labels.get(0).map(|l| l.file_id);
-                let file_path = file_id
-                    .and_then(|fid| Some(files.name(fid)))
-                    .map(|n| n.to_string_lossy().to_string());
+                let file_path = file_id.map(|fid| files.name(fid).to_string_lossy().to_string());
                 let module_info = file_path.as_ref().and_then(|path: &String| {
                     if let Some(_idx) = path.find("lib/std") {
                         Some("standard library".to_string())
@@ -370,13 +382,14 @@ pub fn process_build(
                     }
                 });
 
-                let location = if let Some(path) = file_path {
-                    match module_info {
-                        Some(module) => format!("in file '{}' ({})", path, module),
-                        None => format!("in file '{}'", path),
+                let location = match file_path {
+                    Some(ref path) => {
+                        match module_info {
+                            Some(ref module) => format!("in file '{}' ({})", path, module),
+                            None => format!("in file '{}'", path),
+                        }
                     }
-                } else {
-                    "in unknown location".to_string()
+                    None => "in unknown location".to_string(),
                 };
 
                 eprintln!("\nType checker error {}: {}", location, error.message);
@@ -389,6 +402,8 @@ pub fn process_build(
                 for note in &error.notes {
                     eprintln!("  note: {}", note);
                 }
+                
+                println!(""); 
             }
 
             return Err(anyhow!("Type check failed"));
@@ -402,41 +417,64 @@ pub fn process_build(
         imported_functions,
         imported_structs,
         program.ffi_variables.clone(),
+        is_test,
     );
 
     target.compile(&program, &c_file)?;
 
     if verbose {
-        println!("Compiling generated C code: {}", c_file.display());
+        println!("{}", format!("Compiling generated C code: {}", c_file.display()).yellow());
     }
 
     #[cfg(target_os = "windows")]
-    let clang_args = prepare_windows_clang_args(&output, optimize, &c_file)?;
+    let mut clang_args = prepare_windows_clang_args(&output, optimize, &c_file)?;
 
     #[cfg(not(target_os = "windows"))]
-    let clang_args = vec![
+    let mut clang_args = vec![
         if optimize { "-O3" } else { "-O0" }.to_string(),
         c_file.to_str().unwrap().into(),
         "-o".to_string(),
         output.to_str().unwrap().into(),
     ];
 
-    let status = std::process::Command::new("clang")
+    if verbose {
+        clang_args.push("-DVE_DEBUG_MEMORY".to_string());
+    }
+
+    let output_result = std::process::Command::new("clang")
         .args(&clang_args)
-        .status()
-        .or_else(|_| std::process::Command::new("gcc").args(&clang_args).status())
+        .output()
+        .or_else(|_| std::process::Command::new("gcc").args(&clang_args).output())
         .map_err(|e| anyhow!("Failed to compile C code: {}", e))?;
 
-    if !status.success() {
-        return Err(anyhow!("C compiler failed with status: {}", status));
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        for line in stderr.lines() {
+            if line.contains("error:") || line.contains("fatal error:") {
+                eprintln!("{}", line);
+            }
+        }
+        return Err(anyhow!("C compiler failed with status: {}", output_result.status));
     }
 
     if verbose {
-        println!("Successfully compiled to: {}", output.display());
+        println!("{}", format!("Successfully compiled to: {}", output.display()).green());
+    }
+
+    let artifacts = vec![output.clone(), c_file.clone()];
+    let entry_dependencies = module_compiler.collect_module_dependencies(&program.imports, &input)?;
+    module_compiler.cache_compilation_artifacts(&input, entry_dependencies, artifacts)?;
+
+    if verbose {
+        println!("{}", "Artifacts cached successfully".green());
+    }
+
+    if is_test {
+        return Ok(output);
     }
 
     if verbose {
-        println!("Running the compiled program...");
+        println!("{}", "Running the compiled program...".bold().blue());
     }
 
     let status = std::process::Command::new(output.to_str().unwrap())
@@ -444,8 +482,8 @@ pub fn process_build(
         .map_err(|e| anyhow!("Failed to run program: {}", e))?;
 
     if verbose {
-        println!("Program exited with status: {}", status);
+        println!("{}", format!("Program exited with status: {}", status).magenta());
     }
 
-    Ok(())
+    Ok(output)
 }

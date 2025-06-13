@@ -1,11 +1,9 @@
-![Ve Language](https://img.shields.io/static/v1?label=&message=Velang&color=2b7489&logo=asciidoc&logoColor=white)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## ⚠️ Experimental Status
-Velang is in **EARLY DEVELOPMENT** – syntax and features will change radically. Not suitable for any production use. Use at your own risk!
+<div align="center" style="display: grid; place-items: center; gap: 1rem;">
+     <img src="https://cdn.discordapp.com/app-assets/1382254020038627338/1382254808395812995.png" alt="Veil Logo" width="200">
+</div>
 
-## Discord 
-Join our [Discord](https://dsc.gg/velang) server to chat with the community and get help with the language.
+
 
 ## Installation
 
@@ -13,12 +11,12 @@ Join our [Discord](https://dsc.gg/velang) server to chat with the community and 
 
 **Unix (Linux/macOS):**
 ```bash
-curl -sSf https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.sh | bash
+curl -sSf https://raw.githubusercontent.com/veil-lang/veil/main/scripts/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-iex (iwr -useb https://raw.githubusercontent.com/velang-org/ve/main/scripts/install.ps1).Content
+iex (iwr -useb https://raw.githubusercontent.com/veil-lang/veil/main/scripts/install.ps1).Content
 ```
 
 ### Manual Installation
@@ -29,7 +27,7 @@ Requirements:
 - Git
 
 ```bash
-git clone https://github.com/velang-org/ve
+git clone https://github.com/veil-lang/veil
 cd ve
 cargo install --path .
 ```

@@ -1,0 +1,15 @@
+import std/core; 
+
+export fn assert(cond: bool, msg: string) -> void {
+    if (!cond) {
+        panic(msg);
+    }
+}
+
+export fn assert_eq<T>(a: T, b: T) -> void {
+    assert(a == b, `Expected ${a} == ${b}`);
+}
+
+export fn assert_ne<T>(a: T, b: T) -> void {
+    assert(a != b, `Expected ${a} != ${b}`);
+}

@@ -4,8 +4,36 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const REPO_URL: &str = "https://github.com/velang-org/ve.git";
+const REPO_URL: &str = "https://github.com/veil-lang/veil.git";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Channel {
+    Stable,
+    Canary,
+}
+
+impl Channel {
+    pub fn branch(&self) -> &'static str {
+        match self {
+            Channel::Stable => "main",
+            Channel::Canary => "canary",
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Channel::Stable => "stable",
+            Channel::Canary => "canary",
+        }
+    }
+}
+
+impl Default for Channel {
+    fn default() -> Self {
+        Channel::Stable
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct UpdateConfig {
@@ -30,7 +58,7 @@ fn default_remind_updates() -> bool {
 fn get_config_path() -> Result<PathBuf> {
     let config_dir =
         dirs::config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
-    Ok(config_dir.join("velang").join("config.json"))
+    Ok(config_dir.join("veil").join("config.json"))
 }
 
 fn load_config() -> UpdateConfig {
@@ -61,8 +89,8 @@ fn save_config(config: &UpdateConfig) -> Result<()> {
     Ok(())
 }
 
-fn check_for_updates() -> Result<Option<String>> {
-    let temp_dir = std::env::temp_dir().join(format!("velang_check_{}", std::process::id()));
+fn check_for_updates(channel: &Channel) -> Result<Option<String>> {
+    let temp_dir = std::env::temp_dir().join(format!("veil_check_{}", std::process::id()));
     fs::create_dir_all(&temp_dir)?;
 
     let git_status = Command::new("git")
@@ -70,6 +98,8 @@ fn check_for_updates() -> Result<Option<String>> {
             "clone",
             "--depth",
             "1",
+            "--branch",
+            channel.branch(),
             REPO_URL,
             temp_dir.to_str().unwrap(),
         ])
@@ -116,10 +146,10 @@ pub fn check_and_notify_updates() -> Result<()> {
         return Ok(());
     }
 
-    match check_for_updates() {
+    match check_for_updates(&Channel::default()) {
         Ok(Some(new_version)) => {
             println!(
-                "🎉 New VeLang version available: v{} (current: v{})",
+                "🎉 New version available: v{} (current: v{})",
                 new_version, CURRENT_VERSION
             );
             println!("   Run 've upgrade' to update");
@@ -137,7 +167,7 @@ pub fn check_and_notify_updates() -> Result<()> {
     Ok(())
 }
 
-pub fn run_upgrade(no_remind: bool, force: bool, verbose: bool) -> Result<()> {
+pub fn run_upgrade(no_remind: bool, force: bool, verbose: bool, channel: Channel) -> Result<()> {
     if no_remind {
         let mut config = load_config();
         config.remind_updates = false;
@@ -146,13 +176,13 @@ pub fn run_upgrade(no_remind: bool, force: bool, verbose: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("🔍 Checking for updates...");
+    println!("🔍 Checking for updates on {} channel...", channel.name());
 
-    match check_for_updates()? {
+    match check_for_updates(&channel)? {
         Some(new_version) => {
             println!(
-                "📦 Found new version: v{} (current: v{})",
-                new_version, CURRENT_VERSION
+                "📦 Found new version: v{} (current: v{}) on {} channel",
+                new_version, CURRENT_VERSION, channel.name()
             );
 
             if !force {
@@ -168,13 +198,13 @@ pub fn run_upgrade(no_remind: bool, force: bool, verbose: bool) -> Result<()> {
                 }
             }
             println!("🚀 Starting upgrade...");
-            upgrade_velang(verbose)?;
-            println!("✅ VeLang upgraded successfully to v{}", new_version);
+            upgrade_veil(verbose, &channel)?;
+            println!("✅ Veil upgraded successfully to v{}", new_version);
         }
         None => {
             println!(
-                "✅ You're already using the latest version (v{})",
-                CURRENT_VERSION
+                "✅ You're already using the latest version (v{}) on {} channel",
+                CURRENT_VERSION, channel.name()
             );
         }
     }
@@ -182,20 +212,20 @@ pub fn run_upgrade(no_remind: bool, force: bool, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn upgrade_velang(verbose: bool) -> Result<()> {
-    println!("📥 Downloading latest VeLang source...");
+fn upgrade_veil(verbose: bool, channel: &Channel) -> Result<()> {
+    println!("📥 Downloading latest Veil source...");
 
-    let temp_dir = std::env::temp_dir().join(format!("velang_upgrade_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("veil_upgrade_{}", std::process::id()));
     if verbose {
         println!("   Using temporary directory: {}", temp_dir.display());
     }
     fs::create_dir_all(&temp_dir)?;
 
     let mut git_cmd = Command::new("git");
-    git_cmd.args(&["clone", REPO_URL, temp_dir.to_str().unwrap()]);
+    git_cmd.args(&["clone", "--branch", channel.branch(), REPO_URL, temp_dir.to_str().unwrap()]);
 
     if verbose {
-        println!("   Running: git clone {} {}", REPO_URL, temp_dir.display());
+        println!("   Running: git clone --branch {} {} {}", channel.branch(), REPO_URL, temp_dir.display());
     } else {
         git_cmd.stdout(Stdio::null()).stderr(Stdio::null());
     }
@@ -203,7 +233,7 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
     let git_status = git_cmd.status()?;
 
     if !git_status.success() {
-        return Err(anyhow!("Failed to clone VeLang repository"));
+        return Err(anyhow!("Failed to clone Veil repository"));
     }
 
     println!("🔨 Building new version...");
@@ -221,12 +251,12 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
 
     if !build_status.success() {
         fs::remove_dir_all(&temp_dir)?;
-        return Err(anyhow!("Failed to build new VeLang version"));
+        return Err(anyhow!("Failed to build new Veil version"));
     }
 
     println!("📦 Installing new version...");
 
-    let install_dir = get_velang_install_dir()?;
+    let install_dir = get_veil_install_dir()?;
     if verbose {
         println!("   Installing to: {}", install_dir.display());
     }
@@ -236,18 +266,46 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
         .join("target")
         .join("release")
         .join(if cfg!(windows) { "ve.exe" } else { "ve" });
-    let target_exe = install_dir.join(if cfg!(windows) { "ve.exe" } else { "ve" });
-
-    #[cfg(windows)]
+    let target_exe = install_dir.join(if cfg!(windows) { "ve.exe" } else { "ve" });    #[cfg(windows)]
     {
         if verbose {
             println!("   Preparing to replace executable...");
         }
 
-        stop_other_velang_processes(verbose)?;
+        stop_other_veil_processes(verbose)?;
 
         if target_exe.exists() {
             let backup_exe = install_dir.join("ve_old.exe");
+
+            if backup_exe.exists() {
+                let _ = fs::remove_file(&backup_exe);
+            }
+
+            match fs::rename(&target_exe, &backup_exe) {
+                Ok(_) => {
+                    if verbose {
+                        println!("   Moved current executable to backup");
+                    }
+                }
+                Err(e) => {
+                    if verbose {
+                        println!("   Warning: Could not backup current executable: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if verbose {
+            println!("   Preparing to replace executable...");
+        }
+
+        stop_other_veil_processes_unix(verbose)?;
+
+        if target_exe.exists() {
+            let backup_exe = install_dir.join("ve_old");
 
             if backup_exe.exists() {
                 let _ = fs::remove_file(&backup_exe);
@@ -290,12 +348,10 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
                     );
                 }
 
-                std::thread::sleep(std::time::Duration::from_millis((retry_count * 500) as u64));
-
-                #[cfg(windows)]
+                std::thread::sleep(std::time::Duration::from_millis((retry_count * 500) as u64));                #[cfg(windows)]
                 {
                     if retry_count == 3 || retry_count == 6 {
-                        let _ = stop_other_velang_processes(false);
+                        let _ = stop_other_veil_processes(false);
                     }
 
                     if retry_count == 5 {
@@ -306,21 +362,42 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
                         }
                     }
                 }
+
+                #[cfg(not(windows))]
+                {
+                    if retry_count == 3 || retry_count == 6 {
+                        let _ = stop_other_veil_processes_unix(false);
+                    }
+
+                    if retry_count == 5 {
+                        if target_exe.exists() {
+                            let temp_name =
+                                install_dir.join(format!("ve_temp_{}", std::process::id()));
+                            let _ = fs::rename(&target_exe, &temp_name);
+                        }
+                    }
+                }
             }
             Err(e) => {
                 fs::remove_dir_all(&temp_dir)?;
                 return Err(anyhow!(
-                    "Failed to copy executable after {} attempts: {}\n\nThis usually happens when VeLang is still running. Please:\n1. Close all VeLang processes\n2. Wait a few seconds\n3. Try the upgrade again",
+                    "Failed to copy executable after {} attempts: {}\n\nThis usually happens when Veil is still running. Please:\n1. Close all Veil processes\n2. Wait a few seconds\n3. Try the upgrade again",
                     MAX_RETRIES,
                     e
                 ));
             }
         }
-    }
-
-    #[cfg(windows)]
+    }    #[cfg(windows)]
     {
         let backup_exe = install_dir.join("ve_old.exe");
+        if backup_exe.exists() {
+            let _ = fs::remove_file(&backup_exe);
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let backup_exe = install_dir.join("ve_old");
         if backup_exe.exists() {
             let _ = fs::remove_file(&backup_exe);
         }
@@ -349,18 +426,18 @@ fn upgrade_velang(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn get_velang_install_dir() -> Result<PathBuf> {
+fn get_veil_install_dir() -> Result<PathBuf> {
     if let Ok(home) = std::env::var("USERPROFILE") {
-        let velang_dir = PathBuf::from(home).join(".velang");
-        if velang_dir.exists() {
-            return Ok(velang_dir);
+        let veil_dir = PathBuf::from(home).join(".veil");
+        if veil_dir.exists() {
+            return Ok(veil_dir);
         }
     }
 
     if let Ok(home) = std::env::var("HOME") {
-        let velang_dir = PathBuf::from(home).join(".velang");
-        if velang_dir.exists() {
-            return Ok(velang_dir);
+        let veil_dir = PathBuf::from(home).join(".veil");
+        if veil_dir.exists() {
+            return Ok(veil_dir);
         }
     }
 
@@ -371,7 +448,7 @@ fn get_velang_install_dir() -> Result<PathBuf> {
     };
 
     match user_dir {
-        Ok(dir) => Ok(PathBuf::from(dir).join(".velang")),
+        Ok(dir) => Ok(PathBuf::from(dir).join(".veil")),
         Err(_) => Err(anyhow!("Could not determine user home directory")),
     }
 }
@@ -428,9 +505,9 @@ fn cleanup_cargo_installation(verbose: bool) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn stop_other_velang_processes(verbose: bool) -> Result<()> {
+fn stop_other_veil_processes(verbose: bool) -> Result<()> {
     if verbose {
-        println!("   Stopping any running VeLang processes (except current upgrade)...");
+        println!("   Stopping any running Veil processes (except current upgrade)...");
     }
 
     let current_pid = std::process::id();
@@ -454,7 +531,7 @@ fn stop_other_velang_processes(verbose: bool) -> Result<()> {
         if !pids.is_empty() {
             if verbose {
                 println!(
-                    "   Found {} VeLang process(es) to terminate: {:?}",
+                    "   Found {} process(es) to terminate: {:?}",
                     pids.len(),
                     pids
                 );
@@ -484,7 +561,77 @@ fn stop_other_velang_processes(verbose: bool) -> Result<()> {
 
             std::thread::sleep(std::time::Duration::from_millis(1000));
         } else if verbose {
-            println!("   No other VeLang processes found running");
+            println!("   No other Veil processes found running");
+        }
+    } else if verbose {
+        println!("   Could not check for running processes");
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn stop_other_veil_processes_unix(verbose: bool) -> Result<()> {
+    if verbose {
+        println!("   Stopping any running processes (except current upgrade)...");
+    }
+
+    let current_pid = std::process::id();
+    
+    let ps_output = Command::new("ps")
+        .args(&["-eo", "pid,comm"])
+        .output();
+
+    if let Ok(output) = ps_output {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let pids: Vec<u32> = output_str
+            .lines()
+            .filter(|line| line.contains(" ve") || line.contains("/ve"))
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.trim().split_whitespace().collect();
+                if let Some(pid_str) = parts.get(0) {
+                    if let Ok(pid) = pid_str.parse::<u32>() {
+                        if pid != current_pid {
+                            return Some(pid);
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        if !pids.is_empty() {
+            if verbose {
+                println!(
+                    "   Found {} process(es) to terminate: {:?}",
+                    pids.len(),
+                    pids
+                );
+            }
+
+            for pid in pids {
+                let kill_result = Command::new("kill")
+                    .args(&["-TERM", &pid.to_string()])
+                    .output();
+
+                if verbose {
+                    match kill_result {
+                        Ok(result) if result.status.success() => {
+                            println!("   Successfully terminated process {}", pid);
+                        }
+                        _ => {
+                            println!(
+                                "   Could not terminate process {} (may have already exited)",
+                                pid
+                            );
+                        }
+                    }
+                }
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        } else if verbose {
+            println!("   No other processes found running");
         }
     } else if verbose {
         println!("   Could not check for running processes");

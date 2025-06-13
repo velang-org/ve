@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# VeLang Uninstallation Script for Unix (Linux/macOS)
+# Veil Uninstallation Script for Unix (Linux/macOS)
 
-INSTALL_DIR="$HOME/.velang"
+INSTALL_DIR="$HOME/.veil"
 BIN_DIR="$HOME/.local/bin"
 
 # Colors for output
@@ -31,7 +31,7 @@ print_error() {
 print_banner() {
     echo -e "${BLUE}"
     echo "╭─────────────────────────────────────╮"
-    echo "│         VeLang Uninstaller          │"
+    echo "│         Veil Uninstaller            │"
     echo "╰─────────────────────────────────────╯"
     echo -e "${NC}"
 }

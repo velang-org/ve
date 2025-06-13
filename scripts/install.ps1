@@ -5,8 +5,8 @@ param(
     [string]$Branch = $env:VELANG_BRANCH
 )
 
-$INSTALL_DIR = Join-Path $env:USERPROFILE ".velang"
-$TEMP_DIR = Join-Path $env:TEMP "velang_install"
+$INSTALL_DIR = Join-Path $env:USERPROFILE ".veil"
+$TEMP_DIR = Join-Path $env:TEMP "veil-install"
 
 # Function to display formatted messages
 function Write-Message {
@@ -103,7 +103,7 @@ if (-not $Branch) {
 }
 
 try {
-    git clone -b $Branch https://github.com/velang-org/ve.git --quiet 2>$null
+    git clone -b $Branch https://github.com/veil-lang/veil.git --quiet 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw "Git clone failed"
     }

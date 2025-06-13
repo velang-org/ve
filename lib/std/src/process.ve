@@ -1,0 +1,15 @@
+
+
+struct Command {
+    program: string,
+    args: string[],
+}
+
+impl Command {
+    fn new(program: string) -> Command {
+        Command {
+            program: program,
+            args: [],
+        }
+    }
+}

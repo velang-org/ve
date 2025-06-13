@@ -1,6 +1,6 @@
 [package]
 name = "ve"
-version = "0.1.13"
+version = "0.2.0"
 edition = "2024"
 
 [lib]
@@ -21,3 +21,5 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
+colored = "2.0"
+sha2 = "0.10"

@@ -4,10 +4,11 @@ extern crate codespan_reporting;
 mod ast;
 mod cli;
 mod codegen;
+mod compiler;
 mod lexer;
 mod parser;
 mod typeck;
-mod utils;
+mod helpers;
 
 use anyhow::Result;
 
@@ -25,7 +26,13 @@ fn main() -> Result<()> {
             optimize,
             target_triple,
             verbose,
-        }) => cli::process_build(input, output, optimize, target_triple, verbose),
+        }) => {
+            cli::process_build(input, output, optimize, target_triple, verbose, false)?;
+            Ok(())
+        },
+        Ok(cli::CliCommand::Test { input, test_name, verbose, list }) => {
+            cli::test::run_test(input, test_name, verbose, list)
+        }
         Ok(cli::CliCommand::Init {
             directory,
             project_name,
@@ -40,7 +47,8 @@ fn main() -> Result<()> {
             no_remind,
             force,
             verbose,
-        }) => cli::upgrade::run_upgrade(no_remind, force, verbose),
+            channel,
+        }) => cli::upgrade::run_upgrade(no_remind, force, verbose, channel),
         Err(e) => {
             eprintln!("Error: {}", e);
             std::process::exit(1);

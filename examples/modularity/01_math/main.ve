@@ -1,5 +1,0 @@
-import "std/io";
-import "./math.ve";
-
-let x = add(10, 20);
-print(x + " is the sum of 10 and 20"); 
